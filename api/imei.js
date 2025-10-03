@@ -1,37 +1,27 @@
-export default async function handler(req, res) {
-  const { imei } = req.query;
+// /api/ordertime/imei.js (CommonJS)
+const { otFetch } = require("./_client");
+
+module.exports = async (req, res) => {
+  const { imei } = req.query || {};
   if (!imei) return res.status(400).json({ error: "IMEI parameter is required" });
 
   try {
-    // Call OrderTime API to locate IMEI (replace endpoint path with correct one)
-    const response = await fetch(
-      `${process.env.OT_BASE_URL}/inventory/locate?imei=${encodeURIComponent(imei)}`,
-      {
-        method: "GET",
-        headers: {
-          "Authorization": `Bearer ${process.env.OT_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    const IMEI_PATH = process.env.OT_IMEI_PATH || "/inventory/locate?imei=";
+    const data = await otFetch(`${IMEI_PATH}${encodeURIComponent(imei)}`);
 
-    if (!response.ok) {
-      throw new Error(`OrderTime error: ${response.statusText}`);
-    }
+    // Some OT endpoints return arrays; normalize
+    const d = Array.isArray(data) ? data[0] || {} : data || {};
 
-    const data = await response.json();
-
-    // Shape response
-    const locationInfo = {
+    const info = {
       imei,
-      location: data.location || null,
-      sku: data.sku || data.itemCode || "—",
-      description: data.description || "—",
+      location: d.location || d.bin || d.binCode || null,
+      sku: d.sku || d.itemCode || d.partNo || "—",
+      description: d.description || d.itemDescription || d.itemName || "—",
     };
 
-    res.status(200).json(locationInfo);
+    return res.status(200).json(info);
   } catch (err) {
-    console.error("IMEI fetch error:", err);
-    res.status(500).json({ error: "Failed to fetch IMEI location from OrderTime" });
+    console.error("imei.js error:", err);
+    return res.status(500).json({ error: "Failed to fetch IMEI location from OrderTime" });
   }
-}
+};
