@@ -1,1 +1,414 @@
-022.
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Cycle Count • Bin Scan</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --bg:#f7f7fb;
+      --card:#ffffff;
+      --ink:#0f1222;
+      --ink-2:#4b5563;
+      --ink-3:#6b7280;
+      --ink-4:#9ca3af;
+      --line:#e5e7eb;
+      --accent:#111827;
+      --ok:#16a34a;
+      --warn:#dc2626;
+      --muted:#f3f4f6;
+      --green-50:#ecfdf5;
+      --shadow: 0 1px 2px rgba(0,0,0,.06), 0 6px 12px rgba(0,0,0,.04);
+      --radius: 14px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font:14px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto;
+      color:var(--ink);
+      background:var(--bg);
+    }
+    /* Header */
+    .topbar{
+      position:sticky; top:0; z-index:50;
+      backdrop-filter:saturate(180%) blur(8px);
+      background:rgba(255,255,255,.85);
+      border-bottom:1px solid var(--line);
+    }
+    .container{max-width:1120px;margin:0 auto;padding:16px 24px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .logo{
+      width:34px;height:34px;border-radius:9px;
+      background:var(--accent); color:#fff; display:grid; place-items:center; font-weight:700;
+    }
+    .title{font-weight:700;font-size:16px}
+    .subtitle{color:var(--ink-3); font-size:12px; margin-top:2px}
+    .kpis{display:flex; gap:8px; align-items:center}
+    .chip{background:#f4f5f7;border:1px solid var(--line);border-radius:12px;padding:6px 10px}
+    .chip .lbl{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-4)}
+    .chip .val{font-weight:700;color:var(--ink); margin-top:2px}
+
+    main .container{display:grid;gap:16px;padding-top:18px}
+    /* Cards */
+    .card{
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+    .card .head{padding:14px 16px;border-bottom:1px solid var(--line)}
+    .card .head .h1{font-weight:600}
+    .card .head .h2{color:var(--ink-3); font-size:12px; margin-top:2px}
+    .card .body{padding:14px 16px}
+
+    /* Inputs & Buttons */
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .field{
+      flex:1; display:flex; align-items:center; gap:8px;
+      border:1px solid var(--line); background:#fff; border-radius:12px; padding:10px 12px;
+    }
+    .field input{
+      flex:1;border:0;outline:none;font:inherit;color:inherit;background:transparent;
+    }
+    .btn{
+      appearance:none;border:0;border-radius:12px;padding:10px 14px;font-weight:600;cursor:pointer;
+    }
+    .btn.primary{background:var(--accent);color:#fff}
+    .btn.ghost{background:#fff;border:1px solid var(--line)}
+    .btn:disabled{opacity:.6;cursor:not-allowed}
+
+    /* Alerts */
+    .alerts{display:grid;gap:8px}
+    .alert{
+      border-left:4px solid; padding:10px 12px; border-radius:10px;
+      background:var(--muted); font-size:13px;
+    }
+    .alert.ok{border-color:var(--ok); background:var(--green-50)}
+    .alert.warn{border-color:var(--warn); background:#fee2e2}
+
+    /* Sticky scan bar inside card */
+    .stickybar{
+      position:sticky; top:64px; z-index:40; background:#fff;
+      border-bottom:1px solid var(--line); padding:12px 16px;
+    }
+
+    /* Table */
+    .table-wrap{overflow:auto}
+    table{width:100%;border-collapse:separate;border-spacing:0}
+    thead tr{background:#f8fafc}
+    th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left}
+    th{font-size:12px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.04em}
+    tr.ok{background:var(--green-50)}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    .qty{
+      display:inline-grid; place-items:center; width:30px; height:30px;border-radius:50%;
+      font-weight:700; background:#e5e7eb;color:#374151
+    }
+    .qty.is1{background:var(--ok); color:#fff}
+    .empty{
+      text-align:center; color:var(--ink-3); padding:30px 16px
+    }
+
+    /* Footer Note */
+    .footnote{color:var(--ink-4); font-size:12px}
+    @media (max-width: 720px){
+      .kpis{display:none}
+    }
+  </style>
+</head>
+<body>
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="container" style="display:flex;justify-content:space-between;align-items:center;">
+      <div class="brand">
+        <div class="logo">CC</div>
+        <div>
+          <div class="title">Cycle Count • Bin Scan</div>
+          <div class="subtitle">Match scanned IMEIs to system snapshot • hard-fail wrong bins</div>
+        </div>
+      </div>
+      <div class="kpis" id="kpis">
+        <div class="chip"><div class="lbl">Total</div><div class="val" id="kpi-total">0</div></div>
+        <div class="chip"><div class="lbl">Scanned</div><div class="val" id="kpi-scanned">0</div></div>
+        <div class="chip"><div class="lbl">Missing</div><div class="val" id="kpi-missing">0</div></div>
+      </div>
+    </div>
+  </div>
+
+  <main>
+    <div class="container">
+      <!-- SEARCH CARD -->
+      <section class="card" aria-labelledby="searchTitle">
+        <div class="head">
+          <div class="h1" id="searchTitle">Search Bin</div>
+          <div class="h2">Enter a location (e.g., K-01-01) to load system IMEIs</div>
+        </div>
+        <div class="body">
+          <form id="binForm" class="row" autocomplete="off">
+            <div class="field" aria-live="polite">
+              <span aria-hidden="true">📦</span>
+              <input id="binInput" type="text" placeholder="Bin (e.g., K-01-01)" required />
+            </div>
+            <button class="btn primary" id="binSubmit" type="submit">Search Bin</button>
+            <button class="btn ghost" id="resetBtn" type="button">Reset</button>
+          </form>
+        </div>
+      </section>
+
+      <!-- ALERTS -->
+      <div class="alerts" id="alerts" style="display:none"></div>
+
+      <!-- SCAN + TABLE CARD -->
+      <section class="card" id="resultsCard" style="display:none">
+        <div class="stickybar">
+          <form id="scanForm" class="row" autocomplete="off">
+            <div class="field" style="flex:1">
+              <span aria-hidden="true">🔎</span>
+              <input id="scanInput" inputmode="numeric" placeholder="Scan / enter IMEI" />
+            </div>
+            <button class="btn primary" type="submit">Scan</button>
+            <div class="kpis">
+              <div class="chip"><div class="lbl">Total</div><div class="val" id="kpi2-total">0</div></div>
+              <div class="chip"><div class="lbl">Scanned</div><div class="val" id="kpi2-scanned">0</div></div>
+              <div class="chip"><div class="lbl">Missing</div><div class="val" id="kpi2-missing">0</div></div>
+            </div>
+          </form>
+        </div>
+        <div class="table-wrap">
+          <table id="dataTable" aria-describedby="tableDesc">
+            <caption id="tableDesc" style="text-align:left;padding:10px 12px;color:var(--ink-3);caption-side:top;">
+              System snapshot of IMEIs for the selected bin. Scanned matches turn green.
+            </caption>
+            <thead>
+              <tr>
+                <th>Location</th>
+                <th>Description</th>
+                <th>System IMEI</th>
+                <th>Scanned IMEI</th>
+                <th>Quantity</th>
+              </tr>
+            </thead>
+            <tbody id="tbody">
+              <!-- rows populate here -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- EMPTY STATE (shown when no results) -->
+      <section class="card" id="emptyCard" style="display:block">
+        <div class="body empty">Enter a bin location above to load a snapshot, then scan IMEIs here.</div>
+      </section>
+
+      <div class="footnote">Wrong-bin scans hard-fail. Duplicate scans are ignored. Quantity auto-calculates (1 if IMEIs match, else 0).</div>
+    </div>
+  </main>
+
+  <script>
+    // --- Config (wire your endpoints here) -------------------------
+    const CONFIG = {
+      BIN_ENDPOINT: "/api/ordertime/bin?bin=",
+      IMEI_ENDPOINT: "/api/ordertime/imei?imei=",
+      // set to true to force using mock data; otherwise we auto-fallback to mock if fetch fails
+      FORCE_MOCK: false,
+    };
+
+    // --- State -----------------------------------------------------
+    let currentBin = "";
+    /** @type {{location:string, description:string, systemImei:string, scannedImei?:string}[]} */
+    let rows = [];
+    const scanned = new Set();
+
+    // --- DOM refs --------------------------------------------------
+    const binForm = document.getElementById("binForm");
+    const binInput = document.getElementById("binInput");
+    const binSubmit = document.getElementById("binSubmit");
+    const resetBtn = document.getElementById("resetBtn");
+
+    const resultsCard = document.getElementById("resultsCard");
+    const emptyCard = document.getElementById("emptyCard");
+    const tbody = document.getElementById("tbody");
+    const scanForm = document.getElementById("scanForm");
+    const scanInput = document.getElementById("scanInput");
+    const alerts = document.getElementById("alerts");
+
+    const kpi = {
+      total: document.getElementById("kpi-total"),
+      scanned: document.getElementById("kpi-scanned"),
+      missing: document.getElementById("kpi-missing"),
+      total2: document.getElementById("kpi2-total"),
+      scanned2: document.getElementById("kpi2-scanned"),
+      missing2: document.getElementById("kpi2-missing"),
+    };
+
+    // --- Utilities -------------------------------------------------
+    const showAlerts = (items=[]) => {
+      if (!items.length){ alerts.style.display = "none"; alerts.innerHTML = ""; return; }
+      alerts.style.display = "";
+      alerts.innerHTML = items.map(a => (
+        `<div class="alert ${a.type === 'warn' ? 'warn' : 'ok'}" role="alert">${a.msg}</div>`
+      )).join("");
+    };
+
+    const setKPIs = () => {
+      const total = rows.length;
+      const scannedCount = rows.filter(r => r.scannedImei && r.scannedImei === r.systemImei).length;
+      const missing = total - scannedCount;
+      [kpi.total, kpi.total2].forEach(el => el.textContent = total);
+      [kpi.scanned, kpi.scanned2].forEach(el => el.textContent = scannedCount);
+      [kpi.missing, kpi.missing2].forEach(el => el.textContent = missing);
+    };
+
+    const renderTable = () => {
+      if (!rows.length){
+        resultsCard.style.display = "none";
+        emptyCard.style.display = "block";
+        setKPIs();
+        return;
+      }
+      resultsCard.style.display = "block";
+      emptyCard.style.display = "none";
+      tbody.innerHTML = rows.map(r => {
+        const matched = r.scannedImei && r.scannedImei === r.systemImei;
+        const qty = matched ? 1 : 0;
+        return `
+          <tr class="${matched ? 'ok' : ''}">
+            <td>${escapeHTML(r.location)}</td>
+            <td>${escapeHTML(r.description || '—')}</td>
+            <td class="mono">${escapeHTML(r.systemImei)}</td>
+            <td class="mono">${escapeHTML(r.scannedImei || '—')}</td>
+            <td><span class="qty ${qty === 1 ? 'is1' : ''}">${qty}</span></td>
+          </tr>
+        `;
+      }).join("");
+      setKPIs();
+    };
+
+    const escapeHTML = (s="") => s.replace(/[&<>"']/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+    }[c]));
+
+    // --- Mock data (fallback/demo) --------------------------------
+    const mockBin = (bin) => {
+      const seed = (str) => Array.from(str).reduce((a,c)=>a+c.charCodeAt(0),0);
+      const base = seed(bin) % 900000000000000 + 100000000000000;
+      const mk = (n) => String(base + n);
+      return [
+        { location: bin, description:"iPhone 12 128GB Black",  systemImei: mk(1) },
+        { location: bin, description:"Galaxy A13 5G 64GB",     systemImei: mk(2) },
+        { location: bin, description:"iPad 9th Gen 64GB Wi-Fi",systemImei: mk(3) },
+        { location: bin, description:"Pixel 6 128GB",          systemImei: mk(4) },
+      ];
+    };
+    const mockLocate = (imei, bin) => {
+      // pretend half of unknowns live in a nearby bin
+      const alt = bin.replace(/\d+$/, m => String(Number(m||"0")+1)) || "K-01-02";
+      return { imei, location: alt, description: "Unknown device" };
+    };
+
+    // --- API calls -------------------------------------------------
+    async function fetchBinSnapshot(bin){
+      if (CONFIG.FORCE_MOCK) return mockBin(bin);
+      try{
+        const res = await fetch(CONFIG.BIN_ENDPOINT + encodeURIComponent(bin), { cache:"no-store" });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        // expect { records: [{location,description,systemImei}...] }
+        return (data.records || []).map(r => ({
+          location: r.location || bin,
+          description: r.description || r.itemName || "—",
+          systemImei: String(r.systemImei || r.imei || r.serial || ""),
+        }));
+      }catch(e){
+        // fallback to mock so you can demo immediately
+        return mockBin(bin);
+      }
+    }
+    async function locateImei(imei){
+      if (CONFIG.FORCE_MOCK) return mockLocate(imei, currentBin);
+      try{
+        const res = await fetch(CONFIG.IMEI_ENDPOINT + encodeURIComponent(imei), { cache:"no-store" });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (!data || !data.location) return null;
+        return { imei, location: String(data.location), description: data.description || data.itemName || undefined };
+      }catch(e){
+        return mockLocate(imei, currentBin); // graceful fallback
+      }
+    }
+
+    // --- Handlers --------------------------------------------------
+    binForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const bin = binInput.value.trim();
+      if (!bin) return;
+      binSubmit.disabled = true;
+      showAlerts([{ type:"ok", msg:`Loading bin <b>${escapeHTML(bin)}</b>…` }]);
+      try{
+        currentBin = bin;
+        scanned.clear();
+        rows = await fetchBinSnapshot(bin);
+        showAlerts([{ type:"ok", msg:`Loaded <b>${rows.length}</b> IMEIs for bin <b>${escapeHTML(bin)}</b>.` }]);
+        renderTable();
+        scanInput.focus();
+      }catch(err){
+        showAlerts([{ type:"warn", msg:`Failed to load bin. ${escapeHTML(String(err))}` }]);
+        rows = [];
+        renderTable();
+      }finally{
+        binSubmit.disabled = false;
+      }
+    });
+
+    resetBtn.addEventListener("click", () => {
+      currentBin = "";
+      rows = [];
+      scanned.clear();
+      binInput.value = "";
+      scanInput.value = "";
+      showAlerts([]);
+      renderTable();
+      binInput.focus();
+    });
+
+    scanForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const imei = scanInput.value.trim();
+      if (!imei) return;
+
+      // dedupe per session
+      if (scanned.has(imei)){
+        showAlerts([{ type:"ok", msg:`IMEI <b>${escapeHTML(imei)}</b> already scanned.` }]);
+        scanInput.value = "";
+        return;
+      }
+
+      // is it in the table?
+      const idx = rows.findIndex(r => r.systemImei === imei);
+      if (idx >= 0){
+        rows[idx] = { ...rows[idx], scannedImei: imei };
+        scanned.add(imei);
+        showAlerts([{ type:"ok", msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.` }]);
+        renderTable();
+        scanInput.value = "";
+        return;
+      }
+
+      // not found in current bin -> ask ERP for true location
+      const info = await locateImei(imei);
+      if (info && info.location){
+        showAlerts([{ type:"warn", msg:`Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>, not <b>${escapeHTML(currentBin || '—')}</b>.` }]);
+      }else{
+        showAlerts([{ type:"warn", msg:`IMEI <b>${escapeHTML(imei)}</b> not found in ERP.` }]);
+      }
+      scanInput.value = "";
+    });
+
+    // initial
+    renderTable();
+    binInput.focus();
+  </script>
+</body>
+</html>
