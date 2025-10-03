@@ -6,93 +6,50 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root{
-      --bg:#f7f7fb;
-      --card:#ffffff;
-      --ink:#0f1222;
-      --ink-2:#4b5563;
-      --ink-3:#6b7280;
-      --ink-4:#9ca3af;
-      --line:#e5e7eb;
-      --accent:#111827;
-      --ok:#16a34a;
-      --warn:#dc2626;
-      --muted:#f3f4f6;
-      --green-50:#ecfdf5;
-      --shadow: 0 1px 2px rgba(0,0,0,.06), 0 6px 12px rgba(0,0,0,.04);
-      --radius: 14px;
+      --bg:#f7f7fb; --card:#ffffff; --ink:#0f1222; --ink-2:#4b5563; --ink-3:#6b7280; --ink-4:#9ca3af;
+      --line:#e5e7eb; --accent:#111827; --ok:#16a34a; --warn:#dc2626; --muted:#f3f4f6; --green-50:#ecfdf5;
+      --shadow: 0 1px 2px rgba(0,0,0,.06), 0 6px 12px rgba(0,0,0,.04); --radius: 14px;
     }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0;
-      font:14px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto;
-      color:var(--ink);
-      background:var(--bg);
-    }
+    *{box-sizing:border-box} html,body{height:100%}
+    body{margin:0;font:14px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto;color:var(--ink);background:var(--bg)}
+
     /* Header */
-    .topbar{
-      position:sticky; top:0; z-index:50;
-      backdrop-filter:saturate(180%) blur(8px);
-      background:rgba(255,255,255,.85);
-      border-bottom:1px solid var(--line);
-    }
+    .topbar{position:sticky;top:0;z-index:50;backdrop-filter:saturate(180%) blur(8px);background:rgba(255,255,255,.85);border-bottom:1px solid var(--line)}
     .container{max-width:1120px;margin:0 auto;padding:16px 24px}
     .brand{display:flex;align-items:center;gap:12px}
-    .logo{
-      width:34px;height:34px;border-radius:9px;
-      background:var(--accent); color:#fff; display:grid; place-items:center; font-weight:700;
-    }
+    .logo{width:34px;height:34px;border-radius:9px;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:700}
     .title{font-weight:700;font-size:16px}
     .subtitle{color:var(--ink-3); font-size:12px; margin-top:2px}
     .kpis{display:flex; gap:8px; align-items:center}
     .chip{background:#f4f5f7;border:1px solid var(--line);border-radius:12px;padding:6px 10px}
     .chip .lbl{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-4)}
     .chip .val{font-weight:700;color:var(--ink); margin-top:2px}
-
     main .container{display:grid;gap:16px;padding-top:18px}
+
     /* Cards */
-    .card{
-      background:var(--card);
-      border:1px solid var(--line);
-      border-radius:var(--radius);
-      box-shadow:var(--shadow);
-      overflow:hidden;
-    }
-    .card .head{padding:14px 16px;border-bottom:1px solid var(--line)}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+    .card .head{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px}
     .card .head .h1{font-weight:600}
     .card .head .h2{color:var(--ink-3); font-size:12px; margin-top:2px}
     .card .body{padding:14px 16px}
 
     /* Inputs & Buttons */
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    .field{
-      flex:1; display:flex; align-items:center; gap:8px;
-      border:1px solid var(--line); background:#fff; border-radius:12px; padding:10px 12px;
-    }
-    .field input{
-      flex:1;border:0;outline:none;font:inherit;color:inherit;background:transparent;
-    }
-    .btn{
-      appearance:none;border:0;border-radius:12px;padding:10px 14px;font-weight:600;cursor:pointer;
-    }
+    .field{flex:1;display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px 12px}
+    .field input{flex:1;border:0;outline:none;font:inherit;color:inherit;background:transparent}
+    .btn{appearance:none;border:0;border-radius:12px;padding:10px 14px;font-weight:600;cursor:pointer}
     .btn.primary{background:var(--accent);color:#fff}
     .btn.ghost{background:#fff;border:1px solid var(--line)}
     .btn:disabled{opacity:.6;cursor:not-allowed}
 
     /* Alerts */
     .alerts{display:grid;gap:8px}
-    .alert{
-      border-left:4px solid; padding:10px 12px; border-radius:10px;
-      background:var(--muted); font-size:13px;
-    }
-    .alert.ok{border-color:var(--ok); background:var(--green-50)}
-    .alert.warn{border-color:var(--warn); background:#fee2e2}
+    .alert{border-left:4px solid;padding:10px 12px;border-radius:10px;background:var(--muted);font-size:13px}
+    .alert.ok{border-color:var(--ok);background:var(--green-50)}
+    .alert.warn{border-color:var(--warn);background:#fee2e2}
 
-    /* Sticky scan bar inside card */
-    .stickybar{
-      position:sticky; top:64px; z-index:40; background:#fff;
-      border-bottom:1px solid var(--line); padding:12px 16px;
-    }
+    /* Sticky scan bar */
+    .stickybar{position:sticky;top:64px;z-index:40;background:#fff;border-bottom:1px solid var(--line);padding:12px 16px;display:flex;align-items:center;gap:12px}
 
     /* Table */
     .table-wrap{overflow:auto}
@@ -102,20 +59,23 @@
     th{font-size:12px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.04em}
     tr.ok{background:var(--green-50)}
     .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-    .qty{
-      display:inline-grid; place-items:center; width:30px; height:30px;border-radius:50%;
-      font-weight:700; background:#e5e7eb;color:#374151
-    }
-    .qty.is1{background:var(--ok); color:#fff}
-    .empty{
-      text-align:center; color:var(--ink-3); padding:30px 16px
-    }
-
-    /* Footer Note */
+    .qty{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;font-weight:700;background:#e5e7eb;color:#374151}
+    .qty.is1{background:var(--ok);color:#fff}
+    .empty{text-align:center;color:var(--ink-3);padding:30px 16px}
     .footnote{color:var(--ink-4); font-size:12px}
-    @media (max-width: 720px){
-      .kpis{display:none}
+
+    /* Download dropdown */
+    .menu{position:relative}
+    .menu-btn{position:relative}
+    .menu-list{
+      position:absolute;right:0;top:calc(100% + 6px);min-width:210px;background:#fff;border:1px solid var(--line);
+      border-radius:12px;box-shadow:var(--shadow);padding:6px;display:none;z-index:60
     }
+    .menu.open .menu-list{display:block}
+    .menu-item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer}
+    .menu-item:hover{background:#f3f4f6}
+    .muted{color:var(--ink-4);font-size:12px}
+    @media (max-width:720px){ .kpis{display:none} }
   </style>
 </head>
 <body>
@@ -142,8 +102,10 @@
       <!-- SEARCH CARD -->
       <section class="card" aria-labelledby="searchTitle">
         <div class="head">
-          <div class="h1" id="searchTitle">Search Bin</div>
-          <div class="h2">Enter a location (e.g., K-01-01) to load system IMEIs</div>
+          <div>
+            <div class="h1" id="searchTitle">Search Bin</div>
+            <div class="h2">Enter a location (e.g., K-01-01) to load system IMEIs</div>
+          </div>
         </div>
         <div class="body">
           <form id="binForm" class="row" autocomplete="off">
@@ -163,7 +125,7 @@
       <!-- SCAN + TABLE CARD -->
       <section class="card" id="resultsCard" style="display:none">
         <div class="stickybar">
-          <form id="scanForm" class="row" autocomplete="off">
+          <form id="scanForm" class="row" style="flex:1" autocomplete="off">
             <div class="field" style="flex:1">
               <span aria-hidden="true">🔎</span>
               <input id="scanInput" inputmode="numeric" placeholder="Scan / enter IMEI" />
@@ -175,7 +137,18 @@
               <div class="chip"><div class="lbl">Missing</div><div class="val" id="kpi2-missing">0</div></div>
             </div>
           </form>
+
+          <!-- Download menu -->
+          <div class="menu" id="downloadMenu">
+            <button class="btn ghost menu-btn" type="button" aria-haspopup="true" aria-expanded="false">⬇️ Download</button>
+            <div class="menu-list" role="menu" aria-label="Download options">
+              <div class="menu-item" data-export="all"><span>All Rows (CSV)</span><span class="muted">Location, IMEIs, Qty</span></div>
+              <div class="menu-item" data-export="scanned"><span>Scanned Only (CSV)</span><span class="muted">Matches = 1</span></div>
+              <div class="menu-item" data-export="missing"><span>Missing Only (CSV)</span><span class="muted">Matches = 0</span></div>
+            </div>
+          </div>
         </div>
+
         <div class="table-wrap">
           <table id="dataTable" aria-describedby="tableDesc">
             <caption id="tableDesc" style="text-align:left;padding:10px 12px;color:var(--ink-3);caption-side:top;">
@@ -190,14 +163,12 @@
                 <th>Quantity</th>
               </tr>
             </thead>
-            <tbody id="tbody">
-              <!-- rows populate here -->
-            </tbody>
+            <tbody id="tbody"></tbody>
           </table>
         </div>
       </section>
 
-      <!-- EMPTY STATE (shown when no results) -->
+      <!-- EMPTY STATE -->
       <section class="card" id="emptyCard" style="display:block">
         <div class="body empty">Enter a bin location above to load a snapshot, then scan IMEIs here.</div>
       </section>
@@ -211,7 +182,6 @@
     const CONFIG = {
       BIN_ENDPOINT: "/api/ordertime/bin?bin=",
       IMEI_ENDPOINT: "/api/ordertime/imei?imei=",
-      // set to true to force using mock data; otherwise we auto-fallback to mock if fetch fails
       FORCE_MOCK: false,
     };
 
@@ -226,13 +196,13 @@
     const binInput = document.getElementById("binInput");
     const binSubmit = document.getElementById("binSubmit");
     const resetBtn = document.getElementById("resetBtn");
-
     const resultsCard = document.getElementById("resultsCard");
     const emptyCard = document.getElementById("emptyCard");
     const tbody = document.getElementById("tbody");
     const scanForm = document.getElementById("scanForm");
     const scanInput = document.getElementById("scanInput");
     const alerts = document.getElementById("alerts");
+    const downloadMenu = document.getElementById("downloadMenu");
 
     const kpi = {
       total: document.getElementById("kpi-total"),
@@ -290,6 +260,59 @@
       "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
     }[c]));
 
+    const pad = (n)=> String(n).padStart(2,"0");
+    const ts = () => {
+      const d = new Date();
+      return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    };
+
+    const toCSV = (data) => {
+      const header = ["Location","Description","System IMEI","Scanned IMEI","Quantity"];
+      const lines = [header.join(",")];
+      for(const r of data){
+        const matched = r.scannedImei && r.scannedImei === r.systemImei;
+        const qty = matched ? 1 : 0;
+        const row = [
+          r.location,
+          r.description ?? "",
+          r.systemImei,
+          r.scannedImei ?? "",
+          String(qty),
+        ].map(v => csvEscape(v)).join(",");
+        lines.push(row);
+      }
+      return lines.join("\n");
+    };
+
+    const csvEscape = (val="") => {
+      const needs = /[",\n]/.test(val);
+      if (!needs) return val;
+      return `"${val.replace(/"/g,'""')}"`;
+    };
+
+    const downloadCSV = (subset="all") => {
+      if (!rows.length) {
+        showAlerts([{type:"warn", msg:"No rows to export."}]);
+        return;
+      }
+      let data = rows;
+      if (subset === "scanned") data = rows.filter(r => r.scannedImei === r.systemImei);
+      if (subset === "missing") data = rows.filter(r => r.scannedImei !== r.systemImei);
+
+      const csv = toCSV(data);
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const safeBin = (currentBin || "bin").replace(/[^A-Za-z0-9_-]+/g,"-");
+      a.href = url;
+      a.download = `${safeBin}_${ts()}_${subset}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      showAlerts([{type:"ok", msg:`Downloading <b>${escapeHTML(a.download)}</b>`}]);
+    };
+
     // --- Mock data (fallback/demo) --------------------------------
     const mockBin = (bin) => {
       const seed = (str) => Array.from(str).reduce((a,c)=>a+c.charCodeAt(0),0);
@@ -303,7 +326,6 @@
       ];
     };
     const mockLocate = (imei, bin) => {
-      // pretend half of unknowns live in a nearby bin
       const alt = bin.replace(/\d+$/, m => String(Number(m||"0")+1)) || "K-01-02";
       return { imei, location: alt, description: "Unknown device" };
     };
@@ -315,14 +337,12 @@
         const res = await fetch(CONFIG.BIN_ENDPOINT + encodeURIComponent(bin), { cache:"no-store" });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-        // expect { records: [{location,description,systemImei}...] }
         return (data.records || []).map(r => ({
           location: r.location || bin,
           description: r.description || r.itemName || "—",
           systemImei: String(r.systemImei || r.imei || r.serial || ""),
         }));
       }catch(e){
-        // fallback to mock so you can demo immediately
         return mockBin(bin);
       }
     }
@@ -335,7 +355,7 @@
         if (!data || !data.location) return null;
         return { imei, location: String(data.location), description: data.description || data.itemName || undefined };
       }catch(e){
-        return mockLocate(imei, currentBin); // graceful fallback
+        return mockLocate(imei, currentBin);
       }
     }
 
@@ -378,14 +398,12 @@
       const imei = scanInput.value.trim();
       if (!imei) return;
 
-      // dedupe per session
       if (scanned.has(imei)){
         showAlerts([{ type:"ok", msg:`IMEI <b>${escapeHTML(imei)}</b> already scanned.` }]);
         scanInput.value = "";
         return;
       }
 
-      // is it in the table?
       const idx = rows.findIndex(r => r.systemImei === imei);
       if (idx >= 0){
         rows[idx] = { ...rows[idx], scannedImei: imei };
@@ -396,7 +414,6 @@
         return;
       }
 
-      // not found in current bin -> ask ERP for true location
       const info = await locateImei(imei);
       if (info && info.location){
         showAlerts([{ type:"warn", msg:`Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>, not <b>${escapeHTML(currentBin || '—')}</b>.` }]);
@@ -404,6 +421,25 @@
         showAlerts([{ type:"warn", msg:`IMEI <b>${escapeHTML(imei)}</b> not found in ERP.` }]);
       }
       scanInput.value = "";
+    });
+
+    // Download menu interactions
+    const toggleMenu = (open) => {
+      downloadMenu.classList.toggle("open", open);
+      downloadMenu.querySelector(".menu-btn").setAttribute("aria-expanded", open ? "true" : "false");
+    };
+    downloadMenu.querySelector(".menu-btn").addEventListener("click", () => {
+      toggleMenu(!downloadMenu.classList.contains("open"));
+    });
+    downloadMenu.querySelectorAll(".menu-item").forEach(item => {
+      item.addEventListener("click", () => {
+        const type = item.getAttribute("data-export");
+        downloadCSV(type);
+        toggleMenu(false);
+      });
+    });
+    document.addEventListener("click", (e) => {
+      if (!downloadMenu.contains(e.target)) toggleMenu(false);
     });
 
     // initial
