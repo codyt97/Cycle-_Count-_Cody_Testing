@@ -1,5 +1,5 @@
 // /api/ordertime/imei.js
-const { otPost } = require("./_client");
+const { otPostList } = require("./_client");
 
 module.exports = async (req, res) => {
   const { imei } = req.query || {};
@@ -13,7 +13,7 @@ module.exports = async (req, res) => {
       NumberOfRecords: 5,
     };
 
-    const data = await otPost(process.env.OT_LIST_PATH || "/list", body);
+    const data = await otPostList(body);
     const rec = (data?.Records || [])[0] || {};
 
     const info = {
