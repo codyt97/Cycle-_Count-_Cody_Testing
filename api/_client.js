@@ -18,7 +18,6 @@ function baseUrl() {
 }
 
 async function otPost(path, body) {
-  // Path can be overridden (some OT installs require '/List' with capital L)
   const listPath = process.env.OT_LIST_PATH || path;
   const url = `${baseUrl()}${listPath}`;
   const res = await fetch(url, {
@@ -30,14 +29,16 @@ async function otPost(path, body) {
 
   const text = await res.text();
   if (!res.ok) {
-    console.error("OrderTime POST failed:", { url, status: res.status, text });
-    // throw the raw text so the UI alert shows the actual OT message
-    throw new Error(text || `HTTP ${res.status}`);
+    const msg = `OT ${res.status} for ${url}\n${text || ""}`.trim();
+    console.error("OrderTime POST failed:", msg);
+    throw new Error(msg);
   }
   try { return JSON.parse(text); }
   catch {
-    console.error("OrderTime non-JSON:", { url, status: res.status, text: text.slice(0, 200) });
-    throw new Error(`Non-JSON from OT: ${text.slice(0,200)}`);
+    const msg = `OT non-JSON for ${url}\n${text.slice(0,200)}`;
+    console.error(msg);
+    throw new Error(msg);
   }
 }
+
 
