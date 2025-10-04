@@ -38,15 +38,16 @@ function baseUrl() {
 }
 
 // Try multiple List paths until one returns 2xx JSON.
-// You can override with OT_LIST_PATHS="[/List,/list,/REST/List]" in Vercel env.
+// You can override with OT_LIST_PATHS='["/Rest/List","/REST/List","/List","/Services/List","/v1/List"]'
 async function otPostList(body) {
   const defaultCandidates = ["/List", "/list", "/REST/List", "/Rest/List", "/v1/List", "/Services/List"];
   let candidates = defaultCandidates;
+
   if (process.env.OT_LIST_PATHS) {
     try {
       const parsed = JSON.parse(process.env.OT_LIST_PATHS);
       if (Array.isArray(parsed) && parsed.length) candidates = parsed;
-    } catch (_) { /* ignore bad JSON, keep defaults */ }
+    } catch (_) { /* ignore bad JSON */ }
   } else if (process.env.OT_LIST_PATH) {
     candidates = [process.env.OT_LIST_PATH, ...defaultCandidates.filter(p => p !== process.env.OT_LIST_PATH)];
   }
@@ -77,8 +78,6 @@ async function otPostList(body) {
   }
   throw new Error(`All List paths failed:\n- ${errs.join("\n- ")}`);
 }
-
-module.exports = { authHeaders, otPostList };
 
 
 
