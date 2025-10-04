@@ -51,6 +51,9 @@ async function otPostList(body) {
   } else if (process.env.OT_LIST_PATH) {
     candidates = [process.env.OT_LIST_PATH, ...defaultCandidates.filter(p => p !== process.env.OT_LIST_PATH)];
   }
+ console.log("DEBUG: base =", baseUrl());
+console.log("DEBUG: candidates =", candidates);
+console.log("DEBUG: headers =", authHeaders());
 
   const errs = [];
   for (const path of candidates) {
