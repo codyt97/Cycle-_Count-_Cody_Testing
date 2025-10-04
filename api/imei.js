@@ -13,7 +13,7 @@ module.exports = async (req, res) => {
       NumberOfRecords: 5,
     };
 
-    const data = await otPost("/list", body);
+    const data = await otPost(process.env.OT_LIST_PATH || "/list", body);
     const rec = (data?.Records || [])[0] || {};
 
     const info = {
