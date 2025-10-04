@@ -1,23 +1,40 @@
 // /api/ordertime/imei.js (CommonJS)
-const { otFetch } = require("./_client");
+const { otPost } = require("./_client");
 
 module.exports = async (req, res) => {
   const { imei } = req.query || {};
   if (!imei) return res.status(400).json({ error: "IMEI parameter is required" });
 
   try {
-    const IMEI_PATH = process.env.OT_IMEI_PATH || "/inventory/locate?imei=";
-    const data = await otFetch(`${IMEI_PATH}${encodeURIComponent(imei)}`);
+    const pageSize = Math.min(parseInt(process.env.OT_LIST_PAGE_SIZE || "100", 10), 1000);
 
-    // Some OT endpoints return arrays; normalize
-    const d = Array.isArray(data) ? data[0] || {} : data || {};
+    // Query the Lot/Serial list for this exact SerialNo (IMEI).
+    const body = {
+      Type: 1100, // Lot or Serial Number
+      Filters: [
+        { PropertyName: "SerialNo", FilterValueArray: [String(imei)] },
+      ],
+      PageNumber: 1,
+      NumberOfRecords: pageSize,
+    };
+
+    const data = await otPost("/list", body);
+    const rec = (data?.Records || data?.records || [])[0] || {};
 
     const info = {
-      imei,
-      location: d.location || d.bin || d.binCode || null,
-      sku: d.sku || d.itemCode || d.partNo || "—",
-      description: d.description || d.itemDescription || d.itemName || "—",
+      imei: String(imei),
+      location: rec?.BinRef?.Name || rec?.LocationBinRef?.Name || null,
+      sku: rec?.ItemRef?.Name || rec?.ItemCode || "—",
+      description: rec?.ItemName || rec?.Description || "—",
     };
+
+    return res.status(200).json(info);
+  } catch (err) {
+    console.error("imei.js error:", err);
+    return res.status(500).json({ error: "Failed to fetch IMEI location from OrderTime" });
+  }
+};
+
 
     return res.status(200).json(info);
   } catch (err) {
