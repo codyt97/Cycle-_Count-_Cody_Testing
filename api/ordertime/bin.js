@@ -1,5 +1,6 @@
 // /api/ordertime/bin.js
-const { otPostList } = require("./_client");
+const client = require("./_client.js");
+const otPostList = client && client.otPostList;
 
 /**
  * Returns ALL item lines in a bin (not just first page), normalized as:
