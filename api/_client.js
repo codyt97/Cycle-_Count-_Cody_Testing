@@ -1,4 +1,3 @@
-// /api/ordertime/_client.js (CommonJS)
 function authHeaders() {
   const headers = { "Content-Type": "application/json" };
   if (process.env.OT_API_KEY) {
