@@ -1,5 +1,5 @@
 // /api/ordertime/bin.js
-const { otPost } = require("./_client");
+const { otPostList } = require("./_client");
 
 module.exports = async (req, res) => {
   const { bin } = req.query || {};
@@ -27,12 +27,12 @@ let lastErr;
 
 for (const f of attempts) {
   try {
-    const data = await otPost(process.env.OT_LIST_PATH || "/list", {
-      Type: 1100,              // Lot or Serial Number
-      Filters: [f],
-      PageNumber: 1,
-      NumberOfRecords: Math.min(parseInt(process.env.OT_LIST_PAGE_SIZE || "500",10), 1000),
-    });
+    const data = await otPostList({
+  Type: 1100, // Lot or Serial Number
+  Filters: [f],
+  PageNumber: 1,
+  NumberOfRecords: Math.min(parseInt(process.env.OT_LIST_PAGE_SIZE || "500",10), 1000),
+});
     records = data?.Records || [];
     if (records.length) break; // success
   } catch (e) {
