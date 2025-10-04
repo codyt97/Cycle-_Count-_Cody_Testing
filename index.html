@@ -336,22 +336,23 @@
     const mockLocate = (imei,bin) => ({ imei, location: bin.replace(/\d+$/, m=>String((+m||0)+1))||"K-01-02", sku:"—", description:"—" });
 
     async function fetchBinSnapshot(bin){
-  try{
-    const res = await fetch(CONFIG.BIN_ENDPOINT + encodeURIComponent(bin), { cache:"no-store" });
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    return (data.records || []).map(r => ({
-      location: r.location || bin,
-      sku: r.sku || r.itemCode || "—",
-      description: r.description || r.itemName || "—",
-      systemImei: String(r.systemImei || r.imei || r.serial || ""),
-    }));
-  }catch(e){
-    // NO MOCKS — surface the issue so we can fix it
-    showAlerts(alerts,[{type:"warn",msg:`OrderTime BIN fetch failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
-    throw e;
+  const res = await fetch(CONFIG.BIN_ENDPOINT + encodeURIComponent(bin), { cache:"no-store" });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`BIN API ${res.status}: ${txt}`);
   }
+  const data = await res.json();
+
+  // Expect: { bin, count, records: [...] }
+  const list = Array.isArray(data.records) ? data.records : [];
+  return list.map(r => ({
+    location: r.location || bin,
+    sku: r.sku || r.itemCode || "—",
+    description: r.description || r.itemName || "—",
+    systemImei: String(r.systemImei || r.imei || r.serial || ""),
+  }));
 }
+
 
 
     async function locateImei(imei){
