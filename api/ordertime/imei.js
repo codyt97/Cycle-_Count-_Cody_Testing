@@ -1,5 +1,7 @@
 // /api/ordertime/imei.js
-const { otPostList } = require("./_client");
+const client = require("./_client.js");
+const otPostList = client && client.otPostList;
+
 
 module.exports = async (req, res) => {
   const { imei } = req.query || {};
