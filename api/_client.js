@@ -18,11 +18,26 @@ function baseUrl() {
 }
 
 async function otPost(path, body) {
-  const url = `${baseUrl()}${path}`;
-  const res = await fetch(url, { method: "POST", headers: authHeaders(), body: JSON.stringify(body || {}), cache: "no-store" });
+  // Path can be overridden (some OT installs require '/List' with capital L)
+  const listPath = process.env.OT_LIST_PATH || path;
+  const url = `${baseUrl()}${listPath}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify(body || {}),
+    cache: "no-store",
+  });
+
   const text = await res.text();
-  if (!res.ok) { console.error("OrderTime POST failed:", { url, status: res.status, text }); throw new Error(text || `HTTP ${res.status}`); }
-  try { return JSON.parse(text); } catch { throw new Error(`Non-JSON from OT: ${text.slice(0,200)}`); }
+  if (!res.ok) {
+    console.error("OrderTime POST failed:", { url, status: res.status, text });
+    // throw the raw text so the UI alert shows the actual OT message
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+  try { return JSON.parse(text); }
+  catch {
+    console.error("OrderTime non-JSON:", { url, status: res.status, text: text.slice(0, 200) });
+    throw new Error(`Non-JSON from OT: ${text.slice(0,200)}`);
+  }
 }
 
-module.exports = { otPost };
