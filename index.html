@@ -335,38 +335,38 @@
     };
     const mockLocate = (imei,bin) => ({ imei, location: bin.replace(/\d+$/, m=>String((+m||0)+1))||"K-01-02", sku:"—", description:"—" });
 
-    // --- Backend calls --------------------------------------------
     async function fetchBinSnapshot(bin){
-      if (CONFIG.FORCE_MOCK) return mockBin(bin);
-      try{
-        const res = await fetch(CONFIG.BIN_ENDPOINT + encodeURIComponent(bin), { cache:"no-store" });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        // Expect { records: [{location,sku,description,systemImei}] }
-        return (data.records || []).map(r => ({
-          location: r.location || bin,
-          sku: r.sku || r.itemCode || "—",
-          description: r.description || r.itemName || "—",
-          systemImei: String(r.systemImei || r.imei || r.serial || ""),
-        }));
-      }catch(e){
-        // graceful demo fallback
-        return mockBin(bin);
-      }
-    }
+  try{
+    const res = await fetch(CONFIG.BIN_ENDPOINT + encodeURIComponent(bin), { cache:"no-store" });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    return (data.records || []).map(r => ({
+      location: r.location || bin,
+      sku: r.sku || r.itemCode || "—",
+      description: r.description || r.itemName || "—",
+      systemImei: String(r.systemImei || r.imei || r.serial || ""),
+    }));
+  }catch(e){
+    // NO MOCKS — surface the issue so we can fix it
+    showAlerts(alerts,[{type:"warn",msg:`OrderTime BIN fetch failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
+    throw e;
+  }
+}
+
 
     async function locateImei(imei){
-      if (CONFIG.FORCE_MOCK) return mockLocate(imei, currentBin);
-      try{
-        const res = await fetch(CONFIG.IMEI_ENDPOINT + encodeURIComponent(imei), { cache:"no-store" });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        if (!data || !data.location) return null;
-        return data; // { imei, location, sku?, description? }
-      }catch(e){
-        return mockLocate(imei, currentBin);
-      }
-    }
+  try{
+    const res = await fetch(CONFIG.IMEI_ENDPOINT + encodeURIComponent(imei), { cache:"no-store" });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    if (!data || !data.location) return null;
+    return data;
+  }catch(e){
+    showAlerts(alerts,[{type:"warn",msg:`OrderTime IMEI lookup failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
+    return null;
+  }
+}
+
 
     async function logWrongBin({ imei, scannedBin, trueLocation }) {
       try{
