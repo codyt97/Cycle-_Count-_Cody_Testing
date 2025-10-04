@@ -87,7 +87,7 @@
   <div class="topbar">
     <div class="container" style="display:flex;justify-content:space-between;align-items:center;">
       <div class="brand">
-        <img alt="ConnectUs" src="./downalod.png" width="301" height="83" />
+        <img alt="ConnectUs" src="./download.png" width="301" height="83" />
         <div>
           <div class="title">Cycle Count – Bin Scan</div>
           <div class="subtitle">Match scanned IMEIs to system snapshot • hard-fail wrong bins</div>
@@ -407,8 +407,11 @@
         showAlerts(alerts,[{type:"ok",msg:`Loaded <b>${rows.length}</b> IMEIs for bin <b>${escapeHTML(bin)}</b>.`}]);
         renderTable(); scanInput.focus();
       }catch(err){
-        showAlerts(alerts,[{type:"warn",msg:`Failed to load bin.`}]); rows = []; renderTable();
-      }finally{ binSubmit.disabled=false; }
+  const msg = (err && err.message) ? String(err.message) : "Failed to load bin.";
+  showAlerts(alerts,[{type:"warn",msg:`Failed to load bin.<br><small>${escapeHTML(msg)}</small>`}]);
+  rows = []; renderTable();
+}finally{ binSubmit.disabled=false; }
+
     });
 
     resetBtn.addEventListener("click", () => {
