@@ -57,35 +57,42 @@ export default async function handler(req, res) {
     });
 
     // Build filters: Bin equals + Location IN [KOP,3PL]
-    const baseFilters = [
-      {
-        PropertyName: OT_BIN_PROP,
-        FilterOperation: "Equals",
-        Value: bin,
-      },
-      {
-        PropertyName: OT_LOCATION_FIELD,
-        FilterOperation: "In",
-        Values: OT_LOCATION_VALUES,
-      },
-    ];
+    // Build filters (generate multiple dialects OT tenants accept)
+const makeFilterDialects = (bin) => {
+  const binEq_prop = { PropertyName: OT_BIN_PROP, FilterOperation: "Equals", Value: bin };
+  const binEq_field = { FieldName: OT_BIN_PROP,   Operator: "Equals",       FilterValue: bin };
 
-    // Body variants to try (two canonical shapes the API accepts)
-    const buildBodies = (type, pageNo, pageSize) => ([
-      // canonical #1
-      {
-        Type: type,
-        Filters: baseFilters,
-        PageNumber: pageNo,
-        NumberOfRecords: pageSize,
-      },
-      // canonical #2 with PageNo/PageSize naming
-      {
-        Type: type,
-        Filters: baseFilters,
-        PageNo: pageNo,
-        PageSize: pageSize,
-      },
+  const locIn_prop  = { PropertyName: OT_LOCATION_FIELD, FilterOperation: "In",  Values: OT_LOCATION_VALUES };
+  const locIn_field = { FieldName: OT_LOCATION_FIELD,     Operator: "In",        FilterValues: OT_LOCATION_VALUES };
+
+  // Two full filter sets we’ll try
+  return [
+    [binEq_prop, locIn_prop],
+    [binEq_field, locIn_field],
+  ];
+};
+
+// Body variants to try (shape + wrapper + paging aliases)
+const buildBodies = (type, pageNo, pageSize) => {
+  const dialects = makeFilterDialects(bin);
+  const bodies = [];
+
+  for (const Filters of dialects) {
+    // canonical: PageNumber/NumberOfRecords
+    bodies.push({ Type: type, Filters, PageNumber: pageNo, NumberOfRecords: pageSize });
+
+    // alias: PageNo/PageSize
+    bodies.push({ Type: type, Filters, PageNo: pageNo, PageSize: pageSize });
+
+    // wrapper: { ListRequest: ... } with canonical paging
+    bodies.push({ ListRequest: { Type: type, Filters, PageNumber: pageNo, NumberOfRecords: pageSize } });
+
+    // wrapper + alias paging
+    bodies.push({ ListRequest: { Type: type, Filters, PageNo: pageNo, PageSize: pageSize } });
+  }
+  return bodies;
+};
+
     ]);
 
     const headers = makeHeaders();
