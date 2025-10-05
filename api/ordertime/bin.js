@@ -1,302 +1,341 @@
-/* eslint-disable no-console */
+// /api/ordertime/bin.js  (CommonJS, Vercel serverless)
 
-// --------- Config via environment (with safe defaults) ----------
-const OT_DEBUG = (process.env.OT_DEBUG || "0") === "1";
+const env = (k, d = undefined) => {
+  const v = process.env[k];
+  return v === undefined || v === "" ? d : v;
+};
+const bool = (k) => {
+  const v = env(k, "");
+  return v === "1" || v?.toLowerCase?.() === "true";
+};
+const dbgOn = bool("OT_DEBUG");
+const dbg = (...args) => { if (dbgOn) try { console.log("[bin]", ...args); } catch (_) {} };
 
-// Base URL: e.g. "https://services.ordertime.com"  OR  "https://services.ordertime.com/api"
-const OT_BASE_URL = (process.env.OT_BASE_URL || "https://services.ordertime.com").trim();
-
-// Try these paths in order; code will join with URL(), so no /api/api problems.
-const OT_LIST_PATHS = readArrayEnv("OT_LIST_PATHS", ["/api/List", "/List"]);
-
-// Which property holds the bin/location bin name.
-const OT_BIN_PROP = process.env.OT_BIN_PROP || "LocationBinRef.Name";
-
-// Location field and allowed values for the “IN” filter (your KOP & 3PL ask).
-const OT_LOCATION_FIELD = process.env.OT_LOCATION_FIELD || "LocationRef.Name";
-const OT_LOCATION_VALUES = readArrayEnv("OT_LOCATION_VALUES", ["KOP", "3PL"]);
-
-// Page size (keep it ≤ 500 to avoid long responses)
-const OT_LIST_PAGE_SIZE = toInt(process.env.OT_LIST_PAGE_SIZE, 500);
-
-// Numeric record “Type” candidates to try; keep integers only.
-const OT_SERIAL_TYPES = readArrayEnv("OT_SERIAL_TYPES", [1100, 1101, 1200, 1201]).map(toInt);
-
-// Credentials (OrderTime usually accepts Basic + API key; keep any that apply).
-const OT_API_KEY = (process.env.OT_API_KEY || "").trim();
-const OT_EMAIL = (process.env.OT_EMAIL || "").trim();
-const OT_PASSWORD = (process.env.OT_PASSWORD || "").trim();
-
-// Per-call timeout (ms). Keep this well under Vercel’s 5s total. We’ll try few variants quickly.
-const CALL_TIMEOUT_MS = toInt(process.env.OT_CALL_TIMEOUT_MS, 1200);
-
-// Max attempts guardrail
-const MAX_TOTAL_ATTEMPTS = toInt(process.env.OT_MAX_ATTEMPTS, 10);
-
-// ----------------------------------------------------------------
-
-module.exports = async function handler(req, res) {
+// ---------- ENV PARSERS ----------
+const parseArray = (raw, fallback = []) => {
+  if (!raw) return fallback.slice();
+  if (Array.isArray(raw)) return raw.slice();
+  const s = String(raw).trim();
+  if (!s) return fallback.slice();
+  // Try JSON first
   try {
-    if (req.method !== "GET") {
-      res.setHeader("Allow", "GET");
-      return res.status(405).json({ error: "Method Not Allowed" });
-    }
-
-    const bin = (req.query.bin || "").toString().trim();
-    if (!bin) return res.status(400).json({ error: "Missing ?bin=…" });
-
-    // quick debug banner
-    dbg("[bin] params", {
-      bin,
-      pageSize: OT_LIST_PAGE_SIZE,
-      forcedProp: OT_BIN_PROP,
-      locationField: OT_LOCATION_FIELD,
-      locationValues: OT_LOCATION_VALUES,
-      types: OT_SERIAL_TYPES,
-      listPaths: OT_LIST_PATHS,
-    });
-
-    // Build filters: Bin equals + Location IN [KOP,3PL]
-    // Build filters (generate multiple dialects OT tenants accept)
-const makeFilterDialects = (bin) => {
-  const binEq_prop = { PropertyName: OT_BIN_PROP, FilterOperation: "Equals", Value: bin };
-  const binEq_field = { FieldName: OT_BIN_PROP,   Operator: "Equals",       FilterValue: bin };
-
-  const locIn_prop  = { PropertyName: OT_LOCATION_FIELD, FilterOperation: "In",  Values: OT_LOCATION_VALUES };
-  const locIn_field = { FieldName: OT_LOCATION_FIELD,     Operator: "In",        FilterValues: OT_LOCATION_VALUES };
-
-  // Two full filter sets we’ll try
-  return [
-    [binEq_prop, locIn_prop],
-    [binEq_field, locIn_field],
-  ];
+    const arr = JSON.parse(s);
+    if (Array.isArray(arr)) return arr;
+  } catch (_) {}
+  // Then CSV (strip spaces)
+  return s.split(",").map(x => x.trim()).filter(Boolean);
 };
 
-// Body variants to try (shape + wrapper + paging aliases)
-const buildBodies = (type, pageNo, pageSize) => {
-  const dialects = makeFilterDialects(bin);
-  const bodies = [];
+// ---------- CONFIG ----------
+const OT_BASE_URL = (env("OT_BASE_URL", "https://services.ordertime.com")).replace(/\/+$/, "");
+const OT_LIST_PATHS = parseArray(env("OT_LIST_PATHS", '["/api/List","/List"]'), ["/api/List","/List"]);
+const OT_LIST_PAGE_SIZE = Number(env("OT_LIST_PAGE_SIZE", 500)) || 500;
 
-  for (const Filters of dialects) {
-    // canonical: PageNumber/NumberOfRecords
-    bodies.push({ Type: type, Filters, PageNumber: pageNo, NumberOfRecords: pageSize });
+const OT_EMAIL = env("OT_EMAIL", "").trim();
+const OT_API_KEY = env("OT_API_KEY", "").trim();
+const OT_DEVKEY = env("OT_DEVKEY", "").trim();
+const OT_PASSWORD = env("OT_PASSWORD", "").trim();
 
-    // alias: PageNo/PageSize
-    bodies.push({ Type: type, Filters, PageNo: pageNo, PageSize: pageSize });
+const OT_LIST_TYPENAME = env("OT_LIST_TYPENAME", "").trim(); // e.g. InventoryLotSerial
+const OT_SERIAL_TYPES = (() => {
+  const arr = parseArray(env("OT_SERIAL_TYPES", "[1100,1101,1200,1201]"), [1100,1101,1200,1201]);
+  // normalize to numbers where possible
+  return arr.map(x => (typeof x === "string" && /^\d+$/.test(x)) ? Number(x) : x);
+})();
 
-    // wrapper: { ListRequest: ... } with canonical paging
-    bodies.push({ ListRequest: { Type: type, Filters, PageNumber: pageNo, NumberOfRecords: pageSize } });
+// bin + location filters
+const OT_BIN_PROP = env("OT_BIN_PROP", "LocationBinRef.Name").trim();
+const OT_LOCATION_FIELD = env("OT_LOCATION_FIELD", "LocationRef.Name").trim();
+const OT_LOCATION_VALUES = parseArray(env("OT_LOCATION_VALUES", "[]"), []);
 
-    // wrapper + alias paging
-    bodies.push({ ListRequest: { Type: type, Filters, PageNo: pageNo, PageSize: pageSize } });
+// ---------- HELPERS ----------
+const withTimeout = (ms = Number(env("OT_TIMEOUT_MS", 12000))) => {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort("timeout"), ms);
+  return { signal: ctrl.signal, cancel: () => clearTimeout(t) };
+};
+
+const makeHeaders = () => {
+  if (!OT_EMAIL) throw new Error("Missing env OT_EMAIL");
+  if (!OT_API_KEY) throw new Error("Missing env OT_API_KEY");
+  if (!OT_DEVKEY && !OT_PASSWORD) throw new Error("Missing one of OT_DEVKEY or OT_PASSWORD");
+
+  const h = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    email: OT_EMAIL,
+    apikey: OT_API_KEY,
+  };
+  if (OT_DEVKEY) h.devkey = OT_DEVKEY;
+  if (OT_PASSWORD) h.password = OT_PASSWORD;
+  return h;
+};
+
+const joinUrl = (base, path) => {
+  if (!path) return base;
+  if (base.endsWith("/") && path.startsWith("/")) return base + path.slice(1);
+  if (!base.endsWith("/") && !path.startsWith("/")) return base + "/" + path;
+  return base + path;
+};
+
+const typeForms = () => {
+  const out = [];
+  if (OT_LIST_TYPENAME) out.push({ TypeName: OT_LIST_TYPENAME });
+  // numeric types (allow both numeric and already-typed objects)
+  for (const t of OT_SERIAL_TYPES) {
+    if (typeof t === "object") out.push(t);
+    else out.push({ Type: t });
   }
-  return bodies;
+  // common typenames (fallbacks)
+  out.push({ TypeName: "InventoryLotSerial" });
+  out.push({ TypeName: "ItemLocationSerial" });
+  out.push({ TypeName: "LotOrSerialNo" });
+  return dedupeObjects(out);
 };
 
+const dedupeObjects = (arr) => {
+  const seen = new Set();
+  const out = [];
+  for (const o of arr) {
+    const k = JSON.stringify(o);
+    if (!seen.has(k)) { seen.add(k); out.push(o); }
+  }
+  return out;
+};
 
-    const headers = makeHeaders();
+// Build filters (two dialects) for the given bin/location
+const makeFilterDialects = (bin) => {
+  // PropertyName/FilterOperation + Values
+  const propBinEq = { PropertyName: OT_BIN_PROP,       FilterOperation: "Equals", Value: bin };
+  const propLocIn = { PropertyName: OT_LOCATION_FIELD, FilterOperation: "In",     Values: OT_LOCATION_VALUES };
 
-    // Try each path, each type, and each body shape until one answers 200.
-    let attempts = 0;
-    let lastErr = null;
+  // FieldName/Operator + FilterValues
+  const fldBinEq =  { FieldName: OT_BIN_PROP,       Operator: "Equals",      FilterValue: bin };
+  const fldLocIn =  { FieldName: OT_LOCATION_FIELD, Operator: "In",          FilterValues: OT_LOCATION_VALUES };
 
-    for (const listPath of OT_LIST_PATHS) {
-      for (const type of OT_SERIAL_TYPES) {
-        // paginate until exhausted for the first body that returns 200
-        for (const bodyVariant of buildBodies(type, 1, OT_LIST_PAGE_SIZE)) {
-          attempts++;
-          if (attempts > MAX_TOTAL_ATTEMPTS) throw lastErr || new Error("Exceeded max attempts");
+  const sets = [];
+  // If you don’t have location filters configured, don’t include them
+  if (OT_LOCATION_VALUES.length) {
+    sets.push([propBinEq, propLocIn]);
+    sets.push([fldBinEq,  fldLocIn ]);
+  } else {
+    sets.push([propBinEq]);
+    sets.push([fldBinEq ]);
+  }
+  return sets;
+};
 
-          let page = 1;
-          const allRows = [];
+// Build payload shapes for a type + one filter set
+const buildBodiesFor = (typeKv, filters, pageNo, pageSize) => {
+  const b = [];
 
-          try {
-            while (true) {
-              const body = { ...bodyVariant };
-              if ("PageNumber" in body) body.PageNumber = page;
-              if ("PageNo" in body) body.PageNo = page;
+  // canonical paging
+  const canon = {
+    ...typeKv,
+    Filters: filters,
+    PageNumber: pageNo,
+    NumberOfRecords: pageSize,
+  };
+  // alias paging
+  const alias = {
+    ...typeKv,
+    Filters: filters,
+    PageNo: pageNo,
+    PageSize: pageSize,
+  };
 
-              const { ok, status, data, text, url, tooSlow } = await postJsonOnce(
-                joinSmart(OT_BASE_URL, listPath),
-                body,
-                headers,
-                CALL_TIMEOUT_MS
-              );
+  // raw bodies
+  b.push(canon);
+  b.push(alias);
+  // wrapped
+  b.push({ ListRequest: canon });
+  b.push({ ListRequest: alias });
 
-              dbg(`[OT] POST ${url} type:${type} bodyShape:${shapeName(bodyVariant)} page:${page} -> ${status}${tooSlow ? " (timeout)" : ""}`);
+  return b;
+};
 
-              if (status === 404) {
-                // wrong path – try next path immediately
-                throw markPathError(new Error(text || "404 Not Found"));
+// Extract normalized row from an OT record
+const toRow = (rec, fallbackBin) => {
+  const loc =
+    rec?.LocationBinRef?.Name ??
+    rec?.BinRef?.Name ??
+    rec?.LocationBin?.Name ??
+    rec?.Bin?.Name ??
+    rec?.Location?.Name ??
+    fallbackBin;
+
+  const sku =
+    rec?.ItemRef?.Name ??
+    rec?.ItemCode ??
+    rec?.Item?.Code ??
+    rec?.Code ??
+    "—";
+
+  const description =
+    rec?.ItemName ??
+    rec?.Description ??
+    rec?.Item?.Name ??
+    "—";
+
+  const serial =
+    rec?.SerialNo ??
+    rec?.LotNo ??
+    rec?.Serial ??
+    rec?.LotOrSerialNo ??
+    rec?.imei ??
+    rec?.IMEI ??
+    rec?.SerialNumber ??
+    "";
+
+  return {
+    location: String(loc || fallbackBin || ""),
+    sku: String(sku || "—"),
+    description: String(description || "—"),
+    systemImei: String(serial || ""),
+    raw: undefined, // keep slim; comment this line to return full raw
+  };
+};
+
+// ---------- MAIN HANDLER ----------
+module.exports = async function handler(req, res) {
+  const bin = (req.query && req.query.bin || "").trim();
+  if (!bin) return res.status(400).json({ error: "bin is required" });
+
+  const pageSize = Math.min(OT_LIST_PAGE_SIZE, 1000);
+  const headers = makeHeaders();
+  const types = typeForms();
+  const listPaths = OT_LIST_PATHS && OT_LIST_PATHS.length ? OT_LIST_PATHS : ["/api/List","/List"];
+
+  const filterSets = makeFilterDialects(bin);
+  dbg("params", {
+    bin,
+    pageSize,
+    forcedProp: OT_BIN_PROP,
+    locationField: OT_LOCATION_FIELD,
+    locationValues: OT_LOCATION_VALUES,
+    types: types.map(t => t.Type ?? t.TypeName ?? t.RecordType ?? "?"),
+    listPaths,
+  });
+
+  const rows = [];
+  const errors = [];
+
+  try {
+    // Iterate paths first so we prefer /api/List then /List
+    for (const path of listPaths) {
+      const url = joinUrl(OT_BASE_URL, path);
+
+      // Iterate type forms (Type / TypeName / RecordType)
+      for (const typeKv of types) {
+        // paging loop
+        let pageNo = 1;
+        while (true) {
+          let pageWorked = false;
+
+          // try each filter dialect & body shape
+          for (const filters of filterSets) {
+            const bodies = buildBodiesFor(typeKv, filters, pageNo, pageSize);
+
+            for (const body of bodies) {
+              const payload = JSON.stringify(body);
+              const to = withTimeout();
+              let status = 0, text = "";
+              try {
+                const resp = await fetch(url, {
+                  method: "POST",
+                  headers,
+                  body: payload,
+                  cache: "no-store",
+                  signal: to.signal,
+                });
+                status = resp.status;
+                text = await resp.text();
+                dbg("[OT] POST", url, "type:", (typeKv.Type ?? typeKv.TypeName ?? "?"), "page:", pageNo, "->", status);
+
+                if (status === 401 || status === 403) {
+                  to.cancel();
+                  return res.status(502).json({ error: "BIN API 502", message: "Unauthorized to OrderTime. Check OT_EMAIL/OT_API_KEY/OT_DEVKEY|OT_PASSWORD." });
+                }
+                if (status === 400) {
+                  // capture one representative 400 (but keep iterating)
+                  errors.push(`400 ${url} :: ${text.slice(0, 300)}`);
+                  to.cancel();
+                  continue;
+                }
+                if (status === 404) {
+                  errors.push(`404 ${url} (path not found)`);
+                  to.cancel();
+                  continue;
+                }
+                if (!resp.ok) {
+                  errors.push(`${status} ${url} :: ${text.slice(0, 300)}`);
+                  to.cancel();
+                  continue;
+                }
+
+                // must be JSON
+                let json;
+                try {
+                  json = JSON.parse(text);
+                } catch (e) {
+                  errors.push(`Non-JSON ${url} :: ${text.slice(0, 200)}`);
+                  to.cancel();
+                  continue;
+                }
+                to.cancel();
+
+                const recs = Array.isArray(json?.Records) ? json.Records :
+                             Array.isArray(json?.records) ? json.records : [];
+
+                // if this request worked, mark it
+                pageWorked = true;
+
+                // collect
+                for (const r of recs) rows.push(toRow(r, bin));
+
+                // stop when last page (short page or empty)
+                if (recs.length < pageSize) {
+                  // we successfully completed all pages for this type/path
+                  // return immediately with results
+                  return res.status(200).json({
+                    bin,
+                    count: rows.length,
+                    rows,
+                    // Back-compat alias so older UI code that expects "records" still works
+                    records: rows,
+                  });
+                }
+
+                // else continue paging
+                pageNo += 1;
+              } catch (e) {
+                to.cancel();
+                const msg = e && e.name === "AbortError" ? "timeout" : String(e.message || e);
+                errors.push(`Fetch error ${url} :: ${msg}`);
+                continue; // try next body/dialect
               }
+            } // bodies
+          } // filter sets
 
-              if (!ok) {
-                // 4xx/5xx: keep trying other shapes/types/paths, but bail this inner loop
-                const msg = safeErrMsg(data, text);
-                throw new Error(msg);
-              }
-
-              const rows = Array.isArray(data?.Items) ? data.Items
-                         : Array.isArray(data?.items) ? data.items
-                         : Array.isArray(data?.Data)  ? data.Data
-                         : Array.isArray(data)        ? data
-                         : [];
-
-              allRows.push(...rows);
-
-              // break if we got less than page size or no pagination fields
-              const got = rows.length;
-              const wanted = ("NumberOfRecords" in body) ? body.NumberOfRecords
-                             : ("PageSize" in body) ? body.PageSize
-                             : OT_LIST_PAGE_SIZE;
-
-              if (!got || got < wanted) break; // exhausted
-              page++;
-            }
-
-            // success path
-            return res.status(200).json({
-              bin,
-              total: allRows.length,
-              rows: allRows,
-            });
-
-          } catch (e) {
-            lastErr = e;
-
-            // If it was a path problem, break to next path.
-            if (isPathError(e)) break;
-
-            // Otherwise, try next body variant/type
-            continue;
-          }
-        } // body variants
+          // if none of the bodies worked on this page, break paging loop for this type
+          if (!pageWorked) break;
+        } // while page
       } // types
     } // paths
-
-    throw lastErr || new Error("OrderTime did not return data");
-
-  } catch (err) {
-    console.error(err);
-    // Keep the message tight to avoid leaking internals
-    return res.status(502).json({
-      error: "BIN API 502",
-      message: err?.message || "Upstream error",
-    });
-  }
-}
-
-// ------------------------- helpers ------------------------------
-
-function readArrayEnv(name, fallback) {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  try {
-    // allow JSON like '["/api/List","/List"]'
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed;
-  } catch (_) {}
-  // or comma-separated
-  return raw.split(",").map((s) => s.trim()).filter(Boolean);
-}
-
-function toInt(v, d) {
-  const n = Number.parseInt(v, 10);
-  return Number.isFinite(n) ? n : d;
-}
-
-function dbg(...args) {
-  if (OT_DEBUG) console.log(...args);
-}
-
-// Construct URL safely (no double /api)
-function joinSmart(base, path) {
-  try {
-    // new URL handles absolute/relative joining correctly
-    const u = new URL(path, ensureEndsWithSlash(base));
-    return u.href;
-  } catch {
-    // ultra conservative fallback
-    const b = base.replace(/\/+$/, "");
-    const p = String(path || "").replace(/^\/+/, "");
-    return `${b}/${p}`;
-  }
-}
-
-function ensureEndsWithSlash(u) {
-  return u.endsWith("/") ? u : u + "/";
-}
-
-function makeHeaders() {
-  const h = { "Content-Type": "application/json" };
-
-  // Many OrderTime setups require Basic auth + API key header.
-  if (OT_EMAIL && OT_PASSWORD) {
-    const b64 = Buffer.from(`${OT_EMAIL}:${OT_PASSWORD}`).toString("base64");
-    h.Authorization = `Basic ${b64}`;
+  } catch (fatal) {
+    return res.status(502).json({ error: "BIN API 502", message: String(fatal && fatal.message || fatal) });
   }
 
-  if (OT_API_KEY) {
-    // support a few common header names
-    h["X-API-KEY"] = OT_API_KEY;
-    h["x-api-key"] = OT_API_KEY;
-    h["OT-API-Key"] = OT_API_KEY;
+  // If we got here, nothing succeeded
+  // Try to surface the most useful message
+  const authErr = errors.find(e => /Incorrect api key|deactivated|Unauthorized|401|403/i.test(e));
+  if (authErr) {
+    return res.status(502).json({ error: "BIN API 502", message: "Incorrect api key or invalid credentials." });
   }
-
-  return h;
-}
-
-async function postJsonOnce(url, body, headers, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let tooSlow = false;
-
-  try {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: controller.signal,
-      cache: "no-store",
-    });
-
-    const txt = await resp.text();
-    let data = null;
-    try { data = txt ? JSON.parse(txt) : null; } catch (_) {}
-
-    return {
-      ok: resp.ok,
-      status: resp.status,
-      text: txt,
-      data,
-      url,
-      tooSlow,
-    };
-  } catch (e) {
-    if (e.name === "AbortError") {
-      tooSlow = true;
-      return { ok: false, status: 599, text: "timeout", data: null, url, tooSlow };
-    }
-    return { ok: false, status: 598, text: e?.message || "network error", data: null, url, tooSlow };
-  } finally {
-    clearTimeout(timer);
+  // path 404s?
+  const pathErr = errors.find(e => /404 .*\/List/i);
+  if (pathErr) {
+    return res.status(502).json({ error: "BIN API 502", message: "OrderTime /List endpoint not found. Ensure OT_BASE_URL and OT_LIST_PATHS are set correctly." });
   }
-}
-
-function shapeName(body) {
-  if ("PageNumber" in body) return "PageNumber/NumberOfRecords";
-  if ("PageNo" in body) return "PageNo/PageSize";
-  return "unknown";
-}
-
-function safeErrMsg(json, text) {
-  if (json && typeof json === "object") {
-    if (typeof json.Message === "string") return json.Message;
-    if (typeof json.error === "string") return json.error;
-    if (typeof json.message === "string") return json.message;
-  }
-  return text || "Upstream error";
-}
-
-function markPathError(err) { err.__isPathError = true; return err; }
-function isPathError(err) { return !!err?.__isPathError; }
+  return res.status(502).json({ error: "BIN API 502", message: errors.slice(0, 5).join(" | ") || "All attempts failed." });
+};
