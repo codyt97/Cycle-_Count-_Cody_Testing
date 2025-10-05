@@ -1,4 +1,5 @@
 // /api/ordertime/list-probe.js  (CommonJS)
+OT_BIN_PROP=BinRef.Name
 const { otPostList } = require("./_client");
 
 // Candidate record types seen across OT tenants for inventory detail / lot/serial/bin listings
