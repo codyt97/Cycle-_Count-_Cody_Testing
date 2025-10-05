@@ -25,10 +25,9 @@ module.exports = async (req, res) => {
     }
 
     // Property to filter by
-    const forcedProp = (process.env.OT_BIN_PROP || "").trim();
-    const binProps = forcedProp
-      ? [forcedProp]
-      : ["BinRef.Name","LocationBinRef.Name","Bin.Name","LocationBin.Name","Location.Name"];
+    cconst forcedProp = (process.env.OT_BIN_PROP || "").trim();
+    const binProps = forcedProp ? [forcedProp] : ["LocationBinRef.Name"]; // <- replace with the probe winner
+
 
     let records = [];
     let lastErr;
@@ -64,11 +63,18 @@ module.exports = async (req, res) => {
     }
 
     const items = records.map(r => ({
-      location: r?.BinRef?.Name || r?.LocationBinRef?.Name || r?.Bin?.Name || r?.LocationBin?.Name || bin,
-      sku: r?.ItemRef?.Name || r?.ItemCode || "—",
-      description: r?.ItemName || r?.Description || "—",
-      systemImei: String(r?.SerialNo || r?.LotNo || r?.Serial || ""),
-    }));
+  location:
+    r?.LocationBinRef?.Name ||
+    r?.BinRef?.Name ||
+    r?.LocationBin?.Name ||
+    r?.Bin?.Name ||
+    r?.Location?.Name ||
+    bin,
+  sku: r?.ItemRef?.Name || r?.ItemCode || r?.Item?.Code || "—",
+  description: r?.ItemName || r?.Description || r?.Item?.Name || "—",
+  systemImei: String(r?.SerialNo || r?.LotNo || r?.Serial || r?.LotOrSerialNo || ""),
+}));
+
 
     return res.status(200).json({ bin, count: items.length, records: items });
   } catch (err) {
