@@ -1,111 +1,225 @@
 // /api/ordertime/bin.js
-const client = require("./_client.js");
-const otPostList = client && client.otPostList;
+// Loads a snapshot of system IMEIs in a given bin from OrderTime.
 
-/**
- * Env overrides:
- *   OT_SERIAL_TYPES   - JSON array of numeric Types (only used if your tenant supports numeric)
- *   OT_BIN_PROP       - exact property to filter on (e.g., "BinRef.Name", "Bin.Name")
- *   OT_LIST_PAGE_SIZE - default 500, max 1000
- */
+/* eslint-disable no-console */
+const { otPostList } = require("./_client");
+
+// ---------- small utils ----------
+const env = (k, d = undefined) => {
+  const v = process.env[k];
+  return v === undefined || v === "" ? d : v;
+};
+const bool = (k) => {
+  const v = env(k, "");
+  return v === "1" || v?.toLowerCase?.() === "true";
+};
+const dbgOn = bool("OT_DEBUG");
+const dbg = (...xs) => { if (dbgOn) console.log("[bin]", ...xs); };
+
+// Parse JSON env safely
+const parseJson = (raw, fallback) => {
+  try { return JSON.parse(raw); } catch { return fallback; }
+};
+
+// ---------- configuration ----------
+const pageSizeMax = 1000;
+const defaultPageSize = Math.min(
+  parseInt(env("OT_LIST_PAGE_SIZE", "500"), 10) || 500,
+  pageSizeMax
+);
+
+// Bin field cascade (unless OT_BIN_PROP pins one)
+const defaultBinProps = [
+  "LocationBinRef.Name",
+  "BinRef.Name",
+  "LocationBin.Name",
+  "Bin.Name",
+  "Location.Name",
+];
+
+// Location filter defaults (UI shows Location IN [...])
+const defaultLocationField = "LocationRef.Name";
+const defaultLocationValues = ["KOP", "3PL"];
+
+// Record type candidates: numeric + common typenames
+const defaultTypeNums  = [1100, 1101, 1200, 1201];
+const defaultTypeNames = [
+  "LotOrSerialNo",
+  "InventoryLotSerial",
+  "ItemLocationSerial",
+  "InventoryTransactionSerial",
+];
+
+// Build the ordered list of type forms we’ll try
+const buildTypeForms = () => {
+  const forms = [];
+
+  // Explicit overrides first
+  const typeName = env("OT_LIST_TYPENAME", "").trim();
+  if (typeName) forms.push({ TypeName: typeName });
+
+  const typeNums = env("OT_SERIAL_TYPES", "");
+  if (typeNums) {
+    const nums = parseJson(typeNums, []);
+    if (Array.isArray(nums)) for (const n of nums) forms.push(n);
+  }
+
+  // Then our defaults
+  for (const n of defaultTypeNums) forms.push(n);
+  for (const tn of defaultTypeNames) forms.push({ TypeName: tn });
+
+  // Dedupe
+  const seen = new Set();
+  return forms.filter((t) => {
+    const key = typeof t === "object" ? JSON.stringify(t) : String(t);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+// Normalize a List record into our client shape
+const normalizeRecord = (r = {}) => {
+  const bin =
+    r?.BinRef?.Name ||
+    r?.LocationBinRef?.Name ||
+    r?.Bin?.Name ||
+    r?.LocationBin?.Name ||
+    r?.Location?.Name ||
+    null;
+
+  const itemRef = r?.ItemRef?.Name || r?.ItemCode || null;
+  const itemName = r?.ItemName || r?.Description || null;
+
+  const serial =
+    r?.SerialNo || r?.Serial || r?.LotNo || r?.Lot || r?.IMEI || null;
+
+  const sku = r?.SKU || r?.ItemSKU || null;
+
+  return { bin, itemRef, itemName, serial, sku, raw: r };
+};
+
+// ---------- handler ----------
 module.exports = async (req, res) => {
-  const { bin } = req.query || {};
-  if (!bin) return res.status(400).json({ error: "Bin parameter is required" });
+  const bin = (req.query?.bin || req.body?.bin || "").trim();
+  if (!bin) {
+    return res.status(400).json({ error: "Query param ?bin= is required." });
+  }
+
+  // Env-driven knobs
+  const forcedProp = env("OT_BIN_PROP", "").trim() || null;
+  const binProps = forcedProp ? [forcedProp] : defaultBinProps;
+
+  const locationField = env("OT_LOCATION_FIELD", "").trim() || defaultLocationField;
+  const locationValues = (() => {
+    const raw = env("OT_LOCATION_VALUES", "");
+    if (!raw) return defaultLocationValues;
+    const arr = parseJson(raw, null);
+    return Array.isArray(arr) && arr.length ? arr : defaultLocationValues;
+  })();
+
+  const pageSize = defaultPageSize;
+  const typeForms = buildTypeForms();
+
+  dbg({ bin, pageSize, forcedProp, locationField, locationValues, typeForms });
+
+  let attempts = 0;
+  let lastErr = null;
+  const out = [];
 
   try {
-  const pageSize = Math.min(parseInt(process.env.OT_LIST_PAGE_SIZE || "500", 10), 1000);
-
-  // DEBUG/telemetry: count outbound attempts to OrderTime
-  let attempts = 0;
-
-
-    // Try Type(s) if your tenant still supports numeric Types; otherwise the client will switch to TypeName
-    let serialTypes = [1100,1101,1200,1201];
-    // The client can flip these to TypeName/RecordType internally, but we’ll seed more options.
-    if (process.env.OT_SERIAL_TYPES) {
-      try {
-        const parsed = JSON.parse(process.env.OT_SERIAL_TYPES);
-        if (Array.isArray(parsed) && parsed.length) serialTypes = parsed.map(n => parseInt(n,10)).filter(Boolean);
-      } catch(_) {}
-    }
-
-    // Property to filter by
-    const forcedProp = (process.env.OT_BIN_PROP || "").trim();
-    // Try a cascade of common bin/location fields if none is forced by env
-    const binProps = forcedProp ? [forcedProp] : [
-      "LocationBinRef.Name",
-      "BinRef.Name",
-      "LocationBin.Name",
-      "Bin.Name",
-      "Location.Name",
+    // Try each bin field, then each type
+    for (const prop of binProps) {
+      // Build the pair of filters the UI shows: Location IN (…) AND Bin IN (bin)
+      const baseFilters = [
+        { FieldName: locationField, Operator: "In",  FilterValues: locationValues },
+        { FieldName: prop,          Operator: "In",  FilterValues: [bin] },
       ];
- // <- replace with the probe winner
 
+      for (const t of typeForms) {
+        // The _client knows how to fan out different dialects; we provide the most explicit shape.
+        const params = {
+          ...(typeof t === "object" ? t : { Type: t }),
+          Filters: baseFilters,
+          PageNumber: 1,
+          NumberOfRecords: pageSize,
+        };
 
-    let records = [];
-    let lastErr;
+        attempts++;
+        dbg("try", { Type: params.Type ?? params.TypeName ?? params.RecordType, prop, page: 1, pageSize, bin, locations: locationValues });
 
-    // We’ll loop, but remember: the client may replace numeric Type with TypeName internally.
-    for (const Type of serialTypes) {
-      for (const prop of binProps) {
+        let data;
         try {
-          const all = [];
-          let page = 1;
-          while (true) {
-            attempts++;
-if (process.env.OT_DEBUG) {
-  console.log("[bin] try", { Type, prop, page, pageSize, bin });
-}
-const data = await otPostList({
-  Type, // ignored if client flips to TypeName under the hood
-  Filters: [{ FieldName: prop, Operator: "Equals", FilterValue: bin }],
-  PageNumber: page,
-  NumberOfRecords: pageSize,
-});
+          data = await otPostList(params);
+        } catch (e) {
+          lastErr = e;
+          dbg("err", String(e.message || e));
+          continue; // try next variant
+        }
 
-            const batch = data?.Records || [];
-            all.push(...batch);
-            if (batch.length < pageSize) break;
-            page++;
-          }
-          records = all;
-          // Accept success immediately; if zero results, it may just be an empty bin — that’s still valid.
-          if (records.length || forcedProp) break;
-        } catch (e) { lastErr = e; }
+        const records = Array.isArray(data?.Records) ? data.Records : [];
+        if (records.length) {
+          for (const r of records) out.push(normalizeRecord(r));
+          // We found a working shape with data — return immediately.
+          return res.status(200).json({
+            bin,
+            count: out.length,
+            records: out,
+            meta: {
+              binPropTried: prop,
+              typeUsed: params.Type ?? params.TypeName ?? params.RecordType ?? null,
+              pageSize,
+              locationField,
+              locationValues,
+            },
+          });
+        }
+        // If no rows for this variant, keep trying next type / prop
       }
-      if (records.length || forcedProp) break;
     }
 
-    // If we never even attempted a fetch, that's a misconfiguration (otPostList not reachable or short-circuited)
-if (!records.length && attempts === 0) {
-  return res.status(502).json({
-    error: "No requests sent to OrderTime. Check OT_BASE_URL, OT_API_KEY, OT_EMAIL, and OT_LIST_PATH envs.",
-  });
-}
+    // If we got here: no variant returned rows.
+    if (attempts === 0) {
+      return res.status(502).json({
+        error:
+          "No requests were sent to OrderTime. Check OT_BASE_URL / credentials / OT_LIST_PATH(S).",
+      });
+    }
 
-// If we attempted and got an error, bubble that up unless a forcedProp is specified
-if (!records.length && lastErr && !forcedProp) {
-  return res.status(502).json({ error: `OrderTime error: ${String(lastErr.message || lastErr)}` });
-}
+    // If _client reported structured error, pass it through for visibility.
+    if (lastErr) {
+      return res.status(502).json({
+        error: "OrderTime list failed for all variants.",
+        detail: String(lastErr.message || lastErr),
+        tried: {
+          binProps,
+          typeForms,
+          locationField,
+          locationValues,
+        },
+        bin,
+        count: 0,
+        records: [],
+      });
+    }
 
-
-    const items = records.map(r => ({
-  location:
-    r?.LocationBinRef?.Name ||
-    r?.BinRef?.Name ||
-    r?.LocationBin?.Name ||
-    r?.Bin?.Name ||
-    r?.Location?.Name ||
-    bin,
-  sku: r?.ItemRef?.Name || r?.ItemCode || r?.Item?.Code || "—",
-  description: r?.ItemName || r?.Description || r?.Item?.Name || "—",
-  systemImei: String(r?.SerialNo || r?.LotNo || r?.Serial || r?.LotOrSerialNo || ""),
-}));
-
-
-    return res.status(200).json({ bin, count: items.length, records: items });
-  } catch (err) {
-    console.error("bin.js error:", err);
-    return res.status(500).json({ error: "Failed to fetch bin snapshot from OrderTime" });
+    // Otherwise, we successfully called but got zero rows everywhere.
+    return res.status(200).json({
+      bin,
+      count: 0,
+      records: [],
+      meta: {
+        binPropsTried: binProps,
+        typeForms,
+        pageSize,
+        locationField,
+        locationValues,
+      },
+    });
+  } catch (fatal) {
+    return res.status(500).json({
+      error: "bin endpoint crashed",
+      detail: String(fatal && fatal.message || fatal),
+    });
   }
 };
