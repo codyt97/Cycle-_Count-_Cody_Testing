@@ -25,7 +25,7 @@ module.exports = async (req, res) => {
     }
 
     // Property to filter by
-    cconst forcedProp = (process.env.OT_BIN_PROP || "").trim();
+    const forcedProp = (process.env.OT_BIN_PROP || "").trim();
     const binProps = forcedProp ? [forcedProp] : ["LocationBinRef.Name"]; // <- replace with the probe winner
 
 
