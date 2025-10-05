@@ -13,7 +13,11 @@ module.exports = async (req, res) => {
   if (!bin) return res.status(400).json({ error: "Bin parameter is required" });
 
   try {
-    const pageSize = Math.min(parseInt(process.env.OT_LIST_PAGE_SIZE || "500", 10), 1000);
+  const pageSize = Math.min(parseInt(process.env.OT_LIST_PAGE_SIZE || "500", 10), 1000);
+
+  // DEBUG/telemetry: count outbound attempts to OrderTime
+  let attempts = 0;
+
 
     // Try Type(s) if your tenant still supports numeric Types; otherwise the client will switch to TypeName
     let serialTypes = [1100];
@@ -47,12 +51,17 @@ module.exports = async (req, res) => {
           const all = [];
           let page = 1;
           while (true) {
-            const data = await otPostList({
-              Type, // ignored if client flips to TypeName under the hood
-              Filters: [{ FieldName: prop, Operator: "Equals", FilterValue: bin }],
-              PageNumber: page,
-              NumberOfRecords: pageSize,
-            });
+            attempts++;
+if (process.env.OT_DEBUG) {
+  console.log("[bin] try", { Type, prop, page, pageSize, bin });
+}
+const data = await otPostList({
+  Type, // ignored if client flips to TypeName under the hood
+  Filters: [{ FieldName: prop, Operator: "Equals", FilterValue: bin }],
+  PageNumber: page,
+  NumberOfRecords: pageSize,
+});
+
             const batch = data?.Records || [];
             all.push(...batch);
             if (batch.length < pageSize) break;
@@ -66,9 +75,18 @@ module.exports = async (req, res) => {
       if (records.length || forcedProp) break;
     }
 
-    if (!records.length && lastErr && !forcedProp) {
-      return res.status(502).json({ error: `OrderTime error: ${String(lastErr.message || lastErr)}` });
-    }
+    // If we never even attempted a fetch, that's a misconfiguration (otPostList not reachable or short-circuited)
+if (!records.length && attempts === 0) {
+  return res.status(502).json({
+    error: "No requests sent to OrderTime. Check OT_BASE_URL, OT_API_KEY, OT_EMAIL, and OT_LIST_PATH envs.",
+  });
+}
+
+// If we attempted and got an error, bubble that up unless a forcedProp is specified
+if (!records.length && lastErr && !forcedProp) {
+  return res.status(502).json({ error: `OrderTime error: ${String(lastErr.message || lastErr)}` });
+}
+
 
     const items = records.map(r => ({
   location:
