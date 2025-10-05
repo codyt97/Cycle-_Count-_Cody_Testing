@@ -126,12 +126,51 @@ function payloadVariants(original){
   return variants;
 }
 
+function listPaths() {
+  // Allow a JSON array in OT_LIST_PATHS or a single OT_LIST_PATH; default to "/List"
+  const raw = (process.env.OT_LIST_PATHS || "").trim();
+  if (raw) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length) {
+        return arr.map(p => String(p || "/List").trim());
+      }
+    } catch (_) { /* fall through */ }
+  }
+  const single = (process.env.OT_LIST_PATH || "/List").trim();
+  return [single];
+}
+
+
+
 // ---------- core poster ----------
 async function otPostList(body){
-  const url = `${baseUrl()}${(process.env.OT_LIST_PATH||"/List").trim()}`;
-  const headers = authHeaders();
-  const variants = payloadVariants(body);
-  const errs = [];
+  const paths = listPaths();
+const headers = authHeaders();
+const variants = payloadVariants(body);
+const errs = [];
+
+for (const path of paths) {
+  const url = `${baseUrl()}${path}`;
+  for (const v of variants) {
+    const payload = JSON.stringify(v.body || {});
+    const to = withTimeout();
+    try {
+      dbg("POST", url, v.label, "len:", payload.length);
+      const res = await fetch(url, { method: "POST", headers, body: payload, cache: "no-store", signal: to.signal });
+      const text = await res.text();
+      dbg("RES", res.status, v.label);
+      if (!res.ok) { errs.push(`OT ${res.status} [${path} ${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
+      try { const json = JSON.parse(text); to.cancel(); return json; }
+      catch(e){ errs.push(`Non-JSON [${path} ${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
+    } catch(e) {
+      errs.push(`Fetch error [${path} ${v.label}] ${(e && e.name==="AbortError") ? "timeout" : String(e.message||e)}`);
+      to.cancel();
+    }
+  }
+}
+throw new Error(`All List shapes failed:\n- ${errs.join("\n- ")}`);
+
 
   for (const v of variants){
     const payload = JSON.stringify(v.body||{});
