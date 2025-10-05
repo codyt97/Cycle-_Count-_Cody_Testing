@@ -9,11 +9,12 @@ module.exports = async (req, res) => {
 
   try {
     const filters = [
-      { PropertyName: "SerialNo",       FilterValueArray: [String(imei)] },
-      { PropertyName: "LotNo",          FilterValueArray: [String(imei)] },
-      { PropertyName: "LotOrSerialNo",  FilterValueArray: [String(imei)] }, // some tenants expose this name
-      { PropertyName: "Serial",         FilterValueArray: [String(imei)] }, // seen in alt schemas
-   ];
+  { FieldName: "SerialNo",      Operator: "Equals", FilterValue: String(imei) },
+  { FieldName: "LotNo",         Operator: "Equals", FilterValue: String(imei) },
+  { FieldName: "LotOrSerialNo", Operator: "Equals", FilterValue: String(imei) },
+  { FieldName: "Serial",        Operator: "Equals", FilterValue: String(imei) }
+];
+
 
 
 let rec = null, lastErr = null;
