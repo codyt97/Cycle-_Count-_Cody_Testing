@@ -58,7 +58,7 @@ function canonicalListBodies(original){
   const pageSize = original.NumberOfRecords || original.PageSize || 500;
 
   const typeName = (process.env.OT_LIST_TYPENAME || "LotOrSerialNo").trim(); // default to LotOrSerialNo
-  const recType  = typeName; // for RecordType variant if needed later
+ 
 
   // Canonical 1: ListInfo + Type (string) + FieldName/FilterValue
   const canon1 = {
@@ -199,12 +199,8 @@ function listPaths() {
 
 // ---------- core poster ----------
 async function otPostList(body){
-const paths = (function(){
-  const raw = (process.env.OT_LIST_PATHS || "").trim();
-  if (raw) { try{ const arr = JSON.parse(raw); if (Array.isArray(arr) && arr.length) return arr.map(p=>String(p||"/List").trim()); }catch(_){} }
-  const single = (process.env.OT_LIST_PATH || "/List").trim();
-  return [single];
-})();
+const paths = listPaths();
+
 
 const headers = authHeaders();
 const canonicalBodies = canonicalListBodies(body);   // <— NEW
