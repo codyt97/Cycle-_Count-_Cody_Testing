@@ -1,225 +1,296 @@
-// /api/ordertime/bin.js
-// Loads a snapshot of system IMEIs in a given bin from OrderTime.
-
 /* eslint-disable no-console */
-const { otPostList } = require("./_client");
 
-// ---------- small utils ----------
-const env = (k, d = undefined) => {
-  const v = process.env[k];
-  return v === undefined || v === "" ? d : v;
-};
-const bool = (k) => {
-  const v = env(k, "");
-  return v === "1" || v?.toLowerCase?.() === "true";
-};
-const dbgOn = bool("OT_DEBUG");
-const dbg = (...xs) => { if (dbgOn) console.log("[bin]", ...xs); };
+// --------- Config via environment (with safe defaults) ----------
+const OT_DEBUG = (process.env.OT_DEBUG || "0") === "1";
 
-// Parse JSON env safely
-const parseJson = (raw, fallback) => {
-  try { return JSON.parse(raw); } catch { return fallback; }
-};
+// Base URL: e.g. "https://services.ordertime.com"  OR  "https://services.ordertime.com/api"
+const OT_BASE_URL = (process.env.OT_BASE_URL || "https://services.ordertime.com").trim();
 
-// ---------- configuration ----------
-const pageSizeMax = 1000;
-const defaultPageSize = Math.min(
-  parseInt(env("OT_LIST_PAGE_SIZE", "500"), 10) || 500,
-  pageSizeMax
-);
+// Try these paths in order; code will join with URL(), so no /api/api problems.
+const OT_LIST_PATHS = readArrayEnv("OT_LIST_PATHS", ["/api/List", "/List"]);
 
-// Bin field cascade (unless OT_BIN_PROP pins one)
-const defaultBinProps = [
-  "LocationBinRef.Name",
-  "BinRef.Name",
-  "LocationBin.Name",
-  "Bin.Name",
-  "Location.Name",
-];
+// Which property holds the bin/location bin name.
+const OT_BIN_PROP = process.env.OT_BIN_PROP || "LocationBinRef.Name";
 
-// Location filter defaults (UI shows Location IN [...])
-const defaultLocationField = "LocationRef.Name";
-const defaultLocationValues = ["KOP", "3PL"];
+// Location field and allowed values for the “IN” filter (your KOP & 3PL ask).
+const OT_LOCATION_FIELD = process.env.OT_LOCATION_FIELD || "LocationRef.Name";
+const OT_LOCATION_VALUES = readArrayEnv("OT_LOCATION_VALUES", ["KOP", "3PL"]);
 
-// Record type candidates: numeric + common typenames
-const defaultTypeNums  = [1100, 1101, 1200, 1201];
-const defaultTypeNames = [
-  "LotOrSerialNo",
-  "InventoryLotSerial",
-  "ItemLocationSerial",
-  "InventoryTransactionSerial",
-];
+// Page size (keep it ≤ 500 to avoid long responses)
+const OT_LIST_PAGE_SIZE = toInt(process.env.OT_LIST_PAGE_SIZE, 500);
 
-// Build the ordered list of type forms we’ll try
-const buildTypeForms = () => {
-  const forms = [];
+// Numeric record “Type” candidates to try; keep integers only.
+const OT_SERIAL_TYPES = readArrayEnv("OT_SERIAL_TYPES", [1100, 1101, 1200, 1201]).map(toInt);
 
-  // Explicit overrides first
-  const typeName = env("OT_LIST_TYPENAME", "").trim();
-  if (typeName) forms.push({ TypeName: typeName });
+// Credentials (OrderTime usually accepts Basic + API key; keep any that apply).
+const OT_API_KEY = (process.env.OT_API_KEY || "").trim();
+const OT_EMAIL = (process.env.OT_EMAIL || "").trim();
+const OT_PASSWORD = (process.env.OT_PASSWORD || "").trim();
 
-  const typeNums = env("OT_SERIAL_TYPES", "");
-  if (typeNums) {
-    const nums = parseJson(typeNums, []);
-    if (Array.isArray(nums)) for (const n of nums) forms.push(n);
+// Per-call timeout (ms). Keep this well under Vercel’s 5s total. We’ll try few variants quickly.
+const CALL_TIMEOUT_MS = toInt(process.env.OT_CALL_TIMEOUT_MS, 1200);
+
+// Max attempts guardrail
+const MAX_TOTAL_ATTEMPTS = toInt(process.env.OT_MAX_ATTEMPTS, 10);
+
+// ----------------------------------------------------------------
+
+export default async function handler(req, res) {
+  try {
+    if (req.method !== "GET") {
+      res.setHeader("Allow", "GET");
+      return res.status(405).json({ error: "Method Not Allowed" });
+    }
+
+    const bin = (req.query.bin || "").toString().trim();
+    if (!bin) return res.status(400).json({ error: "Missing ?bin=…" });
+
+    // quick debug banner
+    dbg("[bin] params", {
+      bin,
+      pageSize: OT_LIST_PAGE_SIZE,
+      forcedProp: OT_BIN_PROP,
+      locationField: OT_LOCATION_FIELD,
+      locationValues: OT_LOCATION_VALUES,
+      types: OT_SERIAL_TYPES,
+      listPaths: OT_LIST_PATHS,
+    });
+
+    // Build filters: Bin equals + Location IN [KOP,3PL]
+    const baseFilters = [
+      {
+        PropertyName: OT_BIN_PROP,
+        FilterOperation: "Equals",
+        Value: bin,
+      },
+      {
+        PropertyName: OT_LOCATION_FIELD,
+        FilterOperation: "In",
+        Values: OT_LOCATION_VALUES,
+      },
+    ];
+
+    // Body variants to try (two canonical shapes the API accepts)
+    const buildBodies = (type, pageNo, pageSize) => ([
+      // canonical #1
+      {
+        Type: type,
+        Filters: baseFilters,
+        PageNumber: pageNo,
+        NumberOfRecords: pageSize,
+      },
+      // canonical #2 with PageNo/PageSize naming
+      {
+        Type: type,
+        Filters: baseFilters,
+        PageNo: pageNo,
+        PageSize: pageSize,
+      },
+    ]);
+
+    const headers = makeHeaders();
+
+    // Try each path, each type, and each body shape until one answers 200.
+    let attempts = 0;
+    let lastErr = null;
+
+    for (const listPath of OT_LIST_PATHS) {
+      for (const type of OT_SERIAL_TYPES) {
+        // paginate until exhausted for the first body that returns 200
+        for (const bodyVariant of buildBodies(type, 1, OT_LIST_PAGE_SIZE)) {
+          attempts++;
+          if (attempts > MAX_TOTAL_ATTEMPTS) throw lastErr || new Error("Exceeded max attempts");
+
+          let page = 1;
+          const allRows = [];
+
+          try {
+            while (true) {
+              const body = { ...bodyVariant };
+              if ("PageNumber" in body) body.PageNumber = page;
+              if ("PageNo" in body) body.PageNo = page;
+
+              const { ok, status, data, text, url, tooSlow } = await postJsonOnce(
+                joinSmart(OT_BASE_URL, listPath),
+                body,
+                headers,
+                CALL_TIMEOUT_MS
+              );
+
+              dbg(`[OT] POST ${url} type:${type} bodyShape:${shapeName(bodyVariant)} page:${page} -> ${status}${tooSlow ? " (timeout)" : ""}`);
+
+              if (status === 404) {
+                // wrong path – try next path immediately
+                throw markPathError(new Error(text || "404 Not Found"));
+              }
+
+              if (!ok) {
+                // 4xx/5xx: keep trying other shapes/types/paths, but bail this inner loop
+                const msg = safeErrMsg(data, text);
+                throw new Error(msg);
+              }
+
+              const rows = Array.isArray(data?.Items) ? data.Items
+                         : Array.isArray(data?.items) ? data.items
+                         : Array.isArray(data?.Data)  ? data.Data
+                         : Array.isArray(data)        ? data
+                         : [];
+
+              allRows.push(...rows);
+
+              // break if we got less than page size or no pagination fields
+              const got = rows.length;
+              const wanted = ("NumberOfRecords" in body) ? body.NumberOfRecords
+                             : ("PageSize" in body) ? body.PageSize
+                             : OT_LIST_PAGE_SIZE;
+
+              if (!got || got < wanted) break; // exhausted
+              page++;
+            }
+
+            // success path
+            return res.status(200).json({
+              bin,
+              total: allRows.length,
+              rows: allRows,
+            });
+
+          } catch (e) {
+            lastErr = e;
+
+            // If it was a path problem, break to next path.
+            if (isPathError(e)) break;
+
+            // Otherwise, try next body variant/type
+            continue;
+          }
+        } // body variants
+      } // types
+    } // paths
+
+    throw lastErr || new Error("OrderTime did not return data");
+
+  } catch (err) {
+    console.error(err);
+    // Keep the message tight to avoid leaking internals
+    return res.status(502).json({
+      error: "BIN API 502",
+      message: err?.message || "Upstream error",
+    });
+  }
+}
+
+// ------------------------- helpers ------------------------------
+
+function readArrayEnv(name, fallback) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  try {
+    // allow JSON like '["/api/List","/List"]'
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+  } catch (_) {}
+  // or comma-separated
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function toInt(v, d) {
+  const n = Number.parseInt(v, 10);
+  return Number.isFinite(n) ? n : d;
+}
+
+function dbg(...args) {
+  if (OT_DEBUG) console.log(...args);
+}
+
+// Construct URL safely (no double /api)
+function joinSmart(base, path) {
+  try {
+    // new URL handles absolute/relative joining correctly
+    const u = new URL(path, ensureEndsWithSlash(base));
+    return u.href;
+  } catch {
+    // ultra conservative fallback
+    const b = base.replace(/\/+$/, "");
+    const p = String(path || "").replace(/^\/+/, "");
+    return `${b}/${p}`;
+  }
+}
+
+function ensureEndsWithSlash(u) {
+  return u.endsWith("/") ? u : u + "/";
+}
+
+function makeHeaders() {
+  const h = { "Content-Type": "application/json" };
+
+  // Many OrderTime setups require Basic auth + API key header.
+  if (OT_EMAIL && OT_PASSWORD) {
+    const b64 = Buffer.from(`${OT_EMAIL}:${OT_PASSWORD}`).toString("base64");
+    h.Authorization = `Basic ${b64}`;
   }
 
-  // Then our defaults
-  for (const n of defaultTypeNums) forms.push(n);
-  for (const tn of defaultTypeNames) forms.push({ TypeName: tn });
-
-  // Dedupe
-  const seen = new Set();
-  return forms.filter((t) => {
-    const key = typeof t === "object" ? JSON.stringify(t) : String(t);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-};
-
-// Normalize a List record into our client shape
-const normalizeRecord = (r = {}) => {
-  const bin =
-    r?.BinRef?.Name ||
-    r?.LocationBinRef?.Name ||
-    r?.Bin?.Name ||
-    r?.LocationBin?.Name ||
-    r?.Location?.Name ||
-    null;
-
-  const itemRef = r?.ItemRef?.Name || r?.ItemCode || null;
-  const itemName = r?.ItemName || r?.Description || null;
-
-  const serial =
-    r?.SerialNo || r?.Serial || r?.LotNo || r?.Lot || r?.IMEI || null;
-
-  const sku = r?.SKU || r?.ItemSKU || null;
-
-  return { bin, itemRef, itemName, serial, sku, raw: r };
-};
-
-// ---------- handler ----------
-module.exports = async (req, res) => {
-  const bin = (req.query?.bin || req.body?.bin || "").trim();
-  if (!bin) {
-    return res.status(400).json({ error: "Query param ?bin= is required." });
+  if (OT_API_KEY) {
+    // support a few common header names
+    h["X-API-KEY"] = OT_API_KEY;
+    h["x-api-key"] = OT_API_KEY;
+    h["OT-API-Key"] = OT_API_KEY;
   }
 
-  // Env-driven knobs
-  const forcedProp = env("OT_BIN_PROP", "").trim() || null;
-  const binProps = forcedProp ? [forcedProp] : defaultBinProps;
+  return h;
+}
 
-  const locationField = env("OT_LOCATION_FIELD", "").trim() || defaultLocationField;
-  const locationValues = (() => {
-    const raw = env("OT_LOCATION_VALUES", "");
-    if (!raw) return defaultLocationValues;
-    const arr = parseJson(raw, null);
-    return Array.isArray(arr) && arr.length ? arr : defaultLocationValues;
-  })();
-
-  const pageSize = defaultPageSize;
-  const typeForms = buildTypeForms();
-
-  dbg({ bin, pageSize, forcedProp, locationField, locationValues, typeForms });
-
-  let attempts = 0;
-  let lastErr = null;
-  const out = [];
+async function postJsonOnce(url, body, headers, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let tooSlow = false;
 
   try {
-    // Try each bin field, then each type
-    for (const prop of binProps) {
-      // Build the pair of filters the UI shows: Location IN (…) AND Bin IN (bin)
-      const baseFilters = [
-        { FieldName: locationField, Operator: "In",  FilterValues: locationValues },
-        { FieldName: prop,          Operator: "In",  FilterValues: [bin] },
-      ];
-
-      for (const t of typeForms) {
-        // The _client knows how to fan out different dialects; we provide the most explicit shape.
-        const params = {
-          ...(typeof t === "object" ? t : { Type: t }),
-          Filters: baseFilters,
-          PageNumber: 1,
-          NumberOfRecords: pageSize,
-        };
-
-        attempts++;
-        dbg("try", { Type: params.Type ?? params.TypeName ?? params.RecordType, prop, page: 1, pageSize, bin, locations: locationValues });
-
-        let data;
-        try {
-          data = await otPostList(params);
-        } catch (e) {
-          lastErr = e;
-          dbg("err", String(e.message || e));
-          continue; // try next variant
-        }
-
-        const records = Array.isArray(data?.Records) ? data.Records : [];
-        if (records.length) {
-          for (const r of records) out.push(normalizeRecord(r));
-          // We found a working shape with data — return immediately.
-          return res.status(200).json({
-            bin,
-            count: out.length,
-            records: out,
-            meta: {
-              binPropTried: prop,
-              typeUsed: params.Type ?? params.TypeName ?? params.RecordType ?? null,
-              pageSize,
-              locationField,
-              locationValues,
-            },
-          });
-        }
-        // If no rows for this variant, keep trying next type / prop
-      }
-    }
-
-    // If we got here: no variant returned rows.
-    if (attempts === 0) {
-      return res.status(502).json({
-        error:
-          "No requests were sent to OrderTime. Check OT_BASE_URL / credentials / OT_LIST_PATH(S).",
-      });
-    }
-
-    // If _client reported structured error, pass it through for visibility.
-    if (lastErr) {
-      return res.status(502).json({
-        error: "OrderTime list failed for all variants.",
-        detail: String(lastErr.message || lastErr),
-        tried: {
-          binProps,
-          typeForms,
-          locationField,
-          locationValues,
-        },
-        bin,
-        count: 0,
-        records: [],
-      });
-    }
-
-    // Otherwise, we successfully called but got zero rows everywhere.
-    return res.status(200).json({
-      bin,
-      count: 0,
-      records: [],
-      meta: {
-        binPropsTried: binProps,
-        typeForms,
-        pageSize,
-        locationField,
-        locationValues,
-      },
+    const resp = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+      cache: "no-store",
     });
-  } catch (fatal) {
-    return res.status(500).json({
-      error: "bin endpoint crashed",
-      detail: String(fatal && fatal.message || fatal),
-    });
+
+    const txt = await resp.text();
+    let data = null;
+    try { data = txt ? JSON.parse(txt) : null; } catch (_) {}
+
+    return {
+      ok: resp.ok,
+      status: resp.status,
+      text: txt,
+      data,
+      url,
+      tooSlow,
+    };
+  } catch (e) {
+    if (e.name === "AbortError") {
+      tooSlow = true;
+      return { ok: false, status: 599, text: "timeout", data: null, url, tooSlow };
+    }
+    return { ok: false, status: 598, text: e?.message || "network error", data: null, url, tooSlow };
+  } finally {
+    clearTimeout(timer);
   }
-};
+}
+
+function shapeName(body) {
+  if ("PageNumber" in body) return "PageNumber/NumberOfRecords";
+  if ("PageNo" in body) return "PageNo/PageSize";
+  return "unknown";
+}
+
+function safeErrMsg(json, text) {
+  if (json && typeof json === "object") {
+    if (typeof json.Message === "string") return json.Message;
+    if (typeof json.error === "string") return json.error;
+    if (typeof json.message === "string") return json.message;
+  }
+  return text || "Upstream error";
+}
+
+function markPathError(err) { err.__isPathError = true; return err; }
+function isPathError(err) { return !!err?.__isPathError; }
