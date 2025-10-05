@@ -109,15 +109,27 @@ function payloadVariants(original){
   ];
 
   const buildFilterVariants = f => ([
-    f,
-    ensureOperatorEquals(f),
-    toValuesKeys(f),
-    toValuesKeys(ensureOperatorEquals(f)),
-    toFieldName(f),
-    toFieldName(ensureOperatorEquals(f)),
-    toValuesKeys(toFieldName(f)),
-    toValuesKeys(toFieldName(ensureOperatorEquals(f))),
-  ]);
+  f,
+  ensureOperatorEquals(f),
+  // EqualTo versions
+  { ...f, Operator: "EqualTo" },
+  toValuesKeys({ ...f, Operator: "EqualTo" }),
+  toFieldName({ ...f, Operator: "EqualTo" }),
+  toValuesKeys(toFieldName({ ...f, Operator: "EqualTo" })),
+  // Contains versions (some tenants only accept Contains)
+  { ...f, Operator: "Contains" },
+  toValuesKeys({ ...f, Operator: "Contains" }),
+  toFieldName({ ...f, Operator: "Contains" }),
+  toValuesKeys(toFieldName({ ...f, Operator: "Contains" })),
+  // Existing FieldName/Values normalizations
+  toValuesKeys(f),
+  toValuesKeys(ensureOperatorEquals(f)),
+  toFieldName(f),
+  toFieldName(ensureOperatorEquals(f)),
+  toValuesKeys(toFieldName(f)),
+  toValuesKeys(toFieldName(ensureOperatorEquals(f))),
+]);
+
 
   const baseFilters = Array.isArray(original.Filters) && original.Filters.length ? original.Filters : [];
   const expandedFilters = baseFilters.length
@@ -222,8 +234,8 @@ for (const path of paths){
       dbg("POST", url, "canonical", "len:", payload.length);
       const res = await fetch(url, { method:"POST", headers, body:payload, cache:"no-store", signal:to.signal });
       const text = await res.text();
-      dbg("RES", res.status, "canonical");
-      if (!res.ok){ errs.push(`OT ${res.status} [${path} canonical] ${text.slice(0,300)}`); to.cancel(); }
+      dbg("RES", res.status, "canonical", "::", text.slice(0,200));
+      if (!res.ok){ errs.push(`OT ${res.status} [${path} canonical] ${text.slice(0,500)}`); to.cancel(); }
       else { try{ const json = JSON.parse(text); to.cancel(); return json; } catch(e){ errs.push(`Non-JSON [${path} canonical] ${text.slice(0,300)}`); to.cancel(); } }
     }catch(e){
       errs.push(`Fetch error [${path} canonical] ${(e && e.name==="AbortError") ? "timeout" : String(e.message||e)}`);
@@ -239,8 +251,8 @@ for (const path of paths){
       dbg("POST", url, v.label, "len:", payload.length);
       const res = await fetch(url, { method:"POST", headers, body:payload, cache:"no-store", signal:to.signal });
       const text = await res.text();
-      dbg("RES", res.status, v.label);
-      if (!res.ok){ errs.push(`OT ${res.status} [${path} ${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
+      dbg("RES", res.status, v.label, "::", text.slice(0,200));
+      if (!res.ok){ errs.push(`OT ${res.status} [${path} ${v.label}] ${text.slice(0,500)}`); to.cancel(); continue; }
       try { const json = JSON.parse(text); to.cancel(); return json; }
       catch(e){ errs.push(`Non-JSON [${path} ${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
     }catch(e){
