@@ -234,8 +234,8 @@ for (const path of paths){
       dbg("POST", url, "canonical", "len:", payload.length);
       const res = await fetch(url, { method:"POST", headers, body:payload, cache:"no-store", signal:to.signal });
       const text = await res.text();
-      dbg("RES", res.status, v.label, "::", text.slice(0,200));
-      if (!res.ok){ errs.push(`OT ${res.status} [${path} ${v.label}] ${text.slice(0,500)}`); to.cancel(); continue; }
+      dbg("RES", res.status, "canonical", "::", text.slice(0,200));
+      if (!res.ok){ errs.push(`OT ${res.status} [${path} canonical] ${text.slice(0,500)}`); to.cancel(); continue; }
       else { try{ const json = JSON.parse(text); to.cancel(); return json; } catch(e){ errs.push(`Non-JSON [${path} canonical] ${text.slice(0,300)}`); to.cancel(); } }
     }catch(e){
       errs.push(`Fetch error [${path} canonical] ${(e && e.name==="AbortError") ? "timeout" : String(e.message||e)}`);
@@ -243,26 +243,6 @@ for (const path of paths){
     }
   }
 
-  // 2) Then your existing variant explosion
-  for (const v of variants){
-    const payload = JSON.stringify(v.body||{});
-    const to = withTimeout();
-    try{
-      dbg("POST", url, v.label, "len:", payload.length);
-      const res = await fetch(url, { method:"POST", headers, body:payload, cache:"no-store", signal:to.signal });
-      const text = await res.text();
-      dbg("RES", res.status, v.label, "::", text.slice(0,200));
-      if (!res.ok){ errs.push(`OT ${res.status} [${path} ${v.label}] ${text.slice(0,500)}`); to.cancel(); continue; }
-      try { const json = JSON.parse(text); to.cancel(); return json; }
-      catch(e){ errs.push(`Non-JSON [${path} ${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
-    }catch(e){
-      errs.push(`Fetch error [${path} ${v.label}] ${(e && e.name==="AbortError") ? "timeout" : String(e.message||e)}`);
-      to.cancel();
-    }
-  }
-}
-
-throw new Error(`All List shapes failed:\n- ${errs.join("\n- ")}`);
 
 
 
