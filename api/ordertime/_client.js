@@ -58,7 +58,7 @@ function canonicalListBodies(original){
   const pageSize = original.NumberOfRecords || original.PageSize || 500;
 
   const typeName = (process.env.OT_LIST_TYPENAME || "LotOrSerialNo").trim(); // default to LotOrSerialNo
- 
+  const recType  = typeName; // for RecordType variant if needed later
 
   // Canonical 1: ListInfo + Type (string) + FieldName/FilterValue
   const canon1 = {
@@ -199,8 +199,12 @@ function listPaths() {
 
 // ---------- core poster ----------
 async function otPostList(body){
-const paths = listPaths();
-
+const paths = (function(){
+  const raw = (process.env.OT_LIST_PATHS || "").trim();
+  if (raw) { try{ const arr = JSON.parse(raw); if (Array.isArray(arr) && arr.length) return arr.map(p=>String(p||"/List").trim()); }catch(_){} }
+  const single = (process.env.OT_LIST_PATH || "/List").trim();
+  return [single];
+})();
 
 const headers = authHeaders();
 const canonicalBodies = canonicalListBodies(body);   // <— NEW
@@ -247,5 +251,47 @@ for (const path of paths){
 }
 
 throw new Error(`All List shapes failed:\n- ${errs.join("\n- ")}`);
+
+
+for (const path of paths) {
+  const url = `${baseUrl()}${path}`;
+  for (const v of variants) {
+    const payload = JSON.stringify(v.body || {});
+    const to = withTimeout();
+    try {
+      dbg("POST", url, v.label, "len:", payload.length);
+      const res = await fetch(url, { method: "POST", headers, body: payload, cache: "no-store", signal: to.signal });
+      const text = await res.text();
+      dbg("RES", res.status, v.label);
+      if (!res.ok) { errs.push(`OT ${res.status} [${path} ${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
+      try { const json = JSON.parse(text); to.cancel(); return json; }
+      catch(e){ errs.push(`Non-JSON [${path} ${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
+    } catch(e) {
+      errs.push(`Fetch error [${path} ${v.label}] ${(e && e.name==="AbortError") ? "timeout" : String(e.message||e)}`);
+      to.cancel();
+    }
+  }
+}
+throw new Error(`All List shapes failed:\n- ${errs.join("\n- ")}`);
+
+
+  for (const v of variants){
+    const payload = JSON.stringify(v.body||{});
+    const to = withTimeout();
+    try{
+      dbg("POST", url, v.label, "len:", payload.length);
+      const res = await fetch(url, { method:"POST", headers, body:payload, cache:"no-store", signal:to.signal });
+      const text = await res.text();
+      dbg("RES", res.status, v.label);
+      if (!res.ok){ errs.push(`OT ${res.status} [${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
+      try { const json = JSON.parse(text); to.cancel(); return json; }
+      catch(e){ errs.push(`Non-JSON [${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
+    }catch(e){
+      errs.push(`Fetch error [${v.label}] ${(e && e.name==="AbortError") ? "timeout" : String(e.message||e)}`);
+      to.cancel();
+    }
+  }
+  throw new Error(`All List shapes failed:\n- ${errs.join("\n- ")}`);
+}
 
 module.exports = { authHeaders, otPostList };
