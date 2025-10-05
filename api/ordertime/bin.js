@@ -26,7 +26,15 @@ module.exports = async (req, res) => {
 
     // Property to filter by
     const forcedProp = (process.env.OT_BIN_PROP || "").trim();
-    const binProps = forcedProp ? [forcedProp] : ["LocationBinRef.Name"]; // <- replace with the probe winner
+    // Try a cascade of common bin/location fields if none is forced by env
+    const binProps = forcedProp ? [forcedProp] : [
+      "LocationBinRef.Name",
+      "BinRef.Name",
+      "LocationBin.Name",
+      "Bin.Name",
+      "Location.Name",
+      ];
+ // <- replace with the probe winner
 
 
     let records = [];
