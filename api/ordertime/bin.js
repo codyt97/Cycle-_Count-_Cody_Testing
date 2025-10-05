@@ -35,7 +35,7 @@ const MAX_TOTAL_ATTEMPTS = toInt(process.env.OT_MAX_ATTEMPTS, 10);
 
 // ----------------------------------------------------------------
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   try {
     if (req.method !== "GET") {
       res.setHeader("Allow", "GET");
@@ -93,7 +93,6 @@ const buildBodies = (type, pageNo, pageSize) => {
   return bodies;
 };
 
-    ]);
 
     const headers = makeHeaders();
 
