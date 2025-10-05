@@ -46,6 +46,60 @@ function useTypeName(b, name){ const x=clone(b); delete x.Type; x.TypeName=name;
 function useRecordTypeString(b, name){ const x=clone(b); delete x.Type; x.RecordType=name; return x; }
 const wrapListRequest = b => ({ ListRequest: b });
 
+function canonicalListBodies(original){
+  // Accept either PropertyName or FieldName in the incoming body; normalize to FieldName+FilterValue
+  const binFilter = Array.isArray(original.Filters) && original.Filters[0] ? original.Filters[0] : {};
+  const fieldName = binFilter.FieldName || binFilter.PropertyName || "";
+  const filterValue = (binFilter.FilterValue != null)
+    ? binFilter.FilterValue
+    : (Array.isArray(binFilter.FilterValueArray) ? binFilter.FilterValueArray[0] : undefined);
+
+  const pageNo = original.PageNumber || original.PageNo || 1;
+  const pageSize = original.NumberOfRecords || original.PageSize || 500;
+
+  const typeName = (process.env.OT_LIST_TYPENAME || "LotOrSerialNo").trim(); // default to LotOrSerialNo
+  const recType  = typeName; // for RecordType variant if needed later
+
+  // Canonical 1: ListInfo + Type (string) + FieldName/FilterValue
+  const canon1 = {
+    ListInfo: {
+      Type: typeName,
+      Filters: fieldName ? [{ FieldName: fieldName, Operator: "Equals", FilterValue: filterValue }] : [],
+      PageNumber: pageNo,
+      NumberOfRecords: pageSize
+    }
+  };
+
+  // Canonical 2: ListInfo + Type (number) if user insists on numeric (via env)
+  let canon2 = null;
+  if (process.env.OT_SERIAL_TYPES){
+    try{
+      const arr = JSON.parse(process.env.OT_SERIAL_TYPES);
+      const n = Array.isArray(arr) && arr.length ? parseInt(arr[0],10) : NaN;
+      if (!isNaN(n)) {
+        canon2 = {
+          ListInfo: {
+            Type: n,
+            Filters: fieldName ? [{ FieldName: fieldName, Operator: "Equals", FilterValue: filterValue }] : [],
+            PageNumber: pageNo,
+            NumberOfRecords: pageSize
+          }
+        };
+      }
+    }catch(_){}
+  }
+
+  // Canonical 3: Top-level (no ListInfo) but with FieldName/FilterValue keys
+  const canon3 = {
+    Type: typeName,
+    Filters: fieldName ? [{ FieldName: fieldName, Operator: "Equals", FilterValue: filterValue }] : [],
+    PageNumber: pageNo,
+    NumberOfRecords: pageSize
+  };
+
+  return [canon1].concat(canon2 ? [canon2] : []).concat([canon3]);
+}
+
 // Generate retry variants
 function payloadVariants(original){
   const tn = (process.env.OT_LIST_TYPENAME || "").trim();
@@ -145,10 +199,59 @@ function listPaths() {
 
 // ---------- core poster ----------
 async function otPostList(body){
-  const paths = listPaths();
+const paths = (function(){
+  const raw = (process.env.OT_LIST_PATHS || "").trim();
+  if (raw) { try{ const arr = JSON.parse(raw); if (Array.isArray(arr) && arr.length) return arr.map(p=>String(p||"/List").trim()); }catch(_){} }
+  const single = (process.env.OT_LIST_PATH || "/List").trim();
+  return [single];
+})();
+
 const headers = authHeaders();
-const variants = payloadVariants(body);
+const canonicalBodies = canonicalListBodies(body);   // <— NEW
+const variants = payloadVariants(body);              // existing retries
 const errs = [];
+
+for (const path of paths){
+  const url = `${baseUrl()}${path}`;
+
+  // 1) Canonical attempts FIRST
+  for (const canon of canonicalBodies){
+    const payload = JSON.stringify(canon);
+    const to = withTimeout();
+    try{
+      dbg("POST", url, "canonical", "len:", payload.length);
+      const res = await fetch(url, { method:"POST", headers, body:payload, cache:"no-store", signal:to.signal });
+      const text = await res.text();
+      dbg("RES", res.status, "canonical");
+      if (!res.ok){ errs.push(`OT ${res.status} [${path} canonical] ${text.slice(0,300)}`); to.cancel(); }
+      else { try{ const json = JSON.parse(text); to.cancel(); return json; } catch(e){ errs.push(`Non-JSON [${path} canonical] ${text.slice(0,300)}`); to.cancel(); } }
+    }catch(e){
+      errs.push(`Fetch error [${path} canonical] ${(e && e.name==="AbortError") ? "timeout" : String(e.message||e)}`);
+      to.cancel();
+    }
+  }
+
+  // 2) Then your existing variant explosion
+  for (const v of variants){
+    const payload = JSON.stringify(v.body||{});
+    const to = withTimeout();
+    try{
+      dbg("POST", url, v.label, "len:", payload.length);
+      const res = await fetch(url, { method:"POST", headers, body:payload, cache:"no-store", signal:to.signal });
+      const text = await res.text();
+      dbg("RES", res.status, v.label);
+      if (!res.ok){ errs.push(`OT ${res.status} [${path} ${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
+      try { const json = JSON.parse(text); to.cancel(); return json; }
+      catch(e){ errs.push(`Non-JSON [${path} ${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
+    }catch(e){
+      errs.push(`Fetch error [${path} ${v.label}] ${(e && e.name==="AbortError") ? "timeout" : String(e.message||e)}`);
+      to.cancel();
+    }
+  }
+}
+
+throw new Error(`All List shapes failed:\n- ${errs.join("\n- ")}`);
+
 
 for (const path of paths) {
   const url = `${baseUrl()}${path}`;
