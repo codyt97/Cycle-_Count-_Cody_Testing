@@ -20,7 +20,8 @@ module.exports = async (req, res) => {
 
 
     // Try Type(s) if your tenant still supports numeric Types; otherwise the client will switch to TypeName
-    let serialTypes = [1100];
+    let serialTypes = [1100,1101,1200,1201];
+    // The client can flip these to TypeName/RecordType internally, but we’ll seed more options.
     if (process.env.OT_SERIAL_TYPES) {
       try {
         const parsed = JSON.parse(process.env.OT_SERIAL_TYPES);
