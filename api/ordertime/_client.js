@@ -252,46 +252,4 @@ for (const path of paths){
 
 throw new Error(`All List shapes failed:\n- ${errs.join("\n- ")}`);
 
-
-for (const path of paths) {
-  const url = `${baseUrl()}${path}`;
-  for (const v of variants) {
-    const payload = JSON.stringify(v.body || {});
-    const to = withTimeout();
-    try {
-      dbg("POST", url, v.label, "len:", payload.length);
-      const res = await fetch(url, { method: "POST", headers, body: payload, cache: "no-store", signal: to.signal });
-      const text = await res.text();
-      dbg("RES", res.status, v.label);
-      if (!res.ok) { errs.push(`OT ${res.status} [${path} ${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
-      try { const json = JSON.parse(text); to.cancel(); return json; }
-      catch(e){ errs.push(`Non-JSON [${path} ${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
-    } catch(e) {
-      errs.push(`Fetch error [${path} ${v.label}] ${(e && e.name==="AbortError") ? "timeout" : String(e.message||e)}`);
-      to.cancel();
-    }
-  }
-}
-throw new Error(`All List shapes failed:\n- ${errs.join("\n- ")}`);
-
-
-  for (const v of variants){
-    const payload = JSON.stringify(v.body||{});
-    const to = withTimeout();
-    try{
-      dbg("POST", url, v.label, "len:", payload.length);
-      const res = await fetch(url, { method:"POST", headers, body:payload, cache:"no-store", signal:to.signal });
-      const text = await res.text();
-      dbg("RES", res.status, v.label);
-      if (!res.ok){ errs.push(`OT ${res.status} [${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
-      try { const json = JSON.parse(text); to.cancel(); return json; }
-      catch(e){ errs.push(`Non-JSON [${v.label}] ${text.slice(0,300)}`); to.cancel(); continue; }
-    }catch(e){
-      errs.push(`Fetch error [${v.label}] ${(e && e.name==="AbortError") ? "timeout" : String(e.message||e)}`);
-      to.cancel();
-    }
-  }
-  throw new Error(`All List shapes failed:\n- ${errs.join("\n- ")}`);
-}
-
 module.exports = { authHeaders, otPostList };
