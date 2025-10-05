@@ -41,7 +41,7 @@ module.exports = async (req, res) => {
           while (true) {
             const data = await otPostList({
               Type, // ignored if client flips to TypeName under the hood
-              Filters: [{ PropertyName: prop, FilterValueArray: [bin] }],
+              Filters: [{ FieldName: prop, Operator: "Equals", FilterValue: bin }],
               PageNumber: page,
               NumberOfRecords: pageSize,
             });
