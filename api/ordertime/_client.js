@@ -144,11 +144,17 @@ const buildFilterVariants = (f) => ([
   toFieldName({ ...f, Operator: "EqualTo" }),
   toValuesKeys(toFieldName({ ...f, Operator: "EqualTo" })),
 
-  // Contains dialects (some tenants require Contains)
+  // Contains dialects
   { ...f, Operator: "Contains" },
   toValuesKeys({ ...f, Operator: "Contains" }),
   toFieldName({ ...f, Operator: "Contains" }),
   toValuesKeys(toFieldName({ ...f, Operator: "Contains" })),
+
+  // ✅ In dialects (what your UI shows)
+  { ...f, Operator: "In" },
+  toValuesKeys({ ...f, Operator: "In" }),
+  toFieldName({ ...f, Operator: "In" }),
+  toValuesKeys(toFieldName({ ...f, Operator: "In" })),
 
   // Existing normalizations
   toValuesKeys(f),
@@ -158,6 +164,7 @@ const buildFilterVariants = (f) => ([
   toValuesKeys(toFieldName(f)),
   toValuesKeys(toFieldName(ensureOperatorEquals(f))),
 ]);
+
 
 // Wrap in { ListRequest: ... }
 const wrapListRequest = (b) => ({ ListRequest: b });
