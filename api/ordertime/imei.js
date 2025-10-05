@@ -9,9 +9,12 @@ module.exports = async (req, res) => {
 
   try {
     const filters = [
-  { PropertyName: "SerialNo", FilterValueArray: [String(imei)] },
-  { PropertyName: "LotNo",    FilterValueArray: [String(imei)] },
-];
+      { PropertyName: "SerialNo",       FilterValueArray: [String(imei)] },
+      { PropertyName: "LotNo",          FilterValueArray: [String(imei)] },
+      { PropertyName: "LotOrSerialNo",  FilterValueArray: [String(imei)] }, // some tenants expose this name
+      { PropertyName: "Serial",         FilterValueArray: [String(imei)] }, // seen in alt schemas
+   ];
+
 
 let rec = null, lastErr = null;
 for (const flt of filters) {
@@ -26,11 +29,18 @@ if (!rec) rec = {};
 
 
     const info = {
-      imei: String(imei),
-      location: rec?.BinRef?.Name || rec?.LocationBinRef?.Name || null,
-      sku: rec?.ItemRef?.Name || rec?.ItemCode || "—",
-      description: rec?.ItemName || rec?.Description || "—",
-    };
+  imei: String(imei),
+  location:
+    rec?.LocationBinRef?.Name ||
+    rec?.BinRef?.Name ||
+    rec?.LocationBin?.Name ||
+    rec?.Bin?.Name ||
+    rec?.Location?.Name ||
+    null,
+  sku: rec?.ItemRef?.Name || rec?.ItemCode || rec?.Item?.Code || "—",
+  description: rec?.ItemName || rec?.Description || rec?.Item?.Name || "—",
+};
+
 
     return res.status(200).json(info);
   } catch (err) {
