@@ -433,11 +433,6 @@
       "jess_s": { name:"Jessica Ernest", role:ROLES.SUPERVISOR, password:"pass" },
     };
 
-    // Normalize USERS to lowercase keys so lookups work with .toLowerCase()
-const USERS_LC = Object.fromEntries(
-  Object.entries(USERS).map(([k, v]) => [k.toLowerCase(), v])
-);
-
     // --- Auth state -----------------------------------------------
     let currentUser = null;
 
@@ -510,16 +505,15 @@ const USERS_LC = Object.fromEntries(
       el.innerHTML = items.map(a=>`<div class="alert ${a.type==='warn'?'warn':'ok'}">${a.msg}</div>`).join("");
     };
     const setKPIs = () => {
-  const total = rows.length;
-  const scannedCount = rows.filter(r => r.scannedImei === r.systemImei).length;
-  const missing = total - scannedCount;
-  [kpi.total, kpi.total2].forEach(el => el.textContent = total);
-  [kpi.scanned, kpi.scanned2].forEach(el => el.textContent = scannedCount);
-  [kpi.missing, kpi.missing2].forEach(el => el.textContent = missing);
-};
-const escapeHTML = (s="") =>
-  s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
-
+      const total = rows.length;
+      const scannedCount = rows.filter(r => r.scannedImei === r.systemImei).length;
+      const missing = total - scannedCount;
+      [kpi.total, kpi.total2].forEach(el => el.textContent = total);
+      [kpi.scanned, kpi.scanned2].forEach(el => el.textContent = scannedCount);
+      [kpi.missing, kpi.missing2].forEach(el => el.textContent = missing);
+    };
+    const escapeHTML = (s="") =>
+      s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
     const pad = n => String(n).padStart(2,"0");
     const ts = () => { const d=new Date(); return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; };
 
@@ -675,19 +669,18 @@ const escapeHTML = (s="") =>
       if (!currentBin) return;
       const scannedCount = rows.filter(r => r.scannedImei === r.systemImei).length;
       const missingList = rows
-  .filter(r => r.scannedImei !== r.systemImei)
-  .map(r => ({ sku: r.sku, description: r.description, systemImei: r.systemImei }));
+        .filter(r => r.scannedImei !== r.systemImei)
+        .map(r => ({ sku: r.sku, description: r.description, systemImei: r.systemImei }));
 
-const payload = {
-  bin: currentBin,
-  counter: currentUser?.name || "—",
-  total: rows.length,
-  scanned: scannedCount,
-  missing: rows.length - scannedCount,
-  items: rows,               // gives Investigator/Supervisor full line detail
-  missingImeis: missingList, // powers Not-Scanned table cleanly
-};
-
+      const payload = {
+        bin: currentBin,
+        counter: currentUser?.name || "—",
+        total: rows.length,
+        scanned: scannedCount,
+        missing: rows.length - scannedCount,
+        items: rows,               // line detail
+        missingImeis: missingList, // powers Not-Scanned
+      };
       try{
         if (!CONFIG.FORCE_MOCK){
           const res = await fetch(CONFIG.SUBMIT_BIN_ENDPOINT, {
@@ -761,7 +754,7 @@ const payload = {
       e.preventDefault();
       const u = (loginUser.value||"").trim().toLowerCase();
       const p = (loginPass.value||"").trim();
-      const found = USERS_LC[u];
+      const found = USERS[u];
       if (!found || found.password !== p){
         loginMsg.textContent = "Invalid username or password.";
         return;
@@ -791,7 +784,7 @@ const payload = {
         const raw = localStorage.getItem("cc_user");
         if (!raw) return;
         const parsed = JSON.parse(raw);
-        if (parsed && USERS_LC[parsed.username]){
+        if (parsed && USERS[parsed.username]){
           currentUser = parsed;
           authOverlay.style.display = "none";
           applyRoleUI();
