@@ -505,13 +505,21 @@
       el.innerHTML = items.map(a=>`<div class="alert ${a.type==='warn'?'warn':'ok'}">${a.msg}</div>`).join("");
     };
     const setKPIs = () => {
-      const total = rows.length;
       const scannedCount = rows.filter(r => r.scannedImei === r.systemImei).length;
-      const missing = total - scannedCount;
-      [kpi.total,kpi.total2].forEach(el=>el.textContent=total);
-      [kpi.scanned,kpi.scanned2].forEach(el=>el.textContent=scannedCount);
-      [kpi.missing,kpi.missing2].forEach(el=>el.textContent=missing);
-    };
+const missingList = rows
+  .filter(r => r.scannedImei !== r.systemImei)
+  .map(r => ({ sku: r.sku, description: r.description, systemImei: r.systemImei }));
+
+const payload = {
+  bin: currentBin,
+  counter: currentUser?.name || "—",
+  total: rows.length,
+  scanned: scannedCount,
+  missing: rows.length - scannedCount,
+  items: rows,               // gives Investigator/Supervisor full line detail
+  missingImeis: missingList, // powers Not-Scanned table cleanly
+};
+
     const escapeHTML = (s="") => s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
     const pad = n => String(n).padStart(2,"0");
     const ts = () => { const d=new Date(); return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; };
