@@ -755,7 +755,7 @@ const payload = {
       e.preventDefault();
       const u = (loginUser.value||"").trim().toLowerCase();
       const p = (loginPass.value||"").trim();
-      const found = USERS[u];
+      const found = USERS_LC[u];
       if (!found || found.password !== p){
         loginMsg.textContent = "Invalid username or password.";
         return;
@@ -785,7 +785,7 @@ const payload = {
         const raw = localStorage.getItem("cc_user");
         if (!raw) return;
         const parsed = JSON.parse(raw);
-        if (parsed && USERS[parsed.username]){
+        if (parsed && USERS_LC[parsed.username]){
           currentUser = parsed;
           authOverlay.style.display = "none";
           applyRoleUI();
