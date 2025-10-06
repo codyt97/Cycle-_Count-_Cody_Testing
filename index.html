@@ -81,7 +81,7 @@
     .actions{display:flex;gap:8px;margin-left:auto}
 
     /* Drawer */
-    .drawer{position:fixed;right:0;top:0;height:100vh;width:420px;max-width:90vw;background:#fff;border-left:1px solid var(--border);box-shadow:var(--shadow);transform:translateX(100%);transition:transform .2s ease;z-index:70;display:flex;flex-direction:column}
+    .drawer{position:fixed;right:0;top:0;height:100vh;width:460px;max-width:90vw;background:#fff;border-left:1px solid var(--border);box-shadow:var(--shadow);transform:translateX(100%);transition:transform .2s ease;z-index:70;display:flex;flex-direction:column}
     .drawer.open{transform:translateX(0)}
     .drawer header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
     .drawer main{padding:14px 16px;overflow:auto}
@@ -167,6 +167,9 @@
               <div class="h1" id="searchTitle">Search Bin</div>
               <div class="h2">Enter a location (e.g., K-01-01) to load system IMEIs (SKU, Description, IMEI)</div>
             </div>
+            <div class="actions">
+              <button id="submitBinBtn" class="btn ghost" disabled>Submit Bin → Investigator</button>
+            </div>
           </div>
           <div class="body">
             <form id="binForm" class="row" autocomplete="off">
@@ -251,7 +254,7 @@
           <div class="head">
             <div>
               <div class="h1">Investigator – Bin Cycle Counts</div>
-              <div class="h2">Overview of bins, counters, timestamps, and status. (Read-only)</div>
+              <div class="h2">Overview of bins, counters, timestamps, status, and wrong-IMEI verification.</div>
             </div>
             <div class="actions">
               <button class="btn ghost" id="refreshInvestigations">Refresh</button>
@@ -259,7 +262,9 @@
           </div>
           <div class="body">
             <div class="alerts" id="investAlerts" style="display:none"></div>
-            <div class="table-wrap">
+
+            <h4 style="margin:0 0 10px 0;">Bin Status</h4>
+            <div class="table-wrap" style="margin-bottom:14px;">
               <table id="investTable">
                 <thead>
                   <tr>
@@ -270,10 +275,29 @@
                     <th>Total</th>
                     <th>Scanned</th>
                     <th>Missing</th>
-                    <th>Status</th>
+                    <th>State</th>
+                    <th></th>
                   </tr>
                 </thead>
-                <tbody id="investBody"><tr><td colspan="8" class="empty">No data loaded yet.</td></tr></tbody>
+                <tbody id="investBody"><tr><td colspan="9" class="empty">No data loaded yet.</td></tr></tbody>
+              </table>
+            </div>
+
+            <h4 style="margin:10px 0;">Wrong IMEIs (Investigator verifies moves)</h4>
+            <div class="table-wrap">
+              <table id="investWrongBin">
+                <thead>
+                  <tr>
+                    <th>IMEI</th>
+                    <th>Scanned Bin</th>
+                    <th>True Location</th>
+                    <th>Status</th>
+                    <th>Moved To</th>
+                    <th>Moved By</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="investWrongBinBody"><tr><td colspan="7" class="empty">No wrong-bin items.</td></tr></tbody>
               </table>
             </div>
           </div>
@@ -287,8 +311,8 @@
         <section class="card">
           <div class="head">
             <div>
-              <div class="h1">Supervisor – Audit & Exceptions</div>
-              <div class="h2">All wrong-bin logs and not-scanned items across bins.</div>
+              <div class="h1">Supervisor – Audit & Decisions</div>
+              <div class="h2">All wrong-bin logs, investigator moves, and final decisions (with attribution).</div>
             </div>
             <div class="actions">
               <button class="btn ghost" id="refreshSupervisor">Refresh</button>
@@ -306,10 +330,14 @@
                     <th>Scanned Bin</th>
                     <th>True Location</th>
                     <th>Status</th>
+                    <th>Moved To</th>
+                    <th>Moved By</th>
+                    <th>Decision</th>
+                    <th>Decided By</th>
                     <th></th>
                   </tr>
                 </thead>
-                <tbody id="supWrongBinBody"><tr><td colspan="5" class="empty">No data loaded yet.</td></tr></tbody>
+                <tbody id="supWrongBinBody"><tr><td colspan="9" class="empty">No data loaded yet.</td></tr></tbody>
               </table>
             </div>
 
@@ -324,7 +352,7 @@
                     <th>System IMEI</th>
                   </tr>
                 </thead>
-                <tbody id="supNotScannedBody"><tr><td colspan="4" class="empty">No data loaded yet.</td></tr></tbody>
+                <tbody id="supNotScannedBody"><tr><td colspan="4" class="empty">No not-scanned items.</td></tr></tbody>
               </table>
             </div>
           </div>
@@ -333,7 +361,7 @@
     </section>
   </main>
 
-  <!-- AUDIT DRAWER (still available from Page 1) -->
+  <!-- AUDIT DRAWER (quick view) -->
   <aside class="drawer" id="auditDrawer" aria-hidden="true">
     <header>
       <div style="display:flex;align-items:center;gap:8px">
@@ -352,10 +380,14 @@
               <th>Scanned Bin</th>
               <th>True Location</th>
               <th>Status</th>
+              <th>Moved To</th>
+              <th>Moved By</th>
+              <th>Decision</th>
+              <th>Decided By</th>
               <th></th>
             </tr>
           </thead>
-          <tbody id="auditBody"><tr><td colspan="5" class="empty">No data.</td></tr></tbody>
+          <tbody id="auditBody"><tr><td colspan="9" class="empty">No data.</td></tr></tbody>
         </table>
       </div>
     </main>
@@ -366,18 +398,20 @@
     const CONFIG = {
       BIN_ENDPOINT: "/api/ordertime/bin?bin=",
       IMEI_ENDPOINT: "/api/ordertime/imei?imei=",
-      AUDIT_ENDPOINT: "/api/audit/wrong-bin",
-      SUMMARY_ENDPOINT: "/api/cyclecounts/summary",
-      NOT_SCANNED_ENDPOINT: "/api/cyclecounts/not-scanned",
+      AUDIT_ENDPOINT: "/api/audit/wrong-bin",              // GET(list) POST(log) PATCH(update)
+      SUMMARY_ENDPOINT: "/api/cyclecounts/summary",        // GET bins & states
+      NOT_SCANNED_ENDPOINT: "/api/cyclecounts/not-scanned",// GET missing
+      SUBMIT_BIN_ENDPOINT: "/api/cyclecounts/submit",      // POST {bin, counter, totals...}
+      ESCALATE_BIN_ENDPOINT: "/api/cyclecounts/escalate",  // POST {bin, actor}
       FORCE_MOCK: false,
       LOGO_FILENAME: "./download.png",
     };
 
     // --- Roles & Users (hardcoded) --------------------------------
     const ROLES = {
-      COUNTER: "Counter",
-      INVESTIGATOR: "Investigator",
-      SUPERVISOR: "Supervisor",
+      COUNTER: "counter",
+      INVESTIGATOR: "investigator",
+      SUPERVISOR: "supervisor",
     };
 
     const USERS = {
@@ -426,6 +460,7 @@
     const page3 = document.getElementById("page3");
 
     // Page 1 elements
+    const submitBinBtn = document.getElementById("submitBinBtn");
     const binForm = document.getElementById("binForm");
     const binInput = document.getElementById("binInput");
     const binSubmit = document.getElementById("binSubmit");
@@ -456,6 +491,7 @@
     const refreshInvestigations = document.getElementById("refreshInvestigations");
     const investAlerts = document.getElementById("investAlerts");
     const investBody = document.getElementById("investBody");
+    const investWrongBinBody = document.getElementById("investWrongBinBody");
 
     const refreshSupervisor = document.getElementById("refreshSupervisor");
     const supAlerts = document.getElementById("supAlerts");
@@ -481,8 +517,9 @@
     const ts = () => { const d=new Date(); return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; };
 
     const renderTable = () => {
-      if (!rows.length){ resultsCard.style.display="none"; emptyCard.style.display="block"; setKPIs(); return; }
+      if (!rows.length){ resultsCard.style.display="none"; emptyCard.style.display="block"; setKPIs(); submitBinBtn.disabled = true; return; }
       resultsCard.style.display="block"; emptyCard.style.display="none";
+      submitBinBtn.disabled = (currentUser?.role !== ROLES.COUNTER);
       tbody.innerHTML = rows.map(r => {
         const matched = r.scannedImei === r.systemImei;
         const qty = matched ? 1 : 0;
@@ -536,19 +573,22 @@
     };
     const mockLocate = (imei,bin) => ({ imei, location: bin.replace(/\d+$/, m=>String((+m||0)+1))||"K-01-02", sku:"—", description:"—" });
     const mockSummary = () => ([
-      { bin:"K-01-01", counter:"Matt Westerfer", started:"2025-10-06 09:11", updated:"2025-10-06 10:05", total:24, scanned:20, missing:4, status:"in-progress" },
-      { bin:"K-01-02", counter:"David Lucas",    started:"2025-10-06 09:30", updated:"2025-10-06 09:50", total:18, scanned:18, missing:0, status:"complete" },
+      { bin:"K-01-01", counter:"Matt Westerfer", started:"2025-10-06 09:11", updated:"2025-10-06 10:05", total:24, scanned:20, missing:4, state:"investigation" },
+      { bin:"K-01-02", counter:"David Lucas",    started:"2025-10-06 09:30", updated:"2025-10-06 09:50", total:18, scanned:18, missing:0, state:"supervisor" },
     ]);
     const mockNotScanned = () => ([
       { bin:"K-01-01", sku:"GA13-64-5G", description:"Galaxy A13 5G 64GB", systemImei:"123456789012345" },
       { bin:"K-01-01", sku:"IP12-128-BLK", description:"iPhone 12 128GB Black", systemImei:"123456789012346" },
     ]);
+    const mockAudits = () => ([
+      { id:"1", imei:"123456789012345", scannedBin:"K-01-01", trueLocation:"K-01-02", status:"open" },
+      { id:"2", imei:"123456789012346", scannedBin:"K-02-05", trueLocation:"K-03-01", status:"moved", movedTo:"K-03-01", movedBy:"Jessica Ernest" },
+      { id:"3", imei:"123456789012347", scannedBin:"K-02-05", trueLocation:"K-03-01", status:"resolved", decision:"Accept move", decidedBy:"Max Mann" },
+    ]);
 
     // --- API calls -------------------------------------------------
     async function fetchBinSnapshot(bin){
-      if (CONFIG.FORCE_MOCK){
-        return mockBin(bin);
-      }
+      if (CONFIG.FORCE_MOCK){ return mockBin(bin); }
       const res = await fetch(CONFIG.BIN_ENDPOINT + encodeURIComponent(bin), { cache:"no-store" });
       if (!res.ok) {
         const txt = await res.text();
@@ -584,30 +624,25 @@
         await fetch(CONFIG.AUDIT_ENDPOINT, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ imei, scannedBin, trueLocation })
+          body: JSON.stringify({ imei, scannedBin, trueLocation, scannedBy: currentUser?.name || "—" })
         });
       }catch(_e){ /* non-blocking */ }
     }
 
     async function fetchAuditList() {
-      if (CONFIG.FORCE_MOCK) {
-        return [
-          { id:"1", imei:"123456789012345", scannedBin:"K-01-01", trueLocation:"K-01-02", status:"open" },
-          { id:"2", imei:"123456789012346", scannedBin:"K-02-05", trueLocation:"K-03-01", status:"resolved" },
-        ];
-      }
+      if (CONFIG.FORCE_MOCK) { return mockAudits(); }
       const res = await fetch(CONFIG.AUDIT_ENDPOINT);
       if (!res.ok) throw new Error(await res.text());
       const { records } = await res.json();
       return Array.isArray(records) ? records : [];
     }
 
-    async function resolveAudit(id){
+    async function patchAudit(id, payload){
       if (CONFIG.FORCE_MOCK) return { ok:true };
       const res = await fetch(CONFIG.AUDIT_ENDPOINT, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id })
+        body: JSON.stringify({ id, ...payload })
       });
       if (!res.ok) throw new Error(await res.text());
       return res.json();
@@ -629,6 +664,45 @@
       return Array.isArray(records) ? records : [];
     }
 
+    async function submitBinToInvestigator(){
+      if (!currentBin) return;
+      const scannedCount = rows.filter(r => r.scannedImei === r.systemImei).length;
+      const payload = {
+        bin: currentBin,
+        counter: currentUser?.name || "—",
+        total: rows.length,
+        scanned: scannedCount,
+        missing: rows.length - scannedCount,
+      };
+      try{
+        if (!CONFIG.FORCE_MOCK){
+          const res = await fetch(CONFIG.SUBMIT_BIN_ENDPOINT, {
+            method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)
+          });
+          if (!res.ok) throw new Error(await res.text());
+        }
+        showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
+      }catch(e){
+        showAlerts(alerts,[{type:"warn",msg:`Submit failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
+      }
+    }
+
+    async function escalateBinToSupervisor(bin){
+      try{
+        if (!CONFIG.FORCE_MOCK){
+          const res = await fetch(CONFIG.ESCALATE_BIN_ENDPOINT, {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ bin, actor: currentUser?.name || "—" })
+          });
+          if (!res.ok) throw new Error(await res.text());
+        }
+        showAlerts(investAlerts,[{type:"ok",msg:`Bin <b>${escapeHTML(bin)}</b> escalated to Supervisor.`}]);
+        await refreshInvestigator(); // reflect new state
+      }catch(e){
+        showAlerts(investAlerts,[{type:"warn",msg:`Escalation failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
+      }
+    }
+
     // --- Auth/UI helpers ------------------------------------------
     function applyRoleUI(){
       if (!currentUser) return;
@@ -637,7 +711,6 @@
       whoami.textContent = `${currentUser.name} — ${currentUser.role}`;
       tab1.disabled = false; // page 1 always allowed
 
-      // Hide all pages first
       [page1,page2,page3].forEach(p => p.style.display = "none");
 
       if (currentUser.role === ROLES.COUNTER){
@@ -646,26 +719,21 @@
         selectTab("page1");
       } else if (currentUser.role === ROLES.INVESTIGATOR){
         tab2.disabled = false; tab3.disabled = true;
-        page1.style.display = "";
-        page2.style.display = "";
+        page1.style.display = ""; page2.style.display = "";
         selectTab("page1");
       } else if (currentUser.role === ROLES.SUPERVISOR){
         tab2.disabled = false; tab3.disabled = false;
-        page1.style.display = "";
-        page2.style.display = "";
-        page3.style.display = "";
+        page1.style.display = ""; page2.style.display = ""; page3.style.display = "";
         selectTab("page1");
       }
     }
 
     function selectTab(id){
-      // Visual active state (optional improvement)
       [tab1,tab2,tab3].forEach(b=>b.classList.remove("primary"));
       if (id==="page1") tab1.classList.add("primary");
       if (id==="page2") tab2.classList.add("primary");
       if (id==="page3") tab3.classList.add("primary");
 
-      // Show/Hide pages depending on role permission
       const canSee2 = currentUser && (currentUser.role===ROLES.INVESTIGATOR || currentUser.role===ROLES.SUPERVISOR);
       const canSee3 = currentUser && (currentUser.role===ROLES.SUPERVISOR);
 
@@ -696,13 +764,12 @@
       currentUser = null;
       authOverlay.style.display = "";
       miniTabs.style.display = "none";
-      // reset pages
       [page1,page2,page3].forEach(p => p.style.display = "none");
     });
 
     tab1.addEventListener("click", ()=> selectTab("page1"));
-    tab2.addEventListener("click", ()=> { if (!tab2.disabled) selectTab("page2"); });
-    tab3.addEventListener("click", ()=> { if (!tab3.disabled) selectTab("page3"); });
+    tab2.addEventListener("click", ()=> { if (!tab2.disabled) { selectTab("page2"); refreshInvestigator(); }});
+    tab3.addEventListener("click", ()=> { if (!tab3.disabled) { selectTab("page3"); refreshSupervisorViews(); }});
 
     // Restore session if exists
     (function restoreUser(){
@@ -774,6 +841,16 @@
       scanInput.value="";
     });
 
+    submitBinBtn.addEventListener("click", async ()=>{
+      if (currentUser?.role !== ROLES.COUNTER){
+        return showAlerts(alerts,[{type:"warn",msg:"Only Cycle Counters can submit bins."}]);
+      }
+      if (!currentBin || !rows.length){
+        return showAlerts(alerts,[{type:"warn",msg:"No bin loaded to submit."}]);
+      }
+      await submitBinToInvestigator();
+    });
+
     // Download menu
     const toggleMenu = (open) => {
       downloadMenu.classList.toggle("open", open);
@@ -783,7 +860,7 @@
     downloadMenu.querySelectorAll(".menu-item").forEach(item => item.addEventListener("click", () => { downloadCSV(item.getAttribute("data-export")); toggleMenu(false); }));
     document.addEventListener("click", e => { if (!downloadMenu.contains(e.target)) toggleMenu(false); });
 
-    // Audit drawer (Page 1 quick view)
+    // Audit drawer (quick view)
     auditBtn.addEventListener("click", async () => {
       auditDrawer.classList.add("open");
       auditDrawer.setAttribute("aria-hidden","false");
@@ -796,6 +873,10 @@
             <td>${escapeHTML(it.scannedBin)}</td>
             <td>${escapeHTML(it.trueLocation)}</td>
             <td><span class="badge">${escapeHTML(it.status || 'open')}</span></td>
+            <td class="mono">${escapeHTML(it.movedTo||'')}</td>
+            <td>${escapeHTML(it.movedBy||'')}</td>
+            <td>${escapeHTML(it.decision||'')}</td>
+            <td>${escapeHTML(it.decidedBy||'')}</td>
             <td class="row-sm">
               ${it.status === "resolved" ? "" : `<button class="btn primary sm" data-resolve="${escapeHTML(it.id)}">Mark Fixed</button>`}
             </td>
@@ -816,7 +897,7 @@
       const id = btn.getAttribute("data-resolve");
       btn.disabled = true;
       try{
-        await resolveAudit(id);
+        await patchAudit(id, { status:"resolved", decision:"Fixed in place", decidedBy: currentUser?.name || "—" });
         const list = await fetchAuditList();
         auditCount.textContent = `${list.filter(x=>x.status!=="resolved").length} open`;
         auditBody.innerHTML = list.map(it => `
@@ -825,9 +906,11 @@
             <td>${escapeHTML(it.scannedBin)}</td>
             <td>${escapeHTML(it.trueLocation)}</td>
             <td><span class="badge">${escapeHTML(it.status || 'open')}</span></td>
-            <td class="row-sm">
-              ${it.status === "resolved" ? "" : `<button class="btn primary sm" data-resolve="${escapeHTML(it.id)}">Mark Fixed</button>`}
-            </td>
+            <td class="mono">${escapeHTML(it.movedTo||'')}</td>
+            <td>${escapeHTML(it.movedBy||'')}</td>
+            <td>${escapeHTML(it.decision||'')}</td>
+            <td>${escapeHTML(it.decidedBy||'')}</td>
+            <td class="row-sm"></td>
           </tr>
         `).join("");
       }catch(err){
@@ -840,30 +923,90 @@
     // --- Events: Page 2 (investigator) ----------------------------
     async function refreshInvestigator(){
       try{
-        showAlerts(investAlerts,[{type:"ok",msg:"Loading investigator summary…"}]);
+        showAlerts(investAlerts,[{type:"ok",msg:"Loading investigator data…"}]);
+
+        // Bin table
         const recs = await fetchSummary();
-        if (!recs.length){
-          investBody.innerHTML = `<tr><td colspan="8" class="empty">No data.</td></tr>`;
-        }else{
-          investBody.innerHTML = recs.map(r => `
-            <tr>
-              <td>${escapeHTML(r.bin||"—")}</td>
-              <td>${escapeHTML(r.counter||"—")}</td>
-              <td>${escapeHTML(r.started||"—")}</td>
-              <td>${escapeHTML(r.updated||"—")}</td>
-              <td>${escapeHTML(String(r.total??"—"))}</td>
-              <td>${escapeHTML(String(r.scanned??"—"))}</td>
-              <td>${escapeHTML(String(r.missing??"—"))}</td>
-              <td><span class="badge">${escapeHTML(r.status||"—")}</span></td>
-            </tr>
-          `).join("");
-        }
+        investBody.innerHTML = (!recs.length)
+          ? `<tr><td colspan="9" class="empty">No data.</td></tr>`
+          : recs.map(r => {
+              const state = r.state || r.status || "counter";
+              const canEscalate = (state !== "supervisor");
+              return `
+              <tr>
+                <td>${escapeHTML(r.bin||"—")}</td>
+                <td>${escapeHTML(r.counter||"—")}</td>
+                <td>${escapeHTML(r.started||"—")}</td>
+                <td>${escapeHTML(r.updated||"—")}</td>
+                <td>${escapeHTML(String(r.total??"—"))}</td>
+                <td>${escapeHTML(String(r.scanned??"—"))}</td>
+                <td>${escapeHTML(String(r.missing??"—"))}</td>
+                <td><span class="badge">${escapeHTML(state)}</span></td>
+                <td class="row-sm">
+                  ${canEscalate ? `<button class="btn primary sm" data-escalate-bin="${escapeHTML(r.bin)}">Escalate → Supervisor</button>` : ``}
+                </td>
+              </tr>`;
+            }).join("");
+
+        // Wrong-bin list for investigator to verify moves
+        const audits = await fetchAuditList();
+        const openish = audits.filter(a => a.status !== "resolved");
+        investWrongBinBody.innerHTML = (!openish.length)
+          ? `<tr><td colspan="7" class="empty">No wrong-bin items.</td></tr>`
+          : openish.map(it => `
+              <tr>
+                <td class="mono">${escapeHTML(it.imei)}</td>
+                <td>${escapeHTML(it.scannedBin)}</td>
+                <td>${escapeHTML(it.trueLocation)}</td>
+                <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
+                <td class="mono">${escapeHTML(it.movedTo||'')}</td>
+                <td>${escapeHTML(it.movedBy||'')}</td>
+                <td class="row-sm">
+                  <button class="btn ghost sm" data-mark-moved="${escapeHTML(it.id)}">Mark Moved</button>
+                </td>
+              </tr>
+            `).join("");
+
         showAlerts(investAlerts,[]);
       }catch(e){
-        showAlerts(investAlerts,[{type:"warn",msg:"Failed to load summary."}]);
+        showAlerts(investAlerts,[{type:"warn",msg:"Failed to load investigator data."}]);
       }
     }
     refreshInvestigations.addEventListener("click", refreshInvestigator);
+
+    // Delegate clicks: escalate bin & mark moved
+    document.addEventListener("click", async (e)=>{
+      const esc = e.target.closest("[data-escalate-bin]");
+      if (esc){
+        const bin = esc.getAttribute("data-escalate-bin");
+        if (currentUser?.role !== ROLES.INVESTIGATOR && currentUser?.role !== ROLES.SUPERVISOR){
+          return showAlerts(investAlerts,[{type:"warn",msg:"Only Investigators/Supervisors can escalate."}]);
+        }
+        esc.disabled = true;
+        await escalateBinToSupervisor(bin);
+        esc.disabled = false;
+        return;
+      }
+
+      const mv = e.target.closest("[data-mark-moved]");
+      if (mv){
+        if (currentUser?.role !== ROLES.INVESTIGATOR && currentUser?.role !== ROLES.SUPERVISOR){
+          return showAlerts(investAlerts,[{type:"warn",msg:"Only Investigators/Supervisors can mark moves."}]);
+        }
+        const id = mv.getAttribute("data-mark-moved");
+        const movedTo = prompt("Enter the new (correct) bin location for this IMEI:");
+        if (!movedTo) return;
+        mv.disabled = true;
+        try{
+          await patchAudit(id, { status:"moved", movedTo, movedBy: currentUser?.name || "—" });
+          await refreshInvestigator();
+        }catch{
+          showAlerts(investAlerts,[{type:"warn",msg:"Failed to update moved status."}]);
+        }finally{
+          mv.disabled = false;
+        }
+      }
+    });
 
     // --- Events: Page 3 (supervisor) ------------------------------
     async function refreshSupervisorViews(){
@@ -878,11 +1021,17 @@
             <td>${escapeHTML(it.scannedBin)}</td>
             <td>${escapeHTML(it.trueLocation)}</td>
             <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
+            <td class="mono">${escapeHTML(it.movedTo||'')}</td>
+            <td>${escapeHTML(it.movedBy||'')}</td>
+            <td>
+              <input class="field" data-decision-input="${escapeHTML(it.id)}" placeholder="Decision note (optional)" style="padding:6px 10px"/>
+            </td>
+            <td>${escapeHTML(it.decidedBy||'')}</td>
             <td class="row-sm">
               ${it.status==="resolved" ? "" : `<button class="btn primary sm" data-sup-resolve="${escapeHTML(it.id)}">Resolve</button>`}
             </td>
           </tr>
-        `).join("") : `<tr><td colspan="5" class="empty">No wrong-bin logs.</td></tr>`);
+        `).join("") : `<tr><td colspan="9" class="empty">No wrong-bin logs.</td></tr>`);
 
         // Not-scanned
         const missing = await fetchNotScanned();
@@ -902,14 +1051,19 @@
     }
     refreshSupervisor.addEventListener("click", refreshSupervisorViews);
 
-    // Inline resolve from supervisor table
+    // Inline supervisor resolve with decision attribution
     document.addEventListener("click", async (e)=>{
       const btn = e.target.closest("[data-sup-resolve]");
       if (!btn) return;
+      if (currentUser?.role !== ROLES.SUPERVISOR){
+        return showAlerts(supAlerts,[{type:"warn",msg:"Only Supervisors can finalize decisions."}]);
+      }
       const id = btn.getAttribute("data-sup-resolve");
+      const input = document.querySelector(`[data-decision-input="${CSS.escape(id)}"]`);
+      const decision = (input && input.value) ? input.value.trim() : "Resolved";
       btn.disabled = true;
       try{
-        await resolveAudit(id);
+        await patchAudit(id, { status:"resolved", decision, decidedBy: currentUser?.name || "—" });
         await refreshSupervisorViews();
       }catch{
         showAlerts(supAlerts,[{type:"warn",msg:"Failed to resolve item."}]);
@@ -921,10 +1075,7 @@
     // --- Init ------------------------------------------------------
     function init(){
       renderTable();
-      // If user restored, put focus on bin input
-      if (authOverlay.style.display === "none"){
-        binInput?.focus();
-      }
+      if (authOverlay.style.display === "none"){ binInput?.focus(); }
     }
     init();
   </script>
