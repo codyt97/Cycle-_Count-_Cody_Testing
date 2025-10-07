@@ -1,74 +1,81 @@
 // api/ordertime/_client.js
-// Tiny fetch shim so it works on Vercel/Node
-const fetch = (...args) =>
-  import('node-fetch').then(({ default: f }) => f(...args));
+// No node-fetch needed; Vercel's Node runtime has global fetch.
+// Keep this file in CommonJS to avoid ESM import headaches on Vercel.
 
 const BASE = process.env.OT_BASE_URL || 'https://services.ordertime.com/api';
 
-/**
- * Build auth fields to include in every /list request.
- * - APIKEY mode => { ApiKey }
- * - PASSWORD mode => { Company, Username, Password }
- */
-function buildAuthFields() {
-  const mode = (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase();
+function mode() {
+  const m = (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase().trim();
+  return m === 'API_KEY' ? 'API_KEY' : 'PASSWORD';
+}
 
-  if (mode === 'APIKEY') {
-    const apiKey = process.env.OT_API_KEY;
-    if (!apiKey) throw new Error('OT_API_KEY not set');
-    return { authMode: 'APIKEY', fields: { ApiKey: apiKey } };
+function buildPayload({ type, filters = [], page = 1, pageSize = 50 }) {
+  const m = mode();
+
+  if (m === 'API_KEY') {
+    const apiKey = (process.env.OT_API_KEY || '').trim();
+    if (!apiKey) {
+      throw new Error('OT_API_KEY is missing. Set OT_AUTH_MODE=API_KEY and OT_API_KEY in project env.');
+    }
+    return {
+      ApiKey: apiKey,
+      Type: type,
+      Filters: filters,
+      PageNumber: page,
+      NumberOfRecords: pageSize,
+    };
   }
 
-  // Default to PASSWORD mode
-  const company = process.env.OT_COMPANY;
-  const username = process.env.OT_USERNAME;
-  const password = process.env.OT_PASSWORD;
+  // PASSWORD mode
+  const company = (process.env.OT_COMPANY || '').trim();
+  const username = (process.env.OT_USERNAME || '').trim();
+  const password = (process.env.OT_PASSWORD || '').trim();
+
   if (!company || !username || !password) {
     throw new Error('Missing OT_COMPANY or OT_USERNAME or OT_PASSWORD.');
   }
+
   return {
-    authMode: 'PASSWORD',
-    fields: { Company: company, Username: username, Password: password },
+    Company: company,
+    Username: username,
+    Password: password,
+    Type: type,
+    Filters: filters,
+    PageNumber: page,
+    NumberOfRecords: pageSize,
   };
 }
 
-/**
- * POST /list
- * body must include: { Type, Filters?, PageNumber, NumberOfRecords }
- */
-async function postList(body) {
-  const { authMode, fields } = buildAuthFields();
-
-  // IMPORTANT: merge auth fields into the payload
-  const payload = { ...fields, ...body };
-
-  // Helpful logs without leaking secrets
+async function postList(payload) {
+  const url = `${BASE}/list`;
+  // For quick diagnosis
   console.log('[OT] POST /list', {
-    url: `${BASE}/list`,
-    Type: body?.Type,
-    hasFilters: Array.isArray(body?.Filters) && body.Filters.length > 0,
-    PageNumber: body?.PageNumber,
-    NumberOfRecords: body?.NumberOfRecords,
-    hasApiKey: !!fields.ApiKey,
-    hasCompany: !!fields.Company,
-    mode: authMode,
+    url,
+    Type: payload.Type,
+    hasFilters: Array.isArray(payload.Filters) && payload.Filters.length > 0,
+    PageNumber: payload.PageNumber,
+    NumberOfRecords: payload.NumberOfRecords,
+    mode: mode(),
+    hasApiKey: !!process.env.OT_API_KEY && mode() === 'API_KEY',
   });
 
-  const res = await fetch(`${BASE}/list`, {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
   });
 
-  const text = await res.text();
-  console.log('[OT] /list response', {
-    status: res.status,
-    preview: text.slice(0, 180),
-  });
+  if (!res.ok) {
+    const preview = await res.text().catch(() => '');
+    console.error('[OT] /list response', { status: res.status, preview });
+    // Normalize OrderTime error
+    throw new Error(`OT ${res.status} [/list] ${preview || 'Unknown error'}`);
+  }
 
-  if (!res.ok) throw new Error(`OT ${res.status} [/list] ${text}`);
-
-  return text ? JSON.parse(text) : {};
+  return res.json();
 }
 
-module.exports = { postList };
+module.exports = {
+  buildPayload,
+  postList,
+};
