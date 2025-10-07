@@ -1,70 +1,76 @@
 // api/ordertime/_client.js
-const fetch = require("node-fetch");
 
-const BASE = (process.env.OT_BASE_URL || "https://services.ordertime.com/api").replace(/\/+$/, "");
-const MODE = (process.env.OT_AUTH_MODE || "PASSWORD").toUpperCase();
+// Node 18+ / Vercel: use the global fetch (no node-fetch import needed)
 
-function buildAuth() {
-  if (MODE === "PASSWORD") {
-    const Company  = process.env.OT_COMPANY || "";
-    const Username = process.env.OT_USERNAME || "";
-    const Password = process.env.OT_PASSWORD || "";
-    if (!Company || !Username || !Password) {
-      throw new Error("Missing OT_COMPANY or OT_USERNAME or OT_PASSWORD.");
-    }
-    return { Company, Username, Password };
+const BASE =
+  (process.env.OT_BASE_URL || "https://services.ordertime.com/api").replace(
+    /\/+$/,
+    ""
+  );
+
+/**
+ * Build the auth + list payload for OrderTime /api/list
+ * Throws with a clear message if required env vars are missing.
+ */
+function buildPayload() {
+  const mode = (process.env.OT_AUTH_MODE || "PASSWORD").toUpperCase();
+
+  if (mode !== "PASSWORD") {
+    throw new Error(`Unsupported OT_AUTH_MODE "${mode}". Use PASSWORD.`);
   }
 
-  if (MODE === "APIKEY") {
-    const ApiKey = process.env.OT_API_KEY || "";
-    if (!ApiKey) throw new Error("Missing OT_API_KEY.");
-    return { ApiKey };
+  const company = process.env.OT_COMPANY;
+  const username = process.env.OT_USERNAME;
+  const password = process.env.OT_PASSWORD;
+
+  if (!company || !username || !password) {
+    throw new Error("Missing OT_COMPANY or OT_USERNAME or OT_PASSWORD.");
   }
 
-  throw new Error(`Unknown OT_AUTH_MODE: ${MODE}`);
+  return {
+    Company: company,
+    Username: username,
+    Password: password,
+  };
 }
 
-async function postList(body) {
-  const auth = buildAuth();
+/**
+ * POST /api/list to OrderTime
+ * @param {object} listBody - fields like Type, Filters, PageNumber, NumberOfRecords
+ */
+async function postList(listBody) {
+  const auth = buildPayload();
 
-  // Build exactly what OT expects – do NOT include fields for the other auth mode.
-  const payload = { ...auth, ...body };
+  const url = `${BASE}/list`; // absolute URL
+  const body = { ...auth, ...listBody };
 
-  // For debugging without secrets:
-  console.log("[OT] POST /list", {
-    mode: MODE,
-    hasCompany: Boolean(process.env.OT_COMPANY),
-    hasUsername: Boolean(process.env.OT_USERNAME),
-    hasPassword: Boolean(process.env.OT_PASSWORD),
-    hasApiKey: Boolean(process.env.OT_API_KEY),
-    base: BASE,
-    type: body?.Type
-  });
-
-  const res = await fetch(`${BASE}/list`, {
+  const res = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
+    headers: {
+      "Content-Type": "application/json",
+      // OrderTime does NOT want Bearer for PASSWORD mode; payload is in the body.
+    },
+    body: JSON.stringify(body),
   });
 
+  // OrderTime sends 200 with body on success, 400 with { Message } on failure.
   const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch (e) {
+    // Non-JSON edge cases: still bubble up
+    throw new Error(`OT ${res.status} [${url}] Non-JSON response: ${text}`);
+  }
+
   if (!res.ok) {
-    // OT sends 400 with { Message: "..."} when payload is off.
-    let msg = text;
-    try { msg = JSON.parse(text)?.Message || text; } catch {}
+    const msg =
+      (data && (data.Message || data.message)) ||
+      `HTTP ${res.status} calling ${url}`;
     throw new Error(`OT ${res.status} [/list] ${msg}`);
   }
 
-  try {
-    const json = JSON.parse(text);
-    // Some tenants wrap in { Rows: [...] }, others return the array directly.
-    if (Array.isArray(json)) return json;
-    if (Array.isArray(json?.Rows)) return json.Rows;
-    return json || [];
-  } catch {
-    // If body is an array but parsed as text, try a safe fallback:
-    return [];
-  }
+  return data;
 }
 
-module.exports = { postList, otList: postList };
+module.exports = { postList };
