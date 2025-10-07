@@ -1,88 +1,39 @@
 // api/ordertime/bin.js
 const { postList } = require("./_client");
 
-// OT "types"
-const TYPE_BINS = 151;   // Bin records
-const TYPE_IL   = 1141;  // Inventory Ledger (lot/serial movements)
-
-function ok(json) {
-  return new Response(JSON.stringify(json), {
-    status: 200,
-    headers: { "Content-Type": "application/json" }
-  });
-}
-
-function fail(status, error) {
-  return new Response(JSON.stringify({ error: String(error) }), {
-    status,
-    headers: { "Content-Type": "application/json" }
-  });
-}
-
-module.exports = async function handler(req) {
+module.exports = async function handler(req, res) {
   try {
-    const { searchParams } = new URL(req.url);
-    const binName = (searchParams.get("bin") || "").trim();
+    // --- SAFE query parsing for Vercel Node functions ---
+    const base = `http://${req.headers.host || "localhost"}`;         // supply a base
+    const url = new URL(req.url, base);
+    const bin = (req.query && req.query.bin) || url.searchParams.get("bin");
 
-    if (!binName) {
-      return fail(400, "Missing ?bin= parameter");
+    if (!bin) {
+      return res.status(400).json({ error: "Missing ?bin= parameter" });
     }
 
-    console.info(`[BIN] Search for`, binName);
+    console.log('[BIN] Querying 1141 by BinRef.Name="%s"', bin);
 
-    // Step A: resolve bin name → bin Id (Type 151)
-    const binRows = await postList({
-      type: TYPE_BINS,
-      page: 1,
-      size: 1,
-      filters: [
-        { PropertyName: "Name", Operator: 1, FilterValueArray: [binName] } // equals
+    // OT type 1141 = Inventory Ledger filtered by Bin
+    const body = {
+      Type: 1141,
+      Filters: [
+        { PropertyName: "BinRef.Name", Operator: 1, FilterValueArray: [bin] },
       ],
-      select: ["Id", "Name", "LocationRef.Id", "LocationRef.Name"] // optional
-    });
+      PageNumber: 1,
+      NumberOfRecords: 50,
+    };
 
-    if (!binRows.length) {
-      console.info(`[BIN] no such bin`, binName);
-      return ok({ page: 1, total: 0, rows: [] });
-    }
+    // call OrderTime
+    const rows = await postList(body);
 
-    const binId = binRows[0].Id;
-    console.info(`[BIN] Found bin`, binName, "→ Id", binId);
-
-    // Step B: Pull Inventory Ledger by BinRef.Id (Type 1141)
-    // This avoids the null-ref and works reliably vs BinRef.Name.
-    const ilRows = await postList({
-      type: TYPE_IL,
-      page: 1,
-      size: 500, // up to you
-      filters: [
-        { PropertyName: "BinRef.Id", Operator: 1, FilterValueArray: [String(binId)] }
-      ],
-      select: [
-        "ItemRef.Name",
-        "Description",
-        "LotOrSerialNo",
-        "LocationRef.Name",
-        "BinRef.Name",
-        "Quantity"
-      ]
-    });
-
-    // Map to what your table expects
-    const rows = ilRows.map(r => ({
-      sku: r?.ItemRef?.Name || "",
-      description: r?.Description || "",
-      imei: r?.LotOrSerialNo || "",
-      location: r?.LocationRef?.Name || "",
-      bin: r?.BinRef?.Name || "",
-      qty: r?.Quantity ?? 1
-    }));
-
-    console.info(`[BIN] page 1 → ${rows.length} rows`);
-    return ok({ page: 1, total: rows.length, rows });
+    console.log("[BIN] page %d → %d rows", body.PageNumber, rows?.length || 0);
+    return res.status(200).json({ rows });
   } catch (err) {
     console.error("[BIN] error", err);
-    // normalize to 502 for the UI message banner
-    return fail(502, err.message || err);
+    // surface a clean message back to the client
+    const msg = err?.message || "Unknown error";
+    const code = /OT\s+\d+/.test(msg) ? 502 : 500;
+    return res.status(code).json({ error: msg });
   }
 };
