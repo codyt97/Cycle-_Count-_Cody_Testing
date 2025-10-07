@@ -1,8 +1,9 @@
 {
-  "name": "connectus-cyclecount-api",
+  "name": "connectus-cyclecount",
   "private": true,
-  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
-    "@vercel/kv": "^1.0.0"
   }
 }
