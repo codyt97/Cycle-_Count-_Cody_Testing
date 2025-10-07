@@ -1,11 +1,7 @@
-// api/ordertime/bin.js
-// Loads the system snapshot for a BIN and maps to the UI's expected shape
-
 const { withCORS, ok, bad, method } = require("../_lib/respond");
 const { otList } = require("./_client");
 
-// RecordTypeEnum values used with /api/list
-const RT_BIN        = 151;  // Bin
+const RT_BIN = 151;         // Bin
 const RT_LOT_SERIAL = 1100; // Lot or Serial Number
 
 module.exports = async (req, res) => {
@@ -16,24 +12,20 @@ module.exports = async (req, res) => {
   if (!bin) return bad(res, "bin is required", 400);
 
   try {
-    // 1) Find the Bin row by its Name
+    // Find Bin by Name
     const bins = await otList({
       Type: RT_BIN,
-      Filters: [{ PropertyName: "Name", Operator: 1, FilterValueArray: bin }], // 1 = EqualTo
+      Filters: [{ PropertyName: "Name", Operator: 1, FilterValueArray: bin }],
       PageNumber: 1,
       NumberOfRecords: 1,
     });
     const binRow = bins?.[0];
     if (!binRow?.Id) return ok(res, { records: [] });
 
-    // 2) Get all Lot/Serial records currently in that Bin
     const pageSize = 500;
     let page = 1, all = [];
-    // Adjust property name if your tenant uses a different linkage
     const filter = { PropertyName: "LocationBinRef.Id", Operator: 1, FilterValueArray: String(binRow.Id) };
 
-    // Simple pager
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       const chunk = await otList({
         Type: RT_LOT_SERIAL,
@@ -47,7 +39,6 @@ module.exports = async (req, res) => {
       page++;
     }
 
-    // 3) Map to front-end shape
     const records = all.map(r => ({
       location:    r?.LocationBinRef?.Name || bin,
       sku:         r?.ItemRef?.Code || r?.ItemCode || r?.SKU || "—",
