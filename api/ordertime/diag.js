@@ -1,10 +1,9 @@
-// api/ordertime/diag.js
 const { withCORS, ok, bad, method } = require("../_lib/respond");
 const { otList } = require("./_client");
 
 module.exports = async (req, res) => {
-  if (req.method === "OPTIONS") return withCORS(res), res.status(204).end();
-  if (req.method !== "GET") return method(res, ["GET", "OPTIONS"]);
+  if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
+  if (req.method !== "GET")      return method(res, ["GET", "OPTIONS"]);
 
   try {
     const result = await otList({ Type: 1100, Filters: [], PageNumber: 1, NumberOfRecords: 1 });
