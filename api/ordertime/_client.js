@@ -1,70 +1,70 @@
 // api/ordertime/_client.js
-const BASE = process.env.OT_BASE_URL || "https://services.ordertime.com/api";
+const fetch = require("node-fetch");
+
+const BASE = (process.env.OT_BASE_URL || "https://services.ordertime.com/api").replace(/\/+$/, "");
 const MODE = (process.env.OT_AUTH_MODE || "PASSWORD").toUpperCase();
 
-const COMPANY  = process.env.OT_COMPANY || "";
-const USERNAME = process.env.OT_USERNAME || "";
-const PASSWORD = process.env.OT_PASSWORD || "";
-
-/**
- * Build the /api/list payload (PASSWORD mode only).
- * DO NOT include ApiKey when using PASSWORD auth — OT will return "Incorrect api key".
- */
-function buildPayload({ type, filters = [], page = 1, size = 50, select = undefined }) {
-  if (MODE !== "PASSWORD") {
-    throw new Error("Only PASSWORD mode is supported in this build. Set OT_AUTH_MODE=PASSWORD.");
+function buildAuth() {
+  if (MODE === "PASSWORD") {
+    const Company  = process.env.OT_COMPANY || "";
+    const Username = process.env.OT_USERNAME || "";
+    const Password = process.env.OT_PASSWORD || "";
+    if (!Company || !Username || !Password) {
+      throw new Error("Missing OT_COMPANY or OT_USERNAME or OT_PASSWORD.");
+    }
+    return { Company, Username, Password };
   }
 
-  if (!COMPANY || !USERNAME || !PASSWORD) {
-    throw new Error("Missing OT_COMPANY or OT_USERNAME or OT_PASSWORD.");
+  if (MODE === "APIKEY") {
+    const ApiKey = process.env.OT_API_KEY || "";
+    if (!ApiKey) throw new Error("Missing OT_API_KEY.");
+    return { ApiKey };
   }
 
-  const body = {
-    Company: COMPANY,
-    Username: USERNAME,
-    Password: PASSWORD,
-    Type: type,
-    Filters: filters,
-    PageNumber: page,
-    NumberOfRecords: size
-  };
-
-  if (select && Array.isArray(select) && select.length) {
-    body.Select = select; // optional "Select" projection if you want to trim payloads
-  }
-
-  return body;
+  throw new Error(`Unknown OT_AUTH_MODE: ${MODE}`);
 }
 
-async function postList({ type, filters, page = 1, size = 50, select }) {
-  const url = `${BASE}/list`;
-  const payload = buildPayload({ type, filters, page, size, select });
+async function postList(body) {
+  const auth = buildAuth();
 
-  console.info("[OT] POST", url, {
-    mode: "PASSWORD",
+  // Build exactly what OT expects – do NOT include fields for the other auth mode.
+  const payload = { ...auth, ...body };
+
+  // For debugging without secrets:
+  console.log("[OT] POST /list", {
+    mode: MODE,
+    hasCompany: Boolean(process.env.OT_COMPANY),
+    hasUsername: Boolean(process.env.OT_USERNAME),
+    hasPassword: Boolean(process.env.OT_PASSWORD),
+    hasApiKey: Boolean(process.env.OT_API_KEY),
     base: BASE,
-    type,
+    type: body?.Type
   });
 
-  const res = await fetch(url, {
+  const res = await fetch(`${BASE}/list`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
   });
 
   const text = await res.text();
-  let data;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-
   if (!res.ok) {
-    const msg = typeof data === "object" && data?.Message
-      ? data.Message
-      : text || res.statusText;
+    // OT sends 400 with { Message: "..."} when payload is off.
+    let msg = text;
+    try { msg = JSON.parse(text)?.Message || text; } catch {}
     throw new Error(`OT ${res.status} [/list] ${msg}`);
   }
 
-  // OT returns plain arrays for success
-  return Array.isArray(data) ? data : [];
+  try {
+    const json = JSON.parse(text);
+    // Some tenants wrap in { Rows: [...] }, others return the array directly.
+    if (Array.isArray(json)) return json;
+    if (Array.isArray(json?.Rows)) return json.Rows;
+    return json || [];
+  } catch {
+    // If body is an array but parsed as text, try a safe fallback:
+    return [];
+  }
 }
 
-module.exports = { postList };
+module.exports = { postList, otList: postList };
