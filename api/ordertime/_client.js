@@ -1,20 +1,25 @@
 // api/ordertime/_client.js
-const BASE = process.env.OT_BASE_URL; // https://services.ordertime.com/api
-const API_KEY = (process.env.OT_API_KEY || "").trim();
-const EMAIL   = (process.env.OT_EMAIL || "").trim();
-const PASS    = (process.env.OT_PASSWORD || "").trim();    // or use DEVKEY
-const DEVKEY  = (process.env.OT_DEVKEY || "").trim();
+// OrderTime client using header-based auth and numeric RecordTypeEnum for /list
 
-if (!BASE) throw new Error("OT_BASE_URL not set");
-if (!API_KEY) throw new Error("OT_API_KEY not set");
-if (!EMAIL) throw new Error("OT_EMAIL not set");
-if (!PASS && !DEVKEY) throw new Error("Set OT_PASSWORD or OT_DEVKEY");
+const BASE   = process.env.OT_BASE_URL;   // e.g. https://services.ordertime.com/api
+const APIKEY = (process.env.OT_API_KEY || "").trim();
+const EMAIL  = (process.env.OT_EMAIL    || "").trim();
+// Use ONE of the following: OT_PASSWORD or OT_DEVKEY
+const PASS   = (process.env.OT_PASSWORD || "").trim();
+const DEVKEY = (process.env.OT_DEVKEY   || "").trim();
+
+if (!BASE)   throw new Error("OT_BASE_URL not set");
+if (!APIKEY) throw new Error("OT_API_KEY not set");
+if (!EMAIL)  throw new Error("OT_EMAIL not set");
+if (!PASS && !DEVKEY) {
+  throw new Error("Set either OT_PASSWORD or OT_DEVKEY for OrderTime auth");
+}
 
 function authHeaders() {
   const h = {
     "Content-Type": "application/json",
     "Accept": "application/json",
-    "apiKey": API_KEY,
+    "apiKey": APIKEY,
     "email": EMAIL,
   };
   if (DEVKEY) h["DevKey"] = DEVKEY; else h["password"] = PASS;
@@ -32,11 +37,17 @@ async function post(path, body) {
   try { return JSON.parse(text); } catch { return { raw: text }; }
 }
 
-// Generic list call – IMPORTANT: Type is NUMERIC enum (RecordTypeEnum)
+/**
+ * Generic /list wrapper.
+ * NOTE: Type MUST be the numeric RecordTypeEnum value (e.g., 151 for Bin, 1100 for Lot/Serial)
+ */
 async function otList({ Type, Filters = [], PageNumber = 1, NumberOfRecords = 500 }) {
-  const out = await post("/list", { Type, Filters, PageNumber, NumberOfRecords });
-  const records = Array.isArray(out?.Records) ? out.Records
-                : (Array.isArray(out?.records) ? out.records : []);
+  const payload = { Type, Filters, PageNumber, NumberOfRecords };
+  const out = await post("/list", payload);
+  // Normalize response
+  const records = Array.isArray(out?.Records)
+    ? out.Records
+    : (Array.isArray(out?.records) ? out.records : []);
   return records;
 }
 
