@@ -1,8 +1,9 @@
+// api/ordertime/imei.js
 const { withCORS, ok, bad, method } = require("../_lib/respond");
 const { otList } = require("./_client");
 
-const RT_INV_BY_BIN = 1141; // Inventory-by-Bin
-const RT_LOT_SERIAL = 1100; // Lot/Serial (fallback)
+const RT_INV_BY_BIN = 1141; // inventory-by-bin (your tenant)
+const RT_LOT_SERIAL = 1100; // fallback
 
 async function findIn1141(imei) {
   const rows = await otList({
@@ -48,7 +49,7 @@ module.exports = async (req, res) => {
   try {
     let hit = await findIn1141(imei);
     if (!hit) hit = await findIn1100(imei);
-    return ok(res, hit || {});  // {} => UI treats as not found
+    return ok(res, hit || {}); // {} means "not found" – UI should handle
   } catch (e) {
     return bad(res, String(e.message || e), 502);
   }
