@@ -1,0 +1,1090 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ConnectUs • Cycle Count – Bin Scan</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --cu-green:#8BC53F; --cu-green-600:#6eab2f; --cu-green-50:#f3fbeb;
+      --ink:#0b0d12; --ink-2:#3b3f45; --ink-3:#6b7280; --border:#e6e9ee;
+      --card:#ffffff; --bg:#ffffff; --warn:#dc2626;
+      --shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 24px rgba(0,0,0,.06);
+      --radius:16px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;font:14px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter;color:var(--ink);background:var(--bg)}
+
+    /* Header */
+    .topbar{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.92);backdrop-filter:saturate(160%) blur(8px);border-bottom:1px solid var(--border)}
+    .container{max-width:1120px;margin:0 auto;padding:14px 22px}
+    .brand{display:flex;align-items:center;gap:14px}
+    .brand img{height:28px;width:auto;display:block}
+    .title{font-weight:800;font-size:18px}
+    .subtitle{color:var(--ink-3);font-size:13px;margin-top:2px}
+    .kpis{display:flex;gap:8px;align-items:center}
+    .chip{background:#f6f9f3;border:1px solid var(--border);border-radius:999px;padding:6px 12px;display:flex;gap:8px;align-items:center}
+    .dot{width:8px;height:8px;border-radius:50%;background:var(--cu-green)}
+    .chip .lbl{font-size:11px;color:var(--ink-3)}
+    .chip .val{font-weight:700;color:var(--ink)}
+    main .container{display:grid;gap:16px;padding-top:18px}
+
+    /* Cards */
+    .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+    .card .head{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+    .card .h1{font-weight:700}
+    .card .h2{color:var(--ink-3);font-size:12px;margin-top:2px}
+    .card .body{padding:14px 16px}
+
+    /* Inputs & Buttons */
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .field{flex:1;display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:#fff}
+    .field input{flex:1;border:0;outline:none;font:inherit;color:inherit;background:transparent}
+    .btn{appearance:none;border:1px solid transparent;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer;transition:.15s all ease}
+    .btn.primary{background:var(--cu-green);color:#0a0a0a;border-color:var(--cu-green)}
+    .btn.primary:hover{background:var(--cu-green-600);border-color:var(--cu-green-600)}
+    .btn.ghost{background:#fff;border-color:var(--border);color:var(--ink-2)}
+    .btn.ghost:hover{border-color:var(--cu-green);color:var(--ink)}
+    .btn:disabled{opacity:.6;cursor:not-allowed}
+    .btn.sm{padding:6px 10px;border-radius:10px;font-weight:700}
+
+    /* Alerts */
+    .alerts{display:grid;gap:8px}
+    .alert{border-left:4px solid;padding:10px 12px;border-radius:10px;background:#f7fafc;border:1px solid var(--border)}
+    .alert.ok{border-left-color:var(--cu-green);background:var(--cu-green-50)}
+    .alert.warn{border-left-color:var(--warn);background:#fdecec}
+
+    /* Sticky scan bar */
+    .stickybar{position:sticky;top:64px;z-index:40;background:#fff;border-bottom:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:12px}
+
+    /* Table */
+    .table-wrap{overflow:auto}
+    table{width:100%;border-collapse:separate;border-spacing:0}
+    thead tr{background:#f8fafc}
+    th,td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left}
+    th{font-size:12px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.04em}
+    tr.ok{background:var(--cu-green-50)}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    .qty{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;font-weight:800;background:#eef3ea;color:#1f3a1a}
+    .qty.is1{background:var(--cu-green);color:#0a0a0a}
+    .empty{text-align:center;color:var(--ink-3);padding:30px 16px}
+    .footnote{color:var(--ink-3);font-size:12px}
+
+    /* Menus & Panel */
+    .menu{position:relative}
+    .menu-list{position:absolute;right:0;top:calc(100% + 6px);min-width:220px;background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:6px;display:none;z-index:60}
+    .menu.open .menu-list{display:block}
+    .menu-item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer}
+    .menu-item:hover{background:#f6f9f3}
+    .muted{color:var(--ink-3);font-size:12px}
+    .actions{display:flex;gap:8px;margin-left:auto}
+
+    /* Drawer */
+    .drawer{position:fixed;right:0;top:0;height:100vh;width:460px;max-width:90vw;background:#fff;border-left:1px solid var(--border);box-shadow:var(--shadow);transform:translateX(100%);transition:transform .2s ease;z-index:70;display:flex;flex-direction:column}
+    .drawer.open{transform:translateX(0)}
+    .drawer header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+    .drawer main{padding:14px 16px;overflow:auto}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;border:1px solid var(--border);color:var(--ink-3)}
+    .row-sm{display:flex;gap:8px;align-items:center;justify-content:space-between}
+
+    /* Auth overlay */
+    #authOverlay{position:fixed;inset:0;background:rgba(12,14,20,.92);color:#fff;display:flex;align-items:center;justify-content:center;z-index:100}
+    #loginCard{width:360px;background:#111826;border:1px solid #2a2f3a;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35);padding:20px}
+    #loginCard input{border-radius:12px;border:1px solid #374151;background:#0f1624;color:#e5e7eb;padding:10px}
+
+    /* Mini-tabs */
+    #miniTabs .btn[disabled]{opacity:.5;cursor:not-allowed}
+
+    @media (max-width: 780px){
+      .kpis{display:none}
+      .stickybar{flex-wrap:wrap}
+      .actions{width:100%;justify-content:flex-start}
+    }
+  </style>
+</head>
+<body>
+  <!-- AUTH OVERLAY -->
+  <div id="authOverlay">
+    <form id="loginForm" aria-label="Login form">
+      <div id="loginCard">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+          <img alt="ConnectUs" src="./download.png" style="height:24px;width:auto" />
+          <strong>Cycle Count Login</strong>
+        </div>
+        <div style="display:grid;gap:10px;">
+          <input id="loginUser" placeholder="Username" autocomplete="username" />
+          <input id="loginPass" placeholder="Password" type="password" autocomplete="current-password" />
+          <button class="btn primary" type="submit" style="width:100%;">Sign in</button>
+          <div id="loginMsg" style="color:#fca5a5;font-size:12px;min-height:16px;"></div>
+          <div style="font-size:12px;opacity:.8;line-height:1.4">
+            <div><b>Cycle Counter</b>: <code>matt</code>, <code>david</code>, <code>kevin</code>, <code>sullivan</code>, <code>derek</code> / <code>pass</code></div>
+            <div><b>Investigator</b>: <code>brad</code>, <code>dan</code>, <code>jess</code> / <code>pass</code></div>
+            <div><b>Supervisor</b>: <code>max</code>, <code>brad_s</code>, <code>jess_s</code> / <code>pass</code></div>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <!-- TOPBAR (brand + KPIs) -->
+  <div class="topbar">
+    <div class="container" style="display:flex;justify-content:space-between;align-items:center;">
+      <div class="brand">
+        <img alt="ConnectUs" src="./download.png" width="301" height="83" />
+        <div>
+          <div class="title">Cycle Count – Bin Scan</div>
+          <div class="subtitle">Match scanned IMEIs to system snapshot • hard-fail wrong bins</div>
+        </div>
+      </div>
+      <div class="kpis" id="kpis">
+        <div class="chip"><span class="dot"></span><span class="lbl">Total</span><span class="val" id="kpi-total">0</span></div>
+        <div class="chip"><span class="dot"></span><span class="lbl">Scanned</span><span class="val" id="kpi-scanned">0</span></div>
+        <div class="chip"><span class="dot"></span><span class="lbl">Missing</span><span class="val" id="kpi-missing">0</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MINI-TABS (shown after login) -->
+  <nav id="miniTabs" class="topbar" style="display:none;border-top:0;border-bottom:1px solid var(--border);">
+    <div class="container" style="display:flex;gap:8px;align-items:center;">
+      <button data-tab="page1" class="btn ghost" id="tab1">Cycle Counter Page</button>
+      <button data-tab="page2" class="btn ghost" id="tab2">Investigator Page</button>
+      <button data-tab="page3" class="btn ghost" id="tab3">Supervisor Logs Page</button>
+      <div id="whoami" class="muted" style="margin-left:auto;"></div>
+      <button id="logoutBtn" class="btn ghost">Logout</button>
+    </div>
+  </nav>
+
+  <main>
+    <!-- PAGE 1: Cycle Counter -->
+    <section id="page1" style="display:none">
+      <div class="container">
+        <!-- SEARCH CARD -->
+        <section class="card" aria-labelledby="searchTitle">
+          <div class="head">
+            <div>
+              <div class="h1" id="searchTitle">Search Bin</div>
+              <div class="h2">Enter a location (e.g., K-01-01) to load system IMEIs (SKU, Description, IMEI)</div>
+            </div>
+            <div class="actions">
+              <button id="submitBinBtn" class="btn ghost" disabled>Submit Bin → Investigator</button>
+            </div>
+          </div>
+          <div class="body">
+            <form id="binForm" class="row" autocomplete="off">
+              <div class="field" aria-live="polite">
+                <span aria-hidden="true">📦</span>
+                <input id="binInput" type="text" placeholder="Bin (e.g., K-01-01)" required />
+              </div>
+              <button class="btn primary" id="binSubmit" type="submit">Search Bin</button>
+              <button class="btn ghost" id="resetBtn" type="button">Reset</button>
+            </form>
+          </div>
+        </section>
+
+        <!-- ALERTS -->
+        <div class="alerts" id="alerts" style="display:none"></div>
+
+        <!-- SCAN + TABLE CARD -->
+        <section class="card" id="resultsCard" style="display:none">
+          <div class="stickybar">
+            <form id="scanForm" class="row" style="flex:1" autocomplete="off">
+              <div class="field" style="flex:1">
+                <span aria-hidden="true">🔎</span>
+                <input id="scanInput" inputmode="numeric" placeholder="Scan / enter IMEI" />
+              </div>
+              <button class="btn primary" type="submit">Scan</button>
+
+              <div class="kpis">
+                <div class="chip"><span class="dot"></span><span class="lbl">Total</span><span class="val" id="kpi2-total">0</span></div>
+                <div class="chip"><span class="dot"></span><span class="lbl">Scanned</span><span class="val" id="kpi2-scanned">0</span></div>
+                <div class="chip"><span class="dot"></span><span class="lbl">Missing</span><span class="val" id="kpi2-missing">0</span></div>
+              </div>
+
+              <div class="actions">
+                <!-- Download -->
+                <div class="menu" id="downloadMenu">
+                  <button class="btn ghost" type="button" aria-haspopup="true" aria-expanded="false">⬇️ Download</button>
+                  <div class="menu-list" role="menu">
+                    <div class="menu-item" data-export="all"><span>All Rows (CSV)</span><span class="muted">Location, SKU, Desc, IMEIs, Qty</span></div>
+                    <div class="menu-item" data-export="scanned"><span>Scanned Only (CSV)</span><span class="muted">Matches = 1</span></div>
+                    <div class="menu-item" data-export="missing"><span>Missing Only (CSV)</span><span class="muted">Matches = 0</span></div>
+                  </div>
+                </div>
+                <!-- Audit -->
+                <button class="btn ghost" id="auditBtn" type="button">🗂️ Audit</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="table-wrap">
+            <table id="dataTable" aria-describedby="tableDesc">
+              <caption id="tableDesc" style="text-align:left;padding:10px 12px;color:var(--ink-3);caption-side:top;">
+                System snapshot of IMEIs for the selected bin. Scanned matches turn green.
+              </caption>
+              <thead>
+                <tr>
+                  <th>Location</th>
+                  <th>SKU</th>
+                  <th>Description</th>
+                  <th>System IMEI</th>
+                  <th>Scanned IMEI</th>
+                  <th>Quantity</th>
+                </tr>
+              </thead>
+              <tbody id="tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- EMPTY STATE -->
+        <section class="card" id="emptyCard" style="display:block">
+          <div class="body empty">Enter a bin location above to load a snapshot, then scan IMEIs here.</div>
+        </section>
+
+        <div class="footnote">Wrong-bin scans are logged for audit. Duplicate scans are ignored. Quantity auto-calculates (1 if IMEIs match, else 0).</div>
+      </div>
+    </section>
+
+    <!-- PAGE 2: Investigator -->
+    <section id="page2" style="display:none">
+      <div class="container">
+        <section class="card">
+          <div class="head">
+            <div>
+              <div class="h1">Investigator – Bin Cycle Counts</div>
+              <div class="h2">Overview of bins, counters, timestamps, status, and wrong-IMEI verification.</div>
+            </div>
+            <div class="actions">
+              <button class="btn ghost" id="refreshInvestigations">Refresh</button>
+            </div>
+          </div>
+          <div class="body">
+            <div class="alerts" id="investAlerts" style="display:none"></div>
+
+            <h4 style="margin:0 0 10px 0;">Bin Status</h4>
+            <div class="table-wrap" style="margin-bottom:14px;">
+              <table id="investTable">
+                <thead>
+                  <tr>
+                    <th>Bin</th>
+                    <th>Counter</th>
+                    <th>Started</th>
+                    <th>Updated</th>
+                    <th>Total</th>
+                    <th>Scanned</th>
+                    <th>Missing</th>
+                    <th>State</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="investBody"><tr><td colspan="9" class="empty">No data loaded yet.</td></tr></tbody>
+              </table>
+            </div>
+
+            <h4 style="margin:10px 0;">Wrong IMEIs (Investigator verifies moves)</h4>
+            <div class="table-wrap">
+              <table id="investWrongBin">
+                <thead>
+                  <tr>
+                    <th>IMEI</th>
+                    <th>Scanned Bin</th>
+                    <th>True Location</th>
+                    <th>Status</th>
+                    <th>Moved To</th>
+                    <th>Moved By</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="investWrongBinBody"><tr><td colspan="7" class="empty">No wrong-bin items.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- PAGE 3: Supervisor Logs -->
+    <section id="page3" style="display:none">
+      <div class="container">
+        <section class="card">
+          <div class="head">
+            <div>
+              <div class="h1">Supervisor – Audit & Decisions</div>
+              <div class="h2">All wrong-bin logs, investigator moves, and final decisions (with attribution).</div>
+            </div>
+            <div class="actions">
+              <button class="btn ghost" id="refreshSupervisor">Refresh</button>
+            </div>
+          </div>
+          <div class="body">
+            <div class="alerts" id="supAlerts" style="display:none"></div>
+
+            <h4 style="margin:6px 0 10px 0;">Wrong-Bin Logs</h4>
+            <div class="table-wrap">
+              <table id="supWrongBin">
+                <thead>
+                  <tr>
+                    <th>IMEI</th>
+                    <th>Scanned Bin</th>
+                    <th>True Location</th>
+                    <th>Status</th>
+                    <th>Moved To</th>
+                    <th>Moved By</th>
+                    <th>Decision</th>
+                    <th>Decided By</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="supWrongBinBody"><tr><td colspan="9" class="empty">No data loaded yet.</td></tr></tbody>
+              </table>
+            </div>
+
+            <h4 style="margin:18px 0 10px 0;">Not-Scanned Items</h4>
+            <div class="table-wrap">
+              <table id="supNotScanned">
+                <thead>
+                  <tr>
+                    <th>Bin</th>
+                    <th>SKU</th>
+                    <th>Description</th>
+                    <th>System IMEI</th>
+                  </tr>
+                </thead>
+                <tbody id="supNotScannedBody"><tr><td colspan="4" class="empty">No not-scanned items.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <!-- AUDIT DRAWER (quick view) -->
+  <aside class="drawer" id="auditDrawer" aria-hidden="true">
+    <header>
+      <div style="display:flex;align-items:center;gap:8px">
+        <strong>Wrong-Bin Audit</strong>
+        <span class="badge" id="auditCount">0 open</span>
+      </div>
+      <button class="btn ghost sm" id="auditClose" type="button">Close</button>
+    </header>
+    <main>
+      <div class="alerts" id="auditAlerts" style="display:none"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>IMEI</th>
+              <th>Scanned Bin</th>
+              <th>True Location</th>
+              <th>Status</th>
+              <th>Moved To</th>
+              <th>Moved By</th>
+              <th>Decision</th>
+              <th>Decided By</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="auditBody"><tr><td colspan="9" class="empty">No data.</td></tr></tbody>
+        </table>
+      </div>
+    </main>
+  </aside>
+
+  <script>
+    // --- Config ----------------------------------------------------
+    const CONFIG = {
+      BIN_ENDPOINT: "/api/ordertime/bin?bin=",
+      IMEI_ENDPOINT: "/api/ordertime/imei?imei=",
+      AUDIT_ENDPOINT: "/api/audit/wrong-bin",              // GET(list) POST(log) PATCH(update)
+      SUMMARY_ENDPOINT: "/api/cyclecounts/summary",        // GET bins & states
+      NOT_SCANNED_ENDPOINT: "/api/cyclecounts/not-scanned",// GET missing
+      SUBMIT_BIN_ENDPOINT: "/api/cyclecounts/submit",      // POST {bin, counter, totals...}
+      ESCALATE_BIN_ENDPOINT: "/api/cyclecounts/escalate",  // POST {bin, actor}
+      FORCE_MOCK: false,
+      LOGO_FILENAME: "./download.png",
+    };
+
+    // --- Roles & Users (hardcoded) --------------------------------
+    const ROLES = {
+      COUNTER: "counter",
+      INVESTIGATOR: "investigator",
+      SUPERVISOR: "supervisor",
+    };
+
+    const USERS = {
+      // Cycle Counters
+      "matt":     { name:"Matt Westerfer", role:ROLES.COUNTER, password:"pass" },
+      "david":    { name:"David Lucas",    role:ROLES.COUNTER, password:"pass" },
+      "kevin":    { name:"Kevin Green",    role:ROLES.COUNTER, password:"pass" },
+      "sullivan": { name:"Matt Sullivan",  role:ROLES.COUNTER, password:"pass" },
+      "derek":    { name:"Derek Batista",  role:ROLES.COUNTER, password:"pass" },
+
+      // Investigators
+      "brad": { name:"Brad Ballard", role:ROLES.INVESTIGATOR, password:"pass" },
+      "dan":  { name:"Dan Kieu",     role:ROLES.INVESTIGATOR, password:"pass" },
+      "jess": { name:"Jessica Ernest", role:ROLES.INVESTIGATOR, password:"pass" },
+
+      // Supervisors
+      "max":    { name:"Max Mann",       role:ROLES.SUPERVISOR, password:"pass" },
+      "brad_s": { name:"Brad Ballard",   role:ROLES.SUPERVISOR, password:"pass" },
+      "jess_s": { name:"Jessica Ernest", role:ROLES.SUPERVISOR, password:"pass" },
+    };
+
+    // --- Auth state -----------------------------------------------
+    let currentUser = null;
+
+    // --- State (Page 1) -------------------------------------------
+    let currentBin = "";
+    /** @type {{location:string, sku:string, description:string, systemImei:string, scannedImei?:string}[]} */
+    let rows = [];
+    const scanned = new Set();
+
+    // --- DOM refs --------------------------------------------------
+    const authOverlay = document.getElementById("authOverlay");
+    const loginForm = document.getElementById("loginForm");
+    const loginUser = document.getElementById("loginUser");
+    const loginPass = document.getElementById("loginPass");
+    const loginMsg  = document.getElementById("loginMsg");
+
+    const miniTabs = document.getElementById("miniTabs");
+    const whoami = document.getElementById("whoami");
+    const logoutBtn = document.getElementById("logoutBtn");
+    const tab1 = document.getElementById("tab1");
+    const tab2 = document.getElementById("tab2");
+    const tab3 = document.getElementById("tab3");
+    const page1 = document.getElementById("page1");
+    const page2 = document.getElementById("page2");
+    const page3 = document.getElementById("page3");
+
+    // Page 1 elements
+    const submitBinBtn = document.getElementById("submitBinBtn");
+    const binForm = document.getElementById("binForm");
+    const binInput = document.getElementById("binInput");
+    const binSubmit = document.getElementById("binSubmit");
+    const resetBtn = document.getElementById("resetBtn");
+    const resultsCard = document.getElementById("resultsCard");
+    const emptyCard = document.getElementById("emptyCard");
+    const tbody = document.getElementById("tbody");
+    const scanForm = document.getElementById("scanForm");
+    const scanInput = document.getElementById("scanInput");
+    const alerts = document.getElementById("alerts");
+    const downloadMenu = document.getElementById("downloadMenu");
+    const auditBtn = document.getElementById("auditBtn");
+    const auditDrawer = document.getElementById("auditDrawer");
+    const auditClose = document.getElementById("auditClose");
+    const auditBody = document.getElementById("auditBody");
+    const auditAlerts = document.getElementById("auditAlerts");
+    const auditCount = document.getElementById("auditCount");
+    const kpi = {
+      total: document.getElementById("kpi-total"),
+      scanned: document.getElementById("kpi-scanned"),
+      missing: document.getElementById("kpi-missing"),
+      total2: document.getElementById("kpi2-total"),
+      scanned2: document.getElementById("kpi2-scanned"),
+      missing2: document.getElementById("kpi2-missing"),
+    };
+
+    // Page 2 / 3 refs
+    const refreshInvestigations = document.getElementById("refreshInvestigations");
+    const investAlerts = document.getElementById("investAlerts");
+    const investBody = document.getElementById("investBody");
+    const investWrongBinBody = document.getElementById("investWrongBinBody");
+
+    const refreshSupervisor = document.getElementById("refreshSupervisor");
+    const supAlerts = document.getElementById("supAlerts");
+    const supWrongBinBody = document.getElementById("supWrongBinBody");
+    const supNotScannedBody = document.getElementById("supNotScannedBody");
+
+    // --- Utilities -------------------------------------------------
+    const showAlerts = (el, items=[]) => {
+      if (!items.length){ el.style.display="none"; el.innerHTML=""; return; }
+      el.style.display="";
+      el.innerHTML = items.map(a=>`<div class="alert ${a.type==='warn'?'warn':'ok'}">${a.msg}</div>`).join("");
+    };
+    const setKPIs = () => {
+      const total = rows.length;
+      const scannedCount = rows.filter(r => r.scannedImei === r.systemImei).length;
+      const missing = total - scannedCount;
+      [kpi.total, kpi.total2].forEach(el => el.textContent = total);
+      [kpi.scanned, kpi.scanned2].forEach(el => el.textContent = scannedCount);
+      [kpi.missing, kpi.missing2].forEach(el => el.textContent = missing);
+    };
+    const escapeHTML = (s="") =>
+      s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+    const pad = n => String(n).padStart(2,"0");
+    const ts = () => { const d=new Date(); return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; };
+
+    const renderTable = () => {
+      if (!rows.length){ resultsCard.style.display="none"; emptyCard.style.display="block"; setKPIs(); submitBinBtn.disabled = true; return; }
+      resultsCard.style.display="block"; emptyCard.style.display="none";
+      submitBinBtn.disabled = (currentUser?.role !== ROLES.COUNTER);
+      tbody.innerHTML = rows.map(r => {
+        const matched = r.scannedImei === r.systemImei;
+        const qty = matched ? 1 : 0;
+        return `<tr class="${matched?'ok':''}">
+          <td>${escapeHTML(r.location)}</td>
+          <td class="mono">${escapeHTML(r.sku)}</td>
+          <td>${escapeHTML(r.description||'—')}</td>
+          <td class="mono">${escapeHTML(r.systemImei)}</td>
+          <td class="mono">${escapeHTML(r.scannedImei||'—')}</td>
+          <td><span class="qty ${qty===1?'is1':''}">${qty}</span></td>
+        </tr>`;
+      }).join("");
+      setKPIs();
+    };
+
+    const csvEscape = (v="") => /[",\n]/.test(v) ? `"${v.replace(/"/g,'""')}"` : v;
+    const toCSV = (data) => {
+      const header = ["Location","SKU","Description","System IMEI","Scanned IMEI","Quantity"];
+      const lines = [header.join(",")];
+      for (const r of data){
+        const qty = r.scannedImei===r.systemImei ? 1 : 0;
+        lines.push([r.location,r.sku||"",r.description||"",r.systemImei,r.scannedImei||"",String(qty)].map(csvEscape).join(","));
+      }
+      return lines.join("\n");
+    };
+    const downloadCSV = (subset="all") => {
+      if (!rows.length) return showAlerts(alerts,[{type:"warn",msg:"No rows to export."}]);
+      let data = rows;
+      if (subset==="scanned") data = rows.filter(r => r.scannedImei===r.systemImei);
+      if (subset==="missing") data = rows.filter(r => r.scannedImei!==r.systemImei);
+      const csv = toCSV(data);
+      const blob = new Blob([csv],{type:"text/csv;charset=utf-8"});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const safeBin = (currentBin||"bin").replace(/[^A-Za-z0-9_-]+/g,"-");
+      a.href=url; a.download=`connectus_${safeBin}_${ts()}_${subset}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      showAlerts(alerts,[{type:"ok",msg:`Downloading <b>${escapeHTML(a.download)}</b>`}]);
+    };
+
+    // --- Mock fallbacks (for demo) --------------------------------
+    const mockBin = bin => {
+      const seed = s => Array.from(s).reduce((a,c)=>a+c.charCodeAt(0),0);
+      const base = seed(bin)%900000000000000 + 100000000000000;
+      const mk = n => String(base+n);
+      return [
+        { location: bin, sku:"IP12-128-BLK", description:"iPhone 12 128GB Black",  systemImei: mk(1) },
+        { location: bin, sku:"GA13-64-5G",   description:"Galaxy A13 5G 64GB",     systemImei: mk(2) },
+        { location: bin, sku:"IPAD-9-64",    description:"iPad 9th Gen 64GB Wi-Fi",systemImei: mk(3) },
+        { location: bin, sku:"PIX6-128",     description:"Pixel 6 128GB",          systemImei: mk(4) },
+      ];
+    };
+    const mockLocate = (imei,bin) => ({ imei, location: bin.replace(/\d+$/, m=>String((+m||0)+1))||"K-01-02", sku:"—", description:"—" });
+    const mockSummary = () => ([
+      { bin:"K-01-01", counter:"Matt Westerfer", started:"2025-10-06 09:11", updated:"2025-10-06 10:05", total:24, scanned:20, missing:4, state:"investigation" },
+      { bin:"K-01-02", counter:"David Lucas",    started:"2025-10-06 09:30", updated:"2025-10-06 09:50", total:18, scanned:18, missing:0, state:"supervisor" },
+    ]);
+    const mockNotScanned = () => ([
+      { bin:"K-01-01", sku:"GA13-64-5G", description:"Galaxy A13 5G 64GB", systemImei:"123456789012345" },
+      { bin:"K-01-01", sku:"IP12-128-BLK", description:"iPhone 12 128GB Black", systemImei:"123456789012346" },
+    ]);
+    const mockAudits = () => ([
+      { id:"1", imei:"123456789012345", scannedBin:"K-01-01", trueLocation:"K-01-02", status:"open" },
+      { id:"2", imei:"123456789012346", scannedBin:"K-02-05", trueLocation:"K-03-01", status:"moved", movedTo:"K-03-01", movedBy:"Jessica Ernest" },
+      { id:"3", imei:"123456789012347", scannedBin:"K-02-05", trueLocation:"K-03-01", status:"resolved", decision:"Accept move", decidedBy:"Max Mann" },
+    ]);
+
+    // --- API calls -------------------------------------------------
+    async function fetchBinSnapshot(bin){
+      if (CONFIG.FORCE_MOCK){ return mockBin(bin); }
+      const res = await fetch(CONFIG.BIN_ENDPOINT + encodeURIComponent(bin), { cache:"no-store" });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`BIN API ${res.status}: ${txt}`);
+      }
+      const data = await res.json();
+      const list = Array.isArray(data.records) ? data.records : [];
+      return list.map(r => ({
+        location: r.location || bin,
+        sku: r.sku || r.itemCode || "—",
+        description: r.description || r.itemName || "—",
+        systemImei: String(r.systemImei || r.imei || r.serial || ""),
+      }));
+    }
+
+    async function locateImei(imei){
+      try{
+        if (CONFIG.FORCE_MOCK) return mockLocate(imei, currentBin || "K-01-01");
+        const res = await fetch(CONFIG.IMEI_ENDPOINT + encodeURIComponent(imei), { cache:"no-store" });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (!data || !data.location) return null;
+        return data;
+      }catch(e){
+        showAlerts(alerts,[{type:"warn",msg:`OrderTime IMEI lookup failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
+        return null;
+      }
+    }
+
+    async function logWrongBin({ imei, scannedBin, trueLocation }) {
+      try{
+        if (CONFIG.FORCE_MOCK) return;
+        await fetch(CONFIG.AUDIT_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imei, scannedBin, trueLocation, scannedBy: currentUser?.name || "—" })
+        });
+      }catch(_e){ /* non-blocking */ }
+    }
+
+    async function fetchAuditList() {
+      if (CONFIG.FORCE_MOCK) { return mockAudits(); }
+      const res = await fetch(CONFIG.AUDIT_ENDPOINT);
+      if (!res.ok) throw new Error(await res.text());
+      const { records } = await res.json();
+      return Array.isArray(records) ? records : [];
+    }
+
+    async function patchAudit(id, payload){
+      if (CONFIG.FORCE_MOCK) return { ok:true };
+      const res = await fetch(CONFIG.AUDIT_ENDPOINT, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, ...payload })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+
+    async function fetchSummary(){
+      if (CONFIG.FORCE_MOCK) return mockSummary();
+      const res = await fetch(CONFIG.SUMMARY_ENDPOINT, { cache:"no-store" });
+      if (!res.ok) throw new Error(await res.text());
+      const { records } = await res.json();
+      return Array.isArray(records) ? records : [];
+    }
+
+    async function fetchNotScanned(){
+      if (CONFIG.FORCE_MOCK) return mockNotScanned();
+      const res = await fetch(CONFIG.NOT_SCANNED_ENDPOINT, { cache:"no-store" });
+      if (!res.ok) throw new Error(await res.text());
+      const { records } = await res.json();
+      return Array.isArray(records) ? records : [];
+    }
+
+    async function submitBinToInvestigator(){
+      if (!currentBin) return;
+      const scannedCount = rows.filter(r => r.scannedImei === r.systemImei).length;
+      const missingList = rows
+        .filter(r => r.scannedImei !== r.systemImei)
+        .map(r => ({ sku: r.sku, description: r.description, systemImei: r.systemImei }));
+
+      const payload = {
+        bin: currentBin,
+        counter: currentUser?.name || "—",
+        total: rows.length,
+        scanned: scannedCount,
+        missing: rows.length - scannedCount,
+        items: rows,               // line detail
+        missingImeis: missingList, // powers Not-Scanned
+      };
+      try{
+        if (!CONFIG.FORCE_MOCK){
+          const res = await fetch(CONFIG.SUBMIT_BIN_ENDPOINT, {
+            method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)
+          });
+          if (!res.ok) throw new Error(await res.text());
+        }
+        showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
+      }catch(e){
+        showAlerts(alerts,[{type:"warn",msg:`Submit failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
+      }
+    }
+
+    async function escalateBinToSupervisor(bin){
+      try{
+        if (!CONFIG.FORCE_MOCK){
+          const res = await fetch(CONFIG.ESCALATE_BIN_ENDPOINT, {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ bin, actor: currentUser?.name || "—" })
+          });
+          if (!res.ok) throw new Error(await res.text());
+        }
+        showAlerts(investAlerts,[{type:"ok",msg:`Bin <b>${escapeHTML(bin)}</b> escalated to Supervisor.`}]);
+        await refreshInvestigator(); // reflect new state
+      }catch(e){
+        showAlerts(investAlerts,[{type:"warn",msg:`Escalation failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
+      }
+    }
+
+    // --- Auth/UI helpers ------------------------------------------
+    function applyRoleUI(){
+      if (!currentUser) return;
+
+      miniTabs.style.display = "";
+      whoami.textContent = `${currentUser.name} — ${currentUser.role}`;
+      tab1.disabled = false; // page 1 always allowed
+
+      [page1,page2,page3].forEach(p => p.style.display = "none");
+
+      if (currentUser.role === ROLES.COUNTER){
+        tab2.disabled = true; tab3.disabled = true;
+        page1.style.display = "";
+        selectTab("page1");
+      } else if (currentUser.role === ROLES.INVESTIGATOR){
+        tab2.disabled = false; tab3.disabled = true;
+        page1.style.display = ""; page2.style.display = "";
+        selectTab("page1");
+      } else if (currentUser.role === ROLES.SUPERVISOR){
+        tab2.disabled = false; tab3.disabled = false;
+        page1.style.display = ""; page2.style.display = ""; page3.style.display = "";
+        selectTab("page1");
+      }
+    }
+
+    function selectTab(id){
+      [tab1,tab2,tab3].forEach(b=>b.classList.remove("primary"));
+      if (id==="page1") tab1.classList.add("primary");
+      if (id==="page2") tab2.classList.add("primary");
+      if (id==="page3") tab3.classList.add("primary");
+
+      const canSee2 = currentUser && (currentUser.role===ROLES.INVESTIGATOR || currentUser.role===ROLES.SUPERVISOR);
+      const canSee3 = currentUser && (currentUser.role===ROLES.SUPERVISOR);
+
+      page1.style.display = (id==="page1") ? "" : "none";
+      page2.style.display = (id==="page2" && canSee2) ? "" : "none";
+      page3.style.display = (id==="page3" && canSee3) ? "" : "none";
+    }
+
+    // --- Events: Auth ---------------------------------------------
+    loginForm.addEventListener("submit", (e)=>{
+      e.preventDefault();
+      const u = (loginUser.value||"").trim().toLowerCase();
+      const p = (loginPass.value||"").trim();
+      const found = USERS[u];
+      if (!found || found.password !== p){
+        loginMsg.textContent = "Invalid username or password.";
+        return;
+      }
+      currentUser = { username:u, ...found };
+      localStorage.setItem("cc_user", JSON.stringify(currentUser));
+      authOverlay.style.display = "none";
+      applyRoleUI();
+      binInput?.focus();
+    });
+
+    logoutBtn.addEventListener("click", ()=>{
+      localStorage.removeItem("cc_user");
+      currentUser = null;
+      authOverlay.style.display = "";
+      miniTabs.style.display = "none";
+      [page1,page2,page3].forEach(p => p.style.display = "none");
+    });
+
+    tab1.addEventListener("click", ()=> selectTab("page1"));
+    tab2.addEventListener("click", ()=> { if (!tab2.disabled) { selectTab("page2"); refreshInvestigator(); }});
+    tab3.addEventListener("click", ()=> { if (!tab3.disabled) { selectTab("page3"); refreshSupervisorViews(); }});
+
+    // Restore session if exists
+    (function restoreUser(){
+      try{
+        const raw = localStorage.getItem("cc_user");
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed && USERS[parsed.username]){
+          currentUser = parsed;
+          authOverlay.style.display = "none";
+          applyRoleUI();
+        }
+      }catch{}
+    })();
+
+    // --- Events: Page 1 (counter) --------------------------------
+    function setScanEnabled(enabled){
+      scanInput.disabled = !enabled;
+    }
+
+    binForm.addEventListener("submit", async e => {
+      e.preventDefault();
+      const bin = binInput.value.trim(); if (!bin) return;
+      binSubmit.disabled = true; setScanEnabled(false);
+      showAlerts(alerts,[{type:"ok",msg:`Loading bin <b>${escapeHTML(bin)}</b>…`}]);
+      try{
+        currentBin = bin; scanned.clear();
+        rows = await fetchBinSnapshot(bin);
+        showAlerts(alerts,[{type:"ok",msg:`Loaded <b>${rows.length}</b> IMEIs for bin <b>${escapeHTML(bin)}</b>.`}]);
+        renderTable(); scanInput.focus();
+      }catch(err){
+        const msg = (err && err.message) ? String(err.message) : "Failed to load bin.";
+        showAlerts(alerts,[{type:"warn",msg:`Failed to load bin.<br><small>${escapeHTML(msg)}</small>`}]);
+        rows = []; renderTable();
+      }finally{
+        binSubmit.disabled=false; setScanEnabled(true);
+      }
+    });
+
+    resetBtn.addEventListener("click", () => {
+      currentBin=""; rows=[]; scanned.clear(); binInput.value=""; scanInput.value="";
+      showAlerts(alerts,[]); renderTable(); binInput.focus();
+    });
+
+    scanForm.addEventListener("submit", async e => {
+      e.preventDefault();
+      const imei = scanInput.value.trim(); if (!imei) return;
+
+      if (scanned.has(imei)){
+        showAlerts(alerts,[{type:"ok",msg:`IMEI <b>${escapeHTML(imei)}</b> already scanned.`}] );
+        scanInput.value=""; return;
+      }
+
+      const idx = rows.findIndex(r => r.systemImei===imei);
+      if (idx>=0){
+        rows[idx] = {...rows[idx], scannedImei: imei}; scanned.add(imei);
+        showAlerts(alerts,[{type:"ok",msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.`}]);
+        renderTable(); scanInput.value=""; return;
+      }
+
+      // Not in current bin -> find true location + log audit
+      const info = await locateImei(imei);
+      if (info && info.location){
+        showAlerts(alerts,[{type:"warn",msg:`Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>, not <b>${escapeHTML(currentBin||'—')}</b>.`}]);
+        logWrongBin({ imei, scannedBin: currentBin || "-", trueLocation: info.location });
+      }else{
+        showAlerts(alerts,[{type:"warn",msg:`IMEI <b>${escapeHTML(imei)}</b> not found in ERP.`}]);
+      }
+      scanInput.value="";
+    });
+
+    submitBinBtn.addEventListener("click", async ()=>{
+      if (currentUser?.role !== ROLES.COUNTER){
+        return showAlerts(alerts,[{type:"warn",msg:"Only Cycle Counters can submit bins."}]);
+      }
+      if (!currentBin || !rows.length){
+        return showAlerts(alerts,[{type:"warn",msg:"No bin loaded to submit."}]);
+      }
+      await submitBinToInvestigator();
+    });
+
+    // Download menu
+    const toggleMenu = (open) => {
+      downloadMenu.classList.toggle("open", open);
+      downloadMenu.querySelector("button").setAttribute("aria-expanded", open?"true":"false");
+    };
+    downloadMenu.querySelector("button").addEventListener("click", () => toggleMenu(!downloadMenu.classList.contains("open")));
+    downloadMenu.querySelectorAll(".menu-item").forEach(item => item.addEventListener("click", () => { downloadCSV(item.getAttribute("data-export")); toggleMenu(false); }));
+    document.addEventListener("click", e => { if (!downloadMenu.contains(e.target)) toggleMenu(false); });
+
+    // Audit drawer (quick view)
+    auditBtn.addEventListener("click", async () => {
+      auditDrawer.classList.add("open");
+      auditDrawer.setAttribute("aria-hidden","false");
+      try{
+        const list = await fetchAuditList();
+        auditCount.textContent = `${list.filter(x=>x.status!=="resolved").length} open`;
+        auditBody.innerHTML = list.map(it => `
+          <tr>
+            <td class="mono">${escapeHTML(it.imei)}</td>
+            <td>${escapeHTML(it.scannedBin)}</td>
+            <td>${escapeHTML(it.trueLocation)}</td>
+            <td><span class="badge">${escapeHTML(it.status || 'open')}</span></td>
+            <td class="mono">${escapeHTML(it.movedTo||'')}</td>
+            <td>${escapeHTML(it.movedBy||'')}</td>
+            <td>${escapeHTML(it.decision||'')}</td>
+            <td>${escapeHTML(it.decidedBy||'')}</td>
+            <td class="row-sm">
+              ${it.status === "resolved" ? "" : `<button class="btn primary sm" data-resolve="${escapeHTML(it.id)}">Mark Fixed</button>`}
+            </td>
+          </tr>
+        `).join("");
+        showAlerts(auditAlerts,[]);
+      }catch(err){
+        showAlerts(auditAlerts,[{type:"warn",msg:"Failed to load audit list."}]);
+      }
+    });
+    auditClose.addEventListener("click", () => {
+      auditDrawer.classList.remove("open");
+      auditDrawer.setAttribute("aria-hidden","true");
+    });
+    auditBody.addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-resolve]");
+      if (!btn) return;
+      const id = btn.getAttribute("data-resolve");
+      btn.disabled = true;
+      try{
+        await patchAudit(id, { status:"resolved", decision:"Fixed in place", decidedBy: currentUser?.name || "—" });
+        const list = await fetchAuditList();
+        auditCount.textContent = `${list.filter(x=>x.status!=="resolved").length} open`;
+        auditBody.innerHTML = list.map(it => `
+          <tr>
+            <td class="mono">${escapeHTML(it.imei)}</td>
+            <td>${escapeHTML(it.scannedBin)}</td>
+            <td>${escapeHTML(it.trueLocation)}</td>
+            <td><span class="badge">${escapeHTML(it.status || 'open')}</span></td>
+            <td class="mono">${escapeHTML(it.movedTo||'')}</td>
+            <td>${escapeHTML(it.movedBy||'')}</td>
+            <td>${escapeHTML(it.decision||'')}</td>
+            <td>${escapeHTML(it.decidedBy||'')}</td>
+            <td class="row-sm"></td>
+          </tr>
+        `).join("");
+      }catch(err){
+        showAlerts(auditAlerts,[{type:"warn",msg:"Failed to resolve item."}]);
+      }finally{
+        btn.disabled = false;
+      }
+    });
+
+    // --- Events: Page 2 (investigator) ----------------------------
+    async function refreshInvestigator(){
+      try{
+        showAlerts(investAlerts,[{type:"ok",msg:"Loading investigator data…"}]);
+
+        // Bin table
+        const recs = await fetchSummary();
+        investBody.innerHTML = (!recs.length)
+          ? `<tr><td colspan="9" class="empty">No data.</td></tr>`
+          : recs.map(r => {
+              const state = r.state || r.status || "counter";
+              const canEscalate = (state !== "supervisor");
+              return `
+              <tr>
+                <td>${escapeHTML(r.bin||"—")}</td>
+                <td>${escapeHTML(r.counter||"—")}</td>
+                <td>${escapeHTML(r.started||"—")}</td>
+                <td>${escapeHTML(r.updated||"—")}</td>
+                <td>${escapeHTML(String(r.total??"—"))}</td>
+                <td>${escapeHTML(String(r.scanned??"—"))}</td>
+                <td>${escapeHTML(String(r.missing??"—"))}</td>
+                <td><span class="badge">${escapeHTML(state)}</span></td>
+                <td class="row-sm">
+                  ${canEscalate ? `<button class="btn primary sm" data-escalate-bin="${escapeHTML(r.bin)}">Escalate → Supervisor</button>` : ``}
+                </td>
+              </tr>`;
+            }).join("");
+
+        // Wrong-bin list for investigator to verify moves
+        const audits = await fetchAuditList();
+        const openish = audits.filter(a => a.status !== "resolved");
+        investWrongBinBody.innerHTML = (!openish.length)
+          ? `<tr><td colspan="7" class="empty">No wrong-bin items.</td></tr>`
+          : openish.map(it => `
+              <tr>
+                <td class="mono">${escapeHTML(it.imei)}</td>
+                <td>${escapeHTML(it.scannedBin)}</td>
+                <td>${escapeHTML(it.trueLocation)}</td>
+                <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
+                <td class="mono">${escapeHTML(it.movedTo||'')}</td>
+                <td>${escapeHTML(it.movedBy||'')}</td>
+                <td class="row-sm">
+                  <button class="btn ghost sm" data-mark-moved="${escapeHTML(it.id)}">Mark Moved</button>
+                </td>
+              </tr>
+            `).join("");
+
+        showAlerts(investAlerts,[]);
+      }catch(e){
+        showAlerts(investAlerts,[{type:"warn",msg:"Failed to load investigator data."}]);
+      }
+    }
+    refreshInvestigations.addEventListener("click", refreshInvestigator);
+
+    // Delegate clicks: escalate bin & mark moved
+    document.addEventListener("click", async (e)=>{
+      const esc = e.target.closest("[data-escalate-bin]");
+      if (esc){
+        const bin = esc.getAttribute("data-escalate-bin");
+        if (currentUser?.role !== ROLES.INVESTIGATOR && currentUser?.role !== ROLES.SUPERVISOR){
+          return showAlerts(investAlerts,[{type:"warn",msg:"Only Investigators/Supervisors can escalate."}]);
+        }
+        esc.disabled = true;
+        await escalateBinToSupervisor(bin);
+        esc.disabled = false;
+        return;
+      }
+
+      const mv = e.target.closest("[data-mark-moved]");
+      if (mv){
+        if (currentUser?.role !== ROLES.INVESTIGATOR && currentUser?.role !== ROLES.SUPERVISOR){
+          return showAlerts(investAlerts,[{type:"warn",msg:"Only Investigators/Supervisors can mark moves."}]);
+        }
+        const id = mv.getAttribute("data-mark-moved");
+        const movedTo = prompt("Enter the new (correct) bin location for this IMEI:");
+        if (!movedTo) return;
+        mv.disabled = true;
+        try{
+          await patchAudit(id, { status:"moved", movedTo, movedBy: currentUser?.name || "—" });
+          await refreshInvestigator();
+        }catch{
+          showAlerts(investAlerts,[{type:"warn",msg:"Failed to update moved status."}]);
+        }finally{
+          mv.disabled = false;
+        }
+      }
+    });
+
+    // --- Events: Page 3 (supervisor) ------------------------------
+    async function refreshSupervisorViews(){
+      try{
+        showAlerts(supAlerts,[{type:"ok",msg:"Loading supervisor feeds…"}]);
+
+        // Wrong-bin logs
+        const audits = await fetchAuditList();
+        supWrongBinBody.innerHTML = (audits.length ? audits.map(it => `
+          <tr>
+            <td class="mono">${escapeHTML(it.imei)}</td>
+            <td>${escapeHTML(it.scannedBin)}</td>
+            <td>${escapeHTML(it.trueLocation)}</td>
+            <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
+            <td class="mono">${escapeHTML(it.movedTo||'')}</td>
+            <td>${escapeHTML(it.movedBy||'')}</td>
+            <td>
+              <input class="field" data-decision-input="${escapeHTML(it.id)}" placeholder="Decision note (optional)" style="padding:6px 10px"/>
+            </td>
+            <td>${escapeHTML(it.decidedBy||'')}</td>
+            <td class="row-sm">
+              ${it.status==="resolved" ? "" : `<button class="btn primary sm" data-sup-resolve="${escapeHTML(it.id)}">Resolve</button>`}
+            </td>
+          </tr>
+        `).join("") : `<tr><td colspan="9" class="empty">No wrong-bin logs.</td></tr>`);
+
+        // Not-scanned
+        const missing = await fetchNotScanned();
+        supNotScannedBody.innerHTML = (missing.length ? missing.map(it => `
+          <tr>
+            <td>${escapeHTML(it.bin||"—")}</td>
+            <td class="mono">${escapeHTML(it.sku||"—")}</td>
+            <td>${escapeHTML(it.description||"—")}</td>
+            <td class="mono">${escapeHTML(it.systemImei||"—")}</td>
+          </tr>
+        `).join("") : `<tr><td colspan="4" class="empty">No not-scanned items.</td></tr>`);
+
+        showAlerts(supAlerts,[]);
+      }catch(e){
+        showAlerts(supAlerts,[{type:"warn",msg:"Failed to load supervisor data."}]);
+      }
+    }
+    refreshSupervisor.addEventListener("click", refreshSupervisorViews);
+
+    // Inline supervisor resolve with decision attribution
+    document.addEventListener("click", async (e)=>{
+      const btn = e.target.closest("[data-sup-resolve]");
+      if (!btn) return;
+      if (currentUser?.role !== ROLES.SUPERVISOR){
+        return showAlerts(supAlerts,[{type:"warn",msg:"Only Supervisors can finalize decisions."}]);
+      }
+      const id = btn.getAttribute("data-sup-resolve");
+      const input = document.querySelector(`[data-decision-input="${CSS.escape(id)}"]`);
+      const decision = (input && input.value) ? input.value.trim() : "Resolved";
+      btn.disabled = true;
+      try{
+        await patchAudit(id, { status:"resolved", decision, decidedBy: currentUser?.name || "—" });
+        await refreshSupervisorViews();
+      }catch{
+        showAlerts(supAlerts,[{type:"warn",msg:"Failed to resolve item."}]);
+      }finally{
+        btn.disabled = false;
+      }
+    });
+
+    // --- Init ------------------------------------------------------
+    function init(){
+      renderTable();
+      if (authOverlay.style.display === "none"){ binInput?.focus(); }
+    }
+    init();
+  </script>
+</body>
+</html>
