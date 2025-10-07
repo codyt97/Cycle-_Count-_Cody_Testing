@@ -1,24 +1,26 @@
 // api/_lib/respond.js
 function withCORS(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
-function ok(res, data = {}, code = 200) {
+function json(res, status, payload) {
   withCORS(res);
-  res.status(code).json(data);
+  res.status(status).json(payload);
 }
 
-function bad(res, message = "Bad Request", code = 400) {
-  withCORS(res);
-  res.status(code).json({ error: message });
+function ok(res, payload) {
+  return json(res, 200, payload);
 }
 
-function method(res, methods = ["GET"]) {
-  withCORS(res);
-  res.setHeader("Allow", methods.join(","));
-  return bad(res, `Method Not Allowed`, 405);
+function bad(res, message, status = 400) {
+  return json(res, status, { error: message });
 }
 
-module.exports = { ok, bad, method, withCORS };
+function method(res, allowed) {
+  res.setHeader("Allow", allowed.join(","));
+  return bad(res, `Method Not Allowed. Use: ${allowed.join(",")}`, 405);
+}
+
+module.exports = { withCORS, ok, bad, method };
