@@ -1,17 +1,11 @@
 // api/ordertime/_client.js
 
-// Node 18+ / Vercel: use the global fetch (no node-fetch import needed)
-
 const BASE =
   (process.env.OT_BASE_URL || "https://services.ordertime.com/api").replace(
     /\/+$/,
     ""
   );
 
-/**
- * Build the auth + list payload for OrderTime /api/list
- * Throws with a clear message if required env vars are missing.
- */
 function buildPayload() {
   const mode = (process.env.OT_AUTH_MODE || "PASSWORD").toUpperCase();
 
@@ -22,6 +16,16 @@ function buildPayload() {
   const company = process.env.OT_COMPANY;
   const username = process.env.OT_USERNAME;
   const password = process.env.OT_PASSWORD;
+
+  // --- NEW: safe debug ---
+  console.log("[OT] buildPayload", {
+    mode,
+    hasCompany: !!company,
+    hasUsername: !!username,
+    hasPassword: !!password,
+    base: BASE,
+  });
+  // -----------------------
 
   if (!company || !username || !password) {
     throw new Error("Missing OT_COMPANY or OT_USERNAME or OT_PASSWORD.");
@@ -34,32 +38,39 @@ function buildPayload() {
   };
 }
 
-/**
- * POST /api/list to OrderTime
- * @param {object} listBody - fields like Type, Filters, PageNumber, NumberOfRecords
- */
 async function postList(listBody) {
   const auth = buildPayload();
 
-  const url = `${BASE}/list`; // absolute URL
+  const url = `${BASE}/list`;
   const body = { ...auth, ...listBody };
+
+  // --- NEW: safe debug of list parameters (not secrets) ---
+  const { Type, Filters, PageNumber, NumberOfRecords } = listBody || {};
+  console.log("[OT] POST /list", {
+    url,
+    Type,
+    hasFilters: Array.isArray(Filters),
+    PageNumber,
+    NumberOfRecords,
+  });
+  // --------------------------------------------------------
 
   const res = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      // OrderTime does NOT want Bearer for PASSWORD mode; payload is in the body.
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
-  // OrderTime sends 200 with body on success, 400 with { Message } on failure.
   const text = await res.text();
+
+  // --- NEW: log status + short preview to catch server messages ---
+  console.log("[OT] /list response", { status: res.status, preview: text?.slice?.(0, 120) });
+  // ----------------------------------------------------------------
+
   let data;
   try {
     data = text ? JSON.parse(text) : null;
-  } catch (e) {
-    // Non-JSON edge cases: still bubble up
+  } catch {
     throw new Error(`OT ${res.status} [${url}] Non-JSON response: ${text}`);
   }
 
