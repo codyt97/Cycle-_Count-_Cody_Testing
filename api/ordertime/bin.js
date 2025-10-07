@@ -1,60 +1,88 @@
 // api/ordertime/bin.js
-const { withCORS, ok, bad, method } = require("../_lib/respond");
-const { otList } = require("./_client");
+const { postList } = require("./_client");
 
-const RT_INV_BY_BIN = 1141; // proven on your tenant
+// OT "types"
+const TYPE_BINS = 151;   // Bin records
+const TYPE_IL   = 1141;  // Inventory Ledger (lot/serial movements)
 
-module.exports = async (req, res) => {
-  if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
-  if (req.method !== "GET")      return method(res, ["GET", "OPTIONS"]);
+function ok(json) {
+  return new Response(JSON.stringify(json), {
+    status: 200,
+    headers: { "Content-Type": "application/json" }
+  });
+}
 
-  const binName = String(req.query.bin || "").trim();
-  const debug   = String(req.query.debug || "0") === "1";
-  if (!binName) return bad(res, "bin is required", 400);
+function fail(status, error) {
+  return new Response(JSON.stringify({ error: String(error) }), {
+    status,
+    headers: { "Content-Type": "application/json" }
+  });
+}
 
+module.exports = async function handler(req) {
   try {
-    const pageSize = 500;
-    let page = 1, all = [];
-    const filter = { PropertyName: "BinRef.Name", Operator: 1, FilterValueArray: binName };
+    const { searchParams } = new URL(req.url);
+    const binName = (searchParams.get("bin") || "").trim();
 
-    console.log(`[BIN] Querying ${RT_INV_BY_BIN} by BinRef.Name="${binName}"`);
-    res.setHeader("x-which-bin", "inv-1141-v2"); // to prove we hit this code
-
-    // paginate
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const chunk = await otList({
-        Type: RT_INV_BY_BIN,
-        Filters: [filter],
-        PageNumber: page,
-        NumberOfRecords: pageSize,
-      });
-      console.log(`[BIN] page ${page} → ${Array.isArray(chunk) ? chunk.length : 0} rows`);
-      if (!Array.isArray(chunk) || chunk.length === 0) break;
-      all.push(...chunk);
-      if (chunk.length < pageSize) break;
-      page++;
+    if (!binName) {
+      return fail(400, "Missing ?bin= parameter");
     }
 
-    // map to UI
-    const records = all.map(r => ({
-      location:    r?.BinRef?.Name || r?.LocationRef?.Name || binName,
-      sku:         r?.ItemRef?.Name || r?.ItemRef?.Code || r?.ItemCode || "—",
-      description: r?.Description || r?.ItemRef?.Name || "—",
-      systemImei:  String(r?.LotOrSerialNo || r?.LotOrSerialRef?.Name || r?.SerialNumber || ""),
-    })).filter(x => x.systemImei);
+    console.info(`[BIN] Search for`, binName);
 
-    const payload = { records };
-    if (debug) payload.debug = {
-      type: RT_INV_BY_BIN,
-      filter,
-      rawCount: all.length,
-      mappedCount: records.length,
-    };
+    // Step A: resolve bin name → bin Id (Type 151)
+    const binRows = await postList({
+      type: TYPE_BINS,
+      page: 1,
+      size: 1,
+      filters: [
+        { PropertyName: "Name", Operator: 1, FilterValueArray: [binName] } // equals
+      ],
+      select: ["Id", "Name", "LocationRef.Id", "LocationRef.Name"] // optional
+    });
 
-    return ok(res, payload);
-  } catch (e) {
-    console.error("[BIN] error", e);
-    return bad(res, String(e.message || e), 502);
+    if (!binRows.length) {
+      console.info(`[BIN] no such bin`, binName);
+      return ok({ page: 1, total: 0, rows: [] });
+    }
+
+    const binId = binRows[0].Id;
+    console.info(`[BIN] Found bin`, binName, "→ Id", binId);
+
+    // Step B: Pull Inventory Ledger by BinRef.Id (Type 1141)
+    // This avoids the null-ref and works reliably vs BinRef.Name.
+    const ilRows = await postList({
+      type: TYPE_IL,
+      page: 1,
+      size: 500, // up to you
+      filters: [
+        { PropertyName: "BinRef.Id", Operator: 1, FilterValueArray: [String(binId)] }
+      ],
+      select: [
+        "ItemRef.Name",
+        "Description",
+        "LotOrSerialNo",
+        "LocationRef.Name",
+        "BinRef.Name",
+        "Quantity"
+      ]
+    });
+
+    // Map to what your table expects
+    const rows = ilRows.map(r => ({
+      sku: r?.ItemRef?.Name || "",
+      description: r?.Description || "",
+      imei: r?.LotOrSerialNo || "",
+      location: r?.LocationRef?.Name || "",
+      bin: r?.BinRef?.Name || "",
+      qty: r?.Quantity ?? 1
+    }));
+
+    console.info(`[BIN] page 1 → ${rows.length} rows`);
+    return ok({ page: 1, total: rows.length, rows });
+  } catch (err) {
+    console.error("[BIN] error", err);
+    // normalize to 502 for the UI message banner
+    return fail(502, err.message || err);
   }
 };
