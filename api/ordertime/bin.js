@@ -9,11 +9,10 @@ module.exports = async (req, res) => {
   if (req.method !== "GET")      return method(res, ["GET", "OPTIONS"]);
 
   const bin = String(req.query.bin || "").trim();
-  const debug = String(req.query.debug || "0") === "1";
   if (!bin) return bad(res, "bin is required", 400);
 
   try {
-    // 1) Find the Bin row by its Name (Id + metadata)
+    // Find Bin by Name
     const bins = await otList({
       Type: RT_BIN,
       Filters: [{ PropertyName: "Name", Operator: 1, FilterValueArray: bin }],
@@ -21,61 +20,33 @@ module.exports = async (req, res) => {
       NumberOfRecords: 1,
     });
     const binRow = bins?.[0];
-
-    // 2) Build candidate filter strategies from the bin we found (if any)
-    const strategies = [];
-    if (binRow?.Id) {
-      const id = String(binRow.Id);
-      strategies.push(
-        { name: "LocationBinRef.Id",   filter: { PropertyName: "LocationBinRef.Id",   Operator: 1, FilterValueArray: id } },
-        { name: "BinRef.Id",           filter: { PropertyName: "BinRef.Id",           Operator: 1, FilterValueArray: id } },
-        { name: "LocationBinId",       filter: { PropertyName: "LocationBinId",       Operator: 1, FilterValueArray: id } },
-      );
-    }
-    // Also try name-based joins (works in some tenants)
-    strategies.push(
-      { name: "LocationBinRef.Name", filter: { PropertyName: "LocationBinRef.Name", Operator: 1, FilterValueArray: bin } },
-      { name: "BinRef.Name",         filter: { PropertyName: "BinRef.Name",         Operator: 1, FilterValueArray: bin } },
-    );
+    if (!binRow?.Id) return ok(res, { records: [] });
 
     const pageSize = 500;
-    let used = null;
-    let all = [];
+    let page = 1, all = [];
+    const filter = { PropertyName: "LocationBinRef.Id", Operator: 1, FilterValueArray: String(binRow.Id) };
 
-    // 3) Try each strategy until we get rows
-    for (const s of strategies) {
-      let page = 1;
-      let acc = [];
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const chunk = await otList({
-          Type: RT_LOT_SERIAL,
-          Filters: [s.filter],
-          PageNumber: page,
-          NumberOfRecords: pageSize,
-        });
-        if (!chunk.length) break;
-        acc.push(...chunk);
-        if (chunk.length < pageSize) break;
-        page++;
-      }
-      if (acc.length > 0) {
-        used = s.name;
-        all = acc;
-        break;
-      }
+    while (true) {
+      const chunk = await otList({
+        Type: RT_LOT_SERIAL,
+        Filters: [filter],
+        PageNumber: page,
+        NumberOfRecords: pageSize,
+      });
+      if (!chunk.length) break;
+      all.push(...chunk);
+      if (chunk.length < pageSize) break;
+      page++;
     }
 
-    // 4) Map to UI shape
     const records = all.map(r => ({
-      location:    r?.LocationBinRef?.Name || r?.BinRef?.Name || bin,
+      location:    r?.LocationBinRef?.Name || bin,
       sku:         r?.ItemRef?.Code || r?.ItemCode || r?.SKU || "—",
       description: r?.ItemRef?.Name || r?.ItemName || r?.Description || "—",
       systemImei:  String(r?.LotOrSerialNo || r?.Serial || r?.SerialNo || r?.IMEI || ""),
     })).filter(x => x.systemImei);
 
-    // 5) Respond (include debug info if asked)
-    return ok(res, debug ? { records, debug: { usedStrategy: used || "none", binFound: !!binRow?.Id } } : { records });
+    return ok(res, { records });
   } catch (e) {
     return bad(res, String(e.message || e), 502);
   }
