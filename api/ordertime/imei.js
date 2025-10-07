@@ -1,10 +1,6 @@
-// api/ordertime/imei.js
-// Looks up a single IMEI/Serial and returns its current location/SKU/description
-
 const { withCORS, ok, bad, method } = require("../_lib/respond");
 const { otList } = require("./_client");
 
-// RecordTypeEnum
 const RT_LOT_SERIAL = 1100; // Lot or Serial Number
 
 module.exports = async (req, res) => {
@@ -17,13 +13,13 @@ module.exports = async (req, res) => {
   try {
     const rows = await otList({
       Type: RT_LOT_SERIAL,
-      Filters: [{ PropertyName: "LotOrSerialNo", Operator: 1, FilterValueArray: imei }], // EqualTo
+      Filters: [{ PropertyName: "LotOrSerialNo", Operator: 1, FilterValueArray: imei }],
       PageNumber: 1,
       NumberOfRecords: 1,
     });
 
     const r = rows?.[0];
-    if (!r) return ok(res, {}); // UI treats missing as "not found in ERP"
+    if (!r) return ok(res, {}); // not found
 
     return ok(res, {
       imei,
