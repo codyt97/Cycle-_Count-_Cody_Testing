@@ -1,18 +1,21 @@
 // api/ordertime/bin.js
-
 const { postList } = require("./_client");
 
-module.exports = async function handler(req, res) {
+/**
+ * GET /api/ordertime/bin?bin=B-04-03
+ * Returns the latest inventory movement rows for a given BIN.
+ * Uses Type 1141 with filter on BinRef.Name.
+ */
+module.exports = async (req, res) => {
   try {
-    const bin = (req.query?.bin || req.query?.Bin || "").trim();
-    if (!bin) {
-      res.status(400).json({ error: "Missing required query param ?bin=" });
+    const { bin } = req.query || {};
+    if (!bin || typeof bin !== "string") {
+      res.status(400).json({ error: "Missing ?bin= parameter" });
       return;
     }
 
-    // 1141 => InventoryTransaction (Lot/Serial movement history)
-    // Filter by BinRef.Name == bin
-    const payload = {
+    // OrderTime inventory movement query (works from your Postman tests)
+    const body = {
       Type: 1141,
       Filters: [
         {
@@ -22,17 +25,20 @@ module.exports = async function handler(req, res) {
         },
       ],
       PageNumber: 1,
-      NumberOfRecords: 50, // tweak as needed
+      NumberOfRecords: 50,
     };
 
-    const data = await postList(payload);
+    console.log("[BIN] Querying 1141 by BinRef.Name=%s", bin);
+    const data = await postList(body);
 
-    // Return raw data; your frontend can map as needed.
-    res.status(200).json({ bin, rows: Array.isArray(data) ? data : [] });
+    // Normalize to rows array (OrderTime usually returns an array directly)
+    const rows = Array.isArray(data) ? data : data?.Rows || [];
+    console.log("[BIN] page %d -> %d rows", body.PageNumber, rows.length);
+
+    res.status(200).json({ bin, rows });
   } catch (err) {
-    // Bubble a clear message back to UI
-    res
-      .status(500)
-      .json({ error: err?.message || "Unknown error calling OrderTime" });
+    console.error("[BIN] error", err);
+    // Keep the message short for the UI; the console has full details
+    res.status(502).json({ error: String(err.message || err) });
   }
 };
