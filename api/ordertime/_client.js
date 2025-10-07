@@ -1,49 +1,74 @@
-// No node-fetch import needed on Vercel Node 18+ (fetch is global)
-const BASE = process.env.OT_BASE_URL || "https://services.ordertime.com/api";
-const MODE = (process.env.OT_AUTH_MODE || "PASSWORD").toUpperCase();
+// api/ordertime/_client.js
+// Tiny fetch shim so it works on Vercel/Node
+const fetch = (...args) =>
+  import('node-fetch').then(({ default: f }) => f(...args));
+
+const BASE = process.env.OT_BASE_URL || 'https://services.ordertime.com/api';
 
 /**
- * Build the OrderTime /list payload based on the configured auth mode.
+ * Build auth fields to include in every /list request.
+ * - APIKEY mode => { ApiKey }
+ * - PASSWORD mode => { Company, Username, Password }
  */
-function buildPayload({ Type, Filters, PageNumber = 1, NumberOfRecords = 50 }) {
-  const payload = { Type, PageNumber, NumberOfRecords };
-  if (Filters && Filters.length) payload.Filters = Filters;
+function buildAuthFields() {
+  const mode = (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase();
 
-  if (MODE === "APIKEY") {
+  if (mode === 'APIKEY') {
     const apiKey = process.env.OT_API_KEY;
-    if (!apiKey) throw new Error("OT_API_KEY is missing while OT_AUTH_MODE=APIKEY.");
-    payload.ApiKey = apiKey;
-  } else {
-    const company = process.env.OT_COMPANY;
-    const username = process.env.OT_USERNAME;
-    const password = process.env.OT_PASSWORD;
-    if (!company || !username || !password) {
-      throw new Error("Missing OT_COMPANY or OT_USERNAME or OT_PASSWORD.");
-    }
-    payload.Company = company;
-    payload.Username = username;
-    payload.Password = password;
+    if (!apiKey) throw new Error('OT_API_KEY not set');
+    return { authMode: 'APIKEY', fields: { ApiKey: apiKey } };
   }
 
-  return payload;
+  // Default to PASSWORD mode
+  const company = process.env.OT_COMPANY;
+  const username = process.env.OT_USERNAME;
+  const password = process.env.OT_PASSWORD;
+  if (!company || !username || !password) {
+    throw new Error('Missing OT_COMPANY or OT_USERNAME or OT_PASSWORD.');
+  }
+  return {
+    authMode: 'PASSWORD',
+    fields: { Company: company, Username: username, Password: password },
+  };
 }
 
 /**
- * POST /list to OrderTime.
+ * POST /list
+ * body must include: { Type, Filters?, PageNumber, NumberOfRecords }
  */
 async function postList(body) {
-  const url = `${BASE}/list`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+  const { authMode, fields } = buildAuthFields();
+
+  // IMPORTANT: merge auth fields into the payload
+  const payload = { ...fields, ...body };
+
+  // Helpful logs without leaking secrets
+  console.log('[OT] POST /list', {
+    url: `${BASE}/list`,
+    Type: body?.Type,
+    hasFilters: Array.isArray(body?.Filters) && body.Filters.length > 0,
+    PageNumber: body?.PageNumber,
+    NumberOfRecords: body?.NumberOfRecords,
+    hasApiKey: !!fields.ApiKey,
+    hasCompany: !!fields.Company,
+    mode: authMode,
   });
+
+  const res = await fetch(`${BASE}/list`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
   const text = await res.text();
-  if (!res.ok) {
-    // Surface OT error text so you can see the real reason in Vercel logs
-    throw new Error(`OT ${res.status} [/list] ${text}`);
-  }
-  return text ? JSON.parse(text) : null;
+  console.log('[OT] /list response', {
+    status: res.status,
+    preview: text.slice(0, 180),
+  });
+
+  if (!res.ok) throw new Error(`OT ${res.status} [/list] ${text}`);
+
+  return text ? JSON.parse(text) : {};
 }
 
-module.exports = { buildPayload, postList };
+module.exports = { postList };
