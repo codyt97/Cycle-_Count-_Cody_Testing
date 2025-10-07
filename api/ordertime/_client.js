@@ -1,67 +1,41 @@
 // api/ordertime/_client.js
+
+// One (and only one) BASE definition:
 const BASE = process.env.OT_BASE_URL || "https://services.ordertime.com/api";
 
-function assertCreds() {
-  const hasKey   = !!process.env.OT_API_KEY;
-  const hasLogin = !!process.env.OT_EMAIL && !!process.env.OT_PASSWORD;
-  if (!hasKey && !hasLogin) {
-    throw new Error("OrderTime credentials missing: set OT_API_KEY or OT_EMAIL/OT_PASSWORD.");
-  }
-}
-
-async function postList(body) {
-  const url = `${BASE}/list`; // OT is fine with lowercase /list
-
-  // Auth payload (API key preferred)
-  const BASE = process.env.OT_BASE_URL || "https://services.ordertime.com/api";
-
-function assertCreds() {
+// Decide auth mode: APIKEY by default if present, or PASSWORD if requested
+function resolveAuthMode() {
   const wantsPassword = String(process.env.OT_AUTH_MODE || "").toUpperCase() === "PASSWORD";
   const hasKey   = !!process.env.OT_API_KEY;
   const hasLogin = !!process.env.OT_EMAIL && !!process.env.OT_PASSWORD;
 
   if (wantsPassword) {
     if (!hasLogin) throw new Error("OrderTime login missing: set OT_EMAIL and OT_PASSWORD (and OT_COMPANY if required).");
-    return { mode: "PASSWORD" };
+    return "PASSWORD";
   }
-
-  if (hasKey) return { mode: "APIKEY" };
-  if (hasLogin) return { mode: "PASSWORD" };
+  if (hasKey)   return "APIKEY";
+  if (hasLogin) return "PASSWORD";
 
   throw new Error("OrderTime credentials missing: set OT_API_KEY or OT_EMAIL/OT_PASSWORD.");
 }
 
-const BASE = process.env.OT_BASE_URL || "https://services.ordertime.com/api";
-
-function assertCreds() {
-  const wantsPassword = String(process.env.OT_AUTH_MODE || "").toUpperCase() === "PASSWORD";
-  const hasKey   = !!process.env.OT_API_KEY;
-  const hasLogin = !!process.env.OT_EMAIL && !!process.env.OT_PASSWORD;
-
-  if (wantsPassword) {
-    if (!hasLogin) throw new Error("OrderTime login missing: set OT_EMAIL and OT_PASSWORD (and OT_COMPANY if required).");
-    return { mode: "PASSWORD" };
+function buildAuth(mode) {
+  if (mode === "APIKEY") {
+    return { ApiKey: process.env.OT_API_KEY };
   }
-
-  if (hasKey) return { mode: "APIKEY" };
-  if (hasLogin) return { mode: "PASSWORD" };
-
-  throw new Error("OrderTime credentials missing: set OT_API_KEY or OT_EMAIL/OT_PASSWORD.");
+  // PASSWORD
+  const auth = {
+    Username: process.env.OT_EMAIL,
+    Password: process.env.OT_PASSWORD,
+  };
+  if (process.env.OT_COMPANY) auth.Company = process.env.OT_COMPANY;
+  return auth;
 }
 
 async function postList(body) {
   const url = `${BASE}/list`;
-  const { mode } = assertCreds();
-
-  const auth = {};
-  if (mode === "APIKEY") {
-    auth.ApiKey = process.env.OT_API_KEY;
-  } else {
-    if (process.env.OT_COMPANY) auth.Company = process.env.OT_COMPANY;
-    auth.Username = process.env.OT_EMAIL;
-    auth.Password = process.env.OT_PASSWORD;
-  }
-
+  const mode = resolveAuthMode();
+  const auth = buildAuth(mode);
   const payload = { ...auth, ...body };
 
   console.log("[OT] POST", url, {
@@ -98,4 +72,3 @@ async function otList({ Type, Filters = [], PageNumber = 1, NumberOfRecords = 50
 }
 
 module.exports = { otList };
-
