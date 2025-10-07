@@ -1,39 +1,54 @@
 // api/ordertime/bin.js
-const { postList } = require("./_client");
+const { withCORS, ok, bad, method } = require("../_lib/respond");
+const { otList } = require("./_client");
 
-module.exports = async function handler(req, res) {
+const RT_INV_BY_BIN = 1141;  // inventory-by-bin (tenant-specific)
+const RT_INV_SUMMARY = 151;  // inventory summary fallback
+
+module.exports = async (req, res) => {
+  if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
+  if (req.method !== "GET")      return method(res, ["GET", "OPTIONS"]);
+
+  // Use req.query instead of new URL(req.url) to avoid ERR_INVALID_URL on Vercel
+  const bin = String(req.query.bin || "").trim();
+  if (!bin) return bad(res, "bin is required", 400);
+
   try {
-    // --- SAFE query parsing for Vercel Node functions ---
-    const base = `http://${req.headers.host || "localhost"}`;         // supply a base
-    const url = new URL(req.url, base);
-    const bin = (req.query && req.query.bin) || url.searchParams.get("bin");
+    console.log(`[BIN] Querying ${RT_INV_BY_BIN} by BinRef.Name="${bin}"`);
+    const pageSize = 50;
 
-    if (!bin) {
-      return res.status(400).json({ error: "Missing ?bin= parameter" });
+    let rows = await otList({
+      Type: RT_INV_BY_BIN,
+      Filters: [{ PropertyName: "BinRef.Name", Operator: 1, FilterValueArray: [bin] }],
+      PageNumber: 1,
+      NumberOfRecords: pageSize
+    });
+
+    // Optional fallback if your tenant doesn’t populate 1141 as expected
+    if (!Array.isArray(rows) || rows.length === 0) {
+      console.log(`[BIN] 1141 returned 0; trying ${RT_INV_SUMMARY}`);
+      rows = await otList({
+        Type: RT_INV_SUMMARY,
+        Filters: [{ PropertyName: "BinRef.Name", Operator: 1, FilterValueArray: [bin] }],
+        PageNumber: 1,
+        NumberOfRecords: pageSize
+      });
     }
 
-    console.log('[BIN] Querying 1141 by BinRef.Name="%s"', bin);
+    // Map to fields your table can show (SKU, description, IMEI if present)
+    const mapped = (rows || []).map(r => ({
+      sku:         r?.ItemRef?.Code || r?.ItemRef?.Name || r?.ItemCode || "",
+      description: r?.Description || r?.ItemRef?.Name || r?.ItemName || "",
+      imei:        r?.LotOrSerialNo || r?.LotOrSerialRef?.Name || "",
+      bin:         r?.BinRef?.Name || r?.LocationBinRef?.Name || "",
+      location:    r?.LocationRef?.Name || "",
+      available:   r?.Available ?? r?.Quantity ?? 0
+    }));
 
-    // OT type 1141 = Inventory Ledger filtered by Bin
-    const body = {
-      Type: 1141,
-      Filters: [
-        { PropertyName: "BinRef.Name", Operator: 1, FilterValueArray: [bin] },
-      ],
-      PageNumber: 1,
-      NumberOfRecords: 50,
-    };
-
-    // call OrderTime
-    const rows = await postList(body);
-
-    console.log("[BIN] page %d → %d rows", body.PageNumber, rows?.length || 0);
-    return res.status(200).json({ rows });
-  } catch (err) {
-    console.error("[BIN] error", err);
-    // surface a clean message back to the client
-    const msg = err?.message || "Unknown error";
-    const code = /OT\s+\d+/.test(msg) ? 502 : 500;
-    return res.status(code).json({ error: msg });
+    console.log(`[BIN] page 1 → ${mapped.length} rows`);
+    return ok(res, { bin, rows: mapped });
+  } catch (e) {
+    console.error("[BIN] error", e);
+    return bad(res, String(e.message || e), 502);
   }
 };
