@@ -1,46 +1,61 @@
 // api/ordertime/_client.js
-// OrderTime client using header-based auth and numeric RecordTypeEnum for /list
+const BASE = process.env.OT_BASE_URL || "https://services.ordertime.com/api";
 
-const BASE   = process.env.OT_BASE_URL;   // e.g. https://services.ordertime.com/api
-const APIKEY = (process.env.OT_API_KEY || "").trim();
-const EMAIL  = (process.env.OT_EMAIL || process.env.OT_USERNAME || "").trim(); // fallback to OT_USERNAME if present
-const PASS   = (process.env.OT_PASSWORD || "").trim();    // OR use DEVKEY
-const DEVKEY = (process.env.OT_DEVKEY   || "").trim();
-
-if (!BASE)   throw new Error("OT_BASE_URL not set");
-if (!APIKEY) throw new Error("OT_API_KEY not set");
-if (!EMAIL)  throw new Error("OT_EMAIL not set (or set OT_USERNAME)");
-if (!PASS && !DEVKEY) throw new Error("Set OT_PASSWORD or OT_DEVKEY");
-
-function authHeaders() {
-  const h = {
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-    "apiKey": APIKEY,
-    "email": EMAIL,
-  };
-  if (DEVKEY) h["DevKey"] = DEVKEY; else h["password"] = PASS;
-  return h;
+function assertCreds() {
+  const hasKey   = !!process.env.OT_API_KEY;
+  const hasLogin = !!process.env.OT_EMAIL && !!process.env.OT_PASSWORD;
+  if (!hasKey && !hasLogin) {
+    throw new Error("OrderTime credentials missing: set OT_API_KEY or OT_EMAIL/OT_PASSWORD.");
+  }
 }
 
-async function post(path, body) {
-  const res = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify(body),
+async function postList(body) {
+  const url = `${BASE}/list`; // OT is fine with lowercase /list
+
+  // Auth payload (API key preferred)
+  assertCreds();
+  const auth = {};
+  if (process.env.OT_API_KEY) {
+    auth.ApiKey = process.env.OT_API_KEY;
+  } else {
+    if (process.env.OT_COMPANY) auth.Company = process.env.OT_COMPANY;
+    auth.Username = process.env.OT_EMAIL;
+    auth.Password = process.env.OT_PASSWORD;
+  }
+
+  const payload = { ...auth, ...body };
+
+  console.log("[OT] POST", url, {
+    hasApiKey: !!process.env.OT_API_KEY,
+    hasEmail:  !!process.env.OT_EMAIL,
+    base: BASE,
+    type: body?.Type,
   });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`OT ${res.status} [${path}] ${text}`);
-  try { return JSON.parse(text); } catch { return { raw: text }; }
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await resp.text();
+  let data;
+  try { data = text ? JSON.parse(text) : []; } catch { data = []; }
+
+  if (!resp.ok) {
+    const msg = data?.Message || text || `HTTP ${resp.status}`;
+    throw new Error(`OT ${resp.status} [/list] ${msg}`);
+  }
+  if (!Array.isArray(data)) {
+    // OT sometimes returns {Message: "..."} on logical errors
+    if (data && data.Message) throw new Error(data.Message);
+    return [];
+  }
+  return data;
 }
 
-// /api/list wrapper — Type MUST be numeric (e.g., 151 Bin, 1100 Lot/Serial)
-async function otList({ Type, Filters = [], PageNumber = 1, NumberOfRecords = 500 }) {
-  const out = await post("/list", { Type, Filters, PageNumber, NumberOfRecords });
-  const records = Array.isArray(out?.Records)
-    ? out.Records
-    : (Array.isArray(out?.records) ? out.records : []);
-  return records;
+async function otList({ Type, Filters = [], PageNumber = 1, NumberOfRecords = 50 }) {
+  return postList({ Type, Filters, PageNumber, NumberOfRecords });
 }
 
 module.exports = { otList };
