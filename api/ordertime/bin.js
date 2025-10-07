@@ -1,6 +1,8 @@
+// api/ordertime/bin.js
 const { withCORS, ok, bad, method } = require("../_lib/respond");
 const { otList } = require("./_client");
-const RT_INV_BY_BIN = 1141; // proven in your Postman
+
+const RT_INV_BY_BIN = 1141; // proven on your tenant
 
 module.exports = async (req, res) => {
   if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
@@ -15,8 +17,11 @@ module.exports = async (req, res) => {
     let page = 1, all = [];
     const filter = { PropertyName: "BinRef.Name", Operator: 1, FilterValueArray: binName };
 
-    console.log(`[BIN] Querying 1141 by BinRef.Name="${binName}"`);
+    console.log(`[BIN] Querying ${RT_INV_BY_BIN} by BinRef.Name="${binName}"`);
+    res.setHeader("x-which-bin", "inv-1141-v2"); // to prove we hit this code
 
+    // paginate
+    // eslint-disable-next-line no-constant-condition
     while (true) {
       const chunk = await otList({
         Type: RT_INV_BY_BIN,
@@ -24,13 +29,14 @@ module.exports = async (req, res) => {
         PageNumber: page,
         NumberOfRecords: pageSize,
       });
-      console.log(`[BIN] page ${page} -> ${Array.isArray(chunk) ? chunk.length : 0} rows`);
+      console.log(`[BIN] page ${page} → ${Array.isArray(chunk) ? chunk.length : 0} rows`);
       if (!Array.isArray(chunk) || chunk.length === 0) break;
       all.push(...chunk);
       if (chunk.length < pageSize) break;
       page++;
     }
 
+    // map to UI
     const records = all.map(r => ({
       location:    r?.BinRef?.Name || r?.LocationRef?.Name || binName,
       sku:         r?.ItemRef?.Name || r?.ItemRef?.Code || r?.ItemCode || "—",
@@ -39,7 +45,13 @@ module.exports = async (req, res) => {
     })).filter(x => x.systemImei);
 
     const payload = { records };
-    if (debug) payload.debug = { queriedType: RT_INV_BY_BIN, filter, rawCount: all.length, mappedCount: records.length };
+    if (debug) payload.debug = {
+      type: RT_INV_BY_BIN,
+      filter,
+      rawCount: all.length,
+      mappedCount: records.length,
+    };
+
     return ok(res, payload);
   } catch (e) {
     console.error("[BIN] error", e);
