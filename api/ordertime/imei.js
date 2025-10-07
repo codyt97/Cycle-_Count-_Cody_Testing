@@ -1,7 +1,42 @@
 const { withCORS, ok, bad, method } = require("../_lib/respond");
 const { otList } = require("./_client");
 
-const RT_LOT_SERIAL = 1100; // Lot or Serial Number
+const RT_INV_BY_BIN = 1141; // Inventory-by-Bin
+const RT_LOT_SERIAL = 1100; // Lot/Serial (fallback)
+
+async function findIn1141(imei) {
+  const rows = await otList({
+    Type: RT_INV_BY_BIN,
+    Filters: [{ PropertyName: "LotOrSerialNo", Operator: 1, FilterValueArray: imei }],
+    PageNumber: 1,
+    NumberOfRecords: 1,
+  });
+  const r = rows?.[0];
+  if (!r) return null;
+  return {
+    imei,
+    location:    r?.BinRef?.Name || r?.LocationRef?.Name || "",
+    sku:         r?.ItemRef?.Name || r?.ItemRef?.Code || r?.ItemCode || "",
+    description: r?.Description || r?.ItemRef?.Name || "",
+  };
+}
+
+async function findIn1100(imei) {
+  const rows = await otList({
+    Type: RT_LOT_SERIAL,
+    Filters: [{ PropertyName: "LotOrSerialNo", Operator: 1, FilterValueArray: imei }],
+    PageNumber: 1,
+    NumberOfRecords: 1,
+  });
+  const r = rows?.[0];
+  if (!r) return null;
+  return {
+    imei,
+    location:    r?.LocationBinRef?.Name || r?.LocationRef?.Name || "",
+    sku:         r?.ItemRef?.Code || r?.ItemCode || "",
+    description: r?.ItemRef?.Name || r?.ItemName || "",
+  };
+}
 
 module.exports = async (req, res) => {
   if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
@@ -11,22 +46,9 @@ module.exports = async (req, res) => {
   if (!imei) return bad(res, "imei is required", 400);
 
   try {
-    const rows = await otList({
-      Type: RT_LOT_SERIAL,
-      Filters: [{ PropertyName: "LotOrSerialNo", Operator: 1, FilterValueArray: imei }],
-      PageNumber: 1,
-      NumberOfRecords: 1,
-    });
-
-    const r = rows?.[0];
-    if (!r) return ok(res, {}); // not found
-
-    return ok(res, {
-      imei,
-      location:    r?.LocationBinRef?.Name || r?.LocationRef?.Name || "",
-      sku:         r?.ItemRef?.Code || r?.ItemCode || "",
-      description: r?.ItemRef?.Name || r?.ItemName || "",
-    });
+    let hit = await findIn1141(imei);
+    if (!hit) hit = await findIn1100(imei);
+    return ok(res, hit || {});  // {} => UI treats as not found
   } catch (e) {
     return bad(res, String(e.message || e), 502);
   }
