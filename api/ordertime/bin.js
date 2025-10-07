@@ -1,28 +1,25 @@
-const { buildPayload, postList } = require("./_client");
+// api/ordertime/bin.js
+const { postList } = require('./_client');
 
 module.exports = async (req, res) => {
   try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const bin = url.searchParams.get("bin");
-    if (!bin) return res.status(400).json({ error: "Missing 'bin' query param" });
+    const bin = (req.query.bin || '').trim();
+    if (!bin) return res.status(400).json({ error: 'Missing ?bin=' });
 
-    // Type 1141 = Inventory Transactions (includes LotOrSerialNo + Bin)
-    const payload = buildPayload({
+    // RecordType 1141 (Inventory ledger rows by bin)
+    const body = {
       Type: 1141,
       Filters: [
-        { PropertyName: "BinRef.Name", Operator: 1, FilterValueArray: [bin] },
+        { PropertyName: 'BinRef.Name', Operator: 1, FilterValueArray: [bin] },
       ],
       PageNumber: 1,
       NumberOfRecords: 50,
-    });
+    };
 
-    const ot = await postList(payload);
-
-    // (Optional) normalize to the shape your UI expects
-    res.status(200).json({ rows: ot || [] });
+    const data = await postList(body);
+    return res.status(200).json({ rows: data || [] });
   } catch (err) {
-    console.error("[BIN] error", err);
-    // 502 keeps your frontend message consistent
-    res.status(502).json({ error: String(err.message || err) });
+    console.error('[BIN] error', err);
+    return res.status(502).json({ error: String(err.message || err) });
   }
 };
