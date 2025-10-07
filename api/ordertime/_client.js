@@ -1,17 +1,20 @@
 // api/ordertime/_client.js
-const BASE = process.env.OT_BASE_URL;            // e.g. https://services.ordertime.com/api
-const COMPANY = process.env.OT_COMPANY;          // e.g. ConnectUs (exactly as in OT)
-const USERNAME = process.env.OT_USERNAME;        // e.g. email@domain
-const PASSWORD = process.env.OT_PASSWORD;        // password
-const API_KEY  = process.env.OT_API_KEY;         // optional if using API key
-const MODE     = (process.env.OT_AUTH_MODE || (API_KEY ? "APIKEY" : "PASSWORD")).toUpperCase();
+const BASE = process.env.OT_BASE_URL;       // https://services.ordertime.com/api
+const COMPANY = process.env.OT_COMPANY;     // ConnectUs (exact in OT)
+const USERNAME = process.env.OT_USERNAME;   // email in OT
+const PASSWORD = process.env.OT_PASSWORD;   // password in OT
 
 if (!BASE) throw new Error("OT_BASE_URL not set");
+if (!COMPANY || !USERNAME || !PASSWORD) {
+  throw new Error("OT_COMPANY/OT_USERNAME/OT_PASSWORD must be set");
+}
 
-async function otPost(path, body, headers = {}) {
+async function otPost(path, body) {
+  // TEMP: payload keys to confirm no ApiKey sneaks in
+  try { console.log("OT payload keys:", Object.keys(body || {})); } catch {}
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -21,32 +24,22 @@ async function otPost(path, body, headers = {}) {
   return res.json();
 }
 
+// /api/List wrapper in PASSWORD mode only (no ApiKey)
 async function otList({ Type, Filters = [], PageNumber = 1, NumberOfRecords = 500 }) {
-  let payload, headers = {};
-
-  if (MODE === "APIKEY") {
-    // API key mode: many tenants expect ApiKey in payload OR a header; try payload first.
-    if (!API_KEY) throw new Error("OT_API_KEY not set but OT_AUTH_MODE=APIKEY");
-    payload = { ApiKey: API_KEY, Type, Filters, PageNumber, NumberOfRecords };
-    // If your tenant needs a header instead, uncomment:
-    // headers["X-Api-Key"] = API_KEY;
-  } else {
-    // Username/password mode (recommended)
-    if (!COMPANY || !USERNAME || !PASSWORD) {
-      throw new Error("OT_COMPANY/OT_USERNAME/OT_PASSWORD must be set for PASSWORD mode");
-    }
-    payload = {
-      Company: COMPANY,
-      Username: USERNAME,
-      Password: PASSWORD,
-      Type, Filters, PageNumber, NumberOfRecords,
-    };
-  }
-
-  const out = await otPost("/List", payload, headers);
-  // Normalize records shape
-  const recs = Array.isArray(out?.Records) ? out.Records : (Array.isArray(out?.records) ? out.records : []);
-  return recs;
+  const payload = {
+    Company: COMPANY,
+    Username: USERNAME,
+    Password: PASSWORD,
+    Type,
+    Filters,
+    PageNumber,
+    NumberOfRecords,
+  };
+  const out = await otPost("/List", payload);
+  const records = Array.isArray(out?.Records)
+    ? out.Records
+    : (Array.isArray(out?.records) ? out.records : []);
+  return records;
 }
 
 module.exports = { otList };
