@@ -1,69 +1,74 @@
 const { withCORS, ok, bad, method } = require("../_lib/respond");
 const { otList } = require("./_client");
 
-const RT_BIN = 151;         // Bin
-const RT_LOT_SERIAL = 1100; // Lot or Serial Number
+// Known useful record types (numbers are OT's RecordTypeEnum values)
+const RT = {
+  BIN: 151,              // Bin
+  LOT_SERIAL: 1100,      // Lot or Serial Number (some tenants)
+  INV_BY_BIN: 1141,      // Inventory-by-Bin / movement view (common)
+  // Add more here if OT support tells you a different enum carries the IMEIs
+};
 
 module.exports = async (req, res) => {
   if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
   if (req.method !== "GET")      return method(res, ["GET", "OPTIONS"]);
 
-  const bin = String(req.query.bin || "").trim();
-  const forced = String(req.query.strategy || "").trim(); // e.g. LocationBinRef.Name
-  const debug = String(req.query.debug || "0") === "1";
-  if (!bin) return bad(res, "bin is required", 400);
+  const binName = String(req.query.bin || "").trim();
+  const forced  = String(req.query.strategy || "").trim();  // e.g. '1100:LocationBinRef.Name' or '1141:BinRef.Name'
+  const debug   = String(req.query.debug || "0") === "1";
+  if (!binName) return bad(res, "bin is required", 400);
 
   try {
-    // 1) Find the Bin row by Name (for Id-based strategies)
+    // 1) Get Bin.Id (helps for *.Id strategies)
     let binRow = null;
     try {
       const bins = await otList({
-        Type: RT_BIN,
-        Filters: [{ PropertyName: "Name", Operator: 1, FilterValueArray: bin }],
+        Type: RT.BIN,
+        Filters: [{ PropertyName: "Name", Operator: 1, FilterValueArray: binName }],
         PageNumber: 1,
         NumberOfRecords: 1,
       });
       binRow = bins?.[0] || null;
-    } catch (_) {
-      // If this fails, we can still try name-based strategies below.
-    }
+    } catch (_) { /* ignore – name-based strategies can still work */ }
 
-    // 2) Build candidate strategies in order of "most robust" first
-    const strategies = [];
+    // 2) Build candidate strategies: array of { type, name, filter }
+    const mkId = (prop) => binRow?.Id ? { PropertyName: prop, Operator: 1, FilterValueArray: String(binRow.Id) } : null;
+    const mkNm = (prop) => ({ PropertyName: prop, Operator: 1, FilterValueArray: binName });
+
+    let strategies = [];
     if (forced) {
-      // If user forces a property, try only that
-      const arrVal = forced.endsWith(".Id") && binRow?.Id ? String(binRow.Id) : bin;
-      strategies.push({ name: forced, filter: { PropertyName: forced, Operator: 1, FilterValueArray: arrVal } });
+      // Force a single 'Type:PropertyName' strategy if provided
+      const [t, p] = forced.split(":");
+      const type = Number(t);
+      const filter = (p.endsWith(".Id") && binRow?.Id) ? mkId(p) : mkNm(p);
+      if (!type || !filter) return bad(res, "invalid strategy or bin has no Id", 400);
+      strategies = [{ type, name: `${type}:${p}`, filter }];
     } else {
-      if (binRow?.Id) {
-        const id = String(binRow.Id);
-        strategies.push(
-          { name: "LocationBinRef.Id", filter: { PropertyName: "LocationBinRef.Id", Operator: 1, FilterValueArray: id } },
-          { name: "BinRef.Id",         filter: { PropertyName: "BinRef.Id",         Operator: 1, FilterValueArray: id } },
-          { name: "LocationBinId",     filter: { PropertyName: "LocationBinId",     Operator: 1, FilterValueArray: id } },
-        );
+      // Try Lot/Serial first, then Inventory-by-Bin
+      const candidateTypes = [
+        { type: RT.LOT_SERIAL, props: ["LocationBinRef.Id", "BinRef.Id", "LocationBinId", "LocationBinRef.Name", "BinRef.Name"] },
+        { type: RT.INV_BY_BIN, props: ["BinRef.Id", "BinRef.Name", "LocationBinRef.Name", "Bin"] },
+      ];
+      for (const ct of candidateTypes) {
+        for (const p of ct.props) {
+          const filter = p.endsWith(".Id") ? mkId(p) : mkNm(p);
+          if (filter) strategies.push({ type: ct.type, name: `${ct.type}:${p}`, filter });
+          else if (!p.endsWith(".Id")) strategies.push({ type: ct.type, name: `${ct.type}:${p}`, filter: mkNm(p) });
+        }
       }
-      // Name-based joins (some tenants expose only Name on the lot/serial)
-      strategies.push(
-        { name: "LocationBinRef.Name", filter: { PropertyName: "LocationBinRef.Name", Operator: 1, FilterValueArray: bin } },
-        { name: "BinRef.Name",         filter: { PropertyName: "BinRef.Name",         Operator: 1, FilterValueArray: bin } },
-      );
     }
 
-    // 3) Try each strategy; skip any that cause OT 400/500
+    // 3) Try them, skipping any 400s OT throws for unknown props
     const pageSize = 500;
-    let used = null;
-    let all = [];
-    let probeErrors = [];
+    let used = null, all = [], probeErrors = [];
 
     for (const s of strategies) {
       try {
-        let page = 1;
-        let acc = [];
+        let page = 1, acc = [];
         // eslint-disable-next-line no-constant-condition
         while (true) {
           const chunk = await otList({
-            Type: RT_LOT_SERIAL,
+            Type: s.type,
             Filters: [s.filter],
             PageNumber: page,
             NumberOfRecords: pageSize,
@@ -75,23 +80,20 @@ module.exports = async (req, res) => {
         }
         if (acc.length > 0) {
           used = s.name;
-          all = acc;
+          all  = acc;
           break;
         }
       } catch (err) {
-        // Record and continue — OrderTime sometimes throws
-        // "Object reference not set..." for unknown properties.
         probeErrors.push({ strategy: s.name, error: String(err.message || err) });
-        continue;
       }
     }
 
-    // 4) Map to UI shape
+    // 4) Map to UI shape (IMEI / SKU / Description / Location)
     const records = all.map(r => ({
-      location:    r?.LocationBinRef?.Name || r?.BinRef?.Name || bin,
+      location:    r?.LocationBinRef?.Name || r?.BinRef?.Name || r?.Bin || binName,
       sku:         r?.ItemRef?.Code || r?.ItemCode || r?.SKU || "—",
       description: r?.ItemRef?.Name || r?.ItemName || r?.Description || "—",
-      systemImei:  String(r?.LotOrSerialNo || r?.Serial || r?.SerialNo || r?.IMEI || ""),
+      systemImei:  String(r?.LotOrSerialNo || r?.Serial || r?.SerialNo || r?.IMEI || r?.SerialNumber || ""),
     })).filter(x => x.systemImei);
 
     const payload = { records };
@@ -99,9 +101,9 @@ module.exports = async (req, res) => {
       usedStrategy: used || "none",
       binFound: !!binRow?.Id,
       tried: strategies.map(s => s.name),
-      probeErrors
+      probeErrors,
+      count: records.length,
     };
-
     return ok(res, payload);
   } catch (e) {
     return bad(res, String(e.message || e), 502);
