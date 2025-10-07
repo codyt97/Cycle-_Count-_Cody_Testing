@@ -1,87 +1,67 @@
 // api/ordertime/_client.js
 
-const BASE =
-  (process.env.OT_BASE_URL || "https://services.ordertime.com/api").replace(
-    /\/+$/,
-    ""
-  );
+const BASE = process.env.OT_BASE_URL || "https://services.ordertime.com/api";
 
-function buildPayload() {
-  const mode = (process.env.OT_AUTH_MODE || "PASSWORD").toUpperCase();
+/**
+ * Build the auth object for the OrderTime /list payload.
+ * APIKEY mode -> { ApiKey: "<key>" }
+ * PASSWORD mode -> { Company, Username, Password } (kept for future)
+ */
+function buildAuth() {
+  const mode = (process.env.OT_AUTH_MODE || "APIKEY").toUpperCase();
 
-  if (mode !== "PASSWORD") {
-    throw new Error(`Unsupported OT_AUTH_MODE "${mode}". Use PASSWORD.`);
+  if (mode === "APIKEY") {
+    const apiKey = process.env.OT_API_KEY;
+    if (!apiKey) throw new Error("Missing OT_API_KEY.");
+    return { ApiKey: apiKey };
   }
 
-  const company = process.env.OT_COMPANY;
-  const username = process.env.OT_USERNAME;
-  const password = process.env.OT_PASSWORD;
-
-  // --- NEW: safe debug ---
-  console.log("[OT] buildPayload", {
-    mode,
-    hasCompany: !!company,
-    hasUsername: !!username,
-    hasPassword: !!password,
-    base: BASE,
-  });
-  // -----------------------
-
-  if (!company || !username || !password) {
+  // fallback: PASSWORD (kept for completeness)
+  const { OT_COMPANY, OT_USERNAME, OT_PASSWORD } = process.env;
+  if (!OT_COMPANY || !OT_USERNAME || !OT_PASSWORD) {
     throw new Error("Missing OT_COMPANY or OT_USERNAME or OT_PASSWORD.");
   }
-
-  return {
-    Company: company,
-    Username: username,
-    Password: password,
-  };
+  return { Company: OT_COMPANY, Username: OT_USERNAME, Password: OT_PASSWORD };
 }
 
-async function postList(listBody) {
-  const auth = buildPayload();
+/**
+ * POST /list to OrderTime (returns raw JSON)
+ * @param {object} body - body WITHOUT auth; we’ll merge auth here
+ */
+async function postList(body) {
+  const url = `${BASE.replace(/\/$/, "")}/list`;
+  const payload = { ...buildAuth(), ...body };
 
-  const url = `${BASE}/list`;
-  const body = { ...auth, ...listBody };
-
-  // --- NEW: safe debug of list parameters (not secrets) ---
-  const { Type, Filters, PageNumber, NumberOfRecords } = listBody || {};
+  // Safe, minimal logging for debugging
   console.log("[OT] POST /list", {
     url,
-    Type,
-    hasFilters: Array.isArray(Filters),
-    PageNumber,
-    NumberOfRecords,
+    Type: payload.Type,
+    hasFilters: Array.isArray(payload.Filters) && payload.Filters.length > 0,
+    PageNumber: payload.PageNumber,
+    NumberOfRecords: payload.NumberOfRecords,
   });
-  // --------------------------------------------------------
 
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
 
   const text = await res.text();
-
-  // --- NEW: log status + short preview to catch server messages ---
-  console.log("[OT] /list response", { status: res.status, preview: text?.slice?.(0, 120) });
-  // ----------------------------------------------------------------
-
-  let data;
+  let json;
   try {
-    data = text ? JSON.parse(text) : null;
+    json = text ? JSON.parse(text) : null;
   } catch {
-    throw new Error(`OT ${res.status} [${url}] Non-JSON response: ${text}`);
+    json = { Message: text };
   }
 
   if (!res.ok) {
-    const msg =
-      (data && (data.Message || data.message)) ||
-      `HTTP ${res.status} calling ${url}`;
-    throw new Error(`OT ${res.status} [/list] ${msg}`);
+    const preview = typeof json === "object" ? JSON.stringify(json) : text;
+    console.error("[OT] /list response", { status: res.status, preview });
+    throw new Error(`OT ${res.status} [/list] ${preview || "Unknown error"}`);
   }
 
-  return data;
+  return json;
 }
 
 module.exports = { postList };
