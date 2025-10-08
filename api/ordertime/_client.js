@@ -1,23 +1,27 @@
 // api/ordertime/_client.js
-// No node-fetch needed; Vercel's Node runtime has global fetch.
-// Keep this file in CommonJS to avoid ESM import headaches on Vercel.
-
-const BASE = process.env.OT_BASE_URL || 'https://services.ordertime.com/api';
+const BASE = (process.env.OT_BASE_URL || 'https://services.ordertime.com/api').replace(/\/+$/,'') + '';
 
 function mode() {
   const m = (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase().trim();
   return m === 'API_KEY' ? 'API_KEY' : 'PASSWORD';
 }
 
+function sanitizeKey() {
+  // strip quotes and whitespace that sneak in from copy/paste
+  return (process.env.OT_API_KEY || '').replace(/^["']|["']$/g,'').trim();
+}
+
 function buildPayload({ type, filters = [], page = 1, pageSize = 50 }) {
   const m = mode();
-
   if (m === 'API_KEY') {
-    const apiKey = (process.env.OT_API_KEY || '').trim();
-    if (!apiKey) {
-      throw new Error('OT_API_KEY is missing. Set OT_AUTH_MODE=API_KEY and OT_API_KEY in project env.');
-    }
+    const apiKey = sanitizeKey();
+    if (!apiKey) throw new Error('OT_API_KEY is missing. Set OT_AUTH_MODE=API_KEY and OT_API_KEY.');
+
+    // Some tenants still expect Company even with ApiKey; allow it if provided.
+    const company = (process.env.OT_COMPANY || '').trim();
+
     return {
+      ...(company ? { Company: company } : {}),
       ApiKey: apiKey,
       Type: type,
       Filters: filters,
@@ -26,15 +30,12 @@ function buildPayload({ type, filters = [], page = 1, pageSize = 50 }) {
     };
   }
 
-  // PASSWORD mode
   const company = (process.env.OT_COMPANY || '').trim();
   const username = (process.env.OT_USERNAME || '').trim();
   const password = (process.env.OT_PASSWORD || '').trim();
-
   if (!company || !username || !password) {
     throw new Error('Missing OT_COMPANY or OT_USERNAME or OT_PASSWORD.');
   }
-
   return {
     Company: company,
     Username: username,
@@ -48,7 +49,6 @@ function buildPayload({ type, filters = [], page = 1, pageSize = 50 }) {
 
 async function postList(payload) {
   const url = `${BASE}/list`;
-  // For quick diagnosis
   console.log('[OT] POST /list', {
     url,
     Type: payload.Type,
@@ -56,7 +56,8 @@ async function postList(payload) {
     PageNumber: payload.PageNumber,
     NumberOfRecords: payload.NumberOfRecords,
     mode: mode(),
-    hasApiKey: !!process.env.OT_API_KEY && mode() === 'API_KEY',
+    apiKeyLen: (payload.ApiKey || '').length || undefined,
+    companySet: !!payload.Company,
   });
 
   const res = await fetch(url, {
@@ -68,14 +69,22 @@ async function postList(payload) {
   if (!res.ok) {
     const preview = await res.text().catch(() => '');
     console.error('[OT] /list response', { status: res.status, preview });
-    // Normalize OrderTime error
     throw new Error(`OT ${res.status} [/list] ${preview || 'Unknown error'}`);
   }
 
-  return res.json();
+  return res.json(); // { Rows: [...] }
 }
 
-module.exports = {
-  buildPayload,
-  postList,
-};
+// Convenience wrapper used by other routes
+async function otList({ Type, Filters = [], PageNumber = 1, NumberOfRecords = 50 }) {
+  const payload = buildPayload({
+    type: Type,
+    filters: Filters,
+    page: PageNumber,
+    pageSize: NumberOfRecords,
+  });
+  const data = await postList(payload);
+  return Array.isArray(data?.Rows) ? data.Rows : [];
+}
+
+module.exports = { buildPayload, postList, otList };
