@@ -1,49 +1,79 @@
-// _client.js
-const BASE = process.env.OT_BASE_URL || 'https://services.ordertime.com';
-const AUTH_MODE = (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase(); // 'PASSWORD' | 'API_KEY'
+// api/ordertime/_client.js
+const BASE =
+  (process.env.OT_BASE_URL || "https://services.ordertime.com").replace(/\/+$/, "");
+const AUTH_MODE = (process.env.OT_AUTH_MODE || "PASSWORD").toUpperCase();
 
-function buildAuthHeaders() {
-  const h = { 'Content-Type': 'application/json' };
+const H = (o) =>
+  Object.fromEntries(
+    Object.entries(o).filter(([_, v]) => v !== undefined && v !== "")
+  );
 
-  if (AUTH_MODE === 'API_KEY') {
-    if (!process.env.OT_API_KEY) throw new Error('Missing OT_API_KEY');
-    h.apiKey = process.env.OT_API_KEY.trim();
-    return h;
-  }
-
-  // PASSWORD mode
-  if (!process.env.OT_USERNAME || !process.env.OT_PASSWORD) {
-    throw new Error('Missing OT_USERNAME or OT_PASSWORD for PASSWORD mode');
-  }
-  h.email = process.env.OT_USERNAME.trim();
-  h.password = process.env.OT_PASSWORD;
-  // Do not add company; not required for REST /api/list
-  // If you REALLY want to keep apiKey in PASSWORD mode, make sure it's valid:
-  // if (process.env.OT_API_KEY) h.apiKey = process.env.OT_API_KEY.trim();
-  return h;
-}
-
-export async function postList(payload) {
+async function postList(payload, dbg = {}) {
   const url = `${BASE}/api/list`;
-  const headers = buildAuthHeaders();
 
-  const body = {
-    Type: payload?.Type ?? 1141,
-    hasFilters: payload?.hasFilters ?? true,
-    PageNumber: payload?.PageNumber ?? 1,
-    NumberOfRecords: payload?.NumberOfRecords ?? 500,
-    mode: AUTH_MODE, // 'PASSWORD' or 'API_KEY'
-  };
+  // Build headers exactly like the working Postman request
+  const headers =
+    AUTH_MODE === "API_KEY"
+      ? H({
+          "Content-Type": "application/json",
+          apiKey: process.env.OT_API_KEY, // required in API_KEY mode
+        })
+      : H({
+          "Content-Type": "application/json",
+          apiKey: process.env.OT_API_KEY, // harmless if present
+          email: process.env.OT_USERNAME, // REQUIRED in PASSWORD mode
+          password: process.env.OT_PASSWORD, // REQUIRED in PASSWORD mode
+        });
+
+  // In PASSWORD mode Postman included hasApiKey:false in the body.
+  const body =
+    AUTH_MODE === "API_KEY"
+      ? { ...payload }
+      : { hasApiKey: false, ...payload };
+
+  // Tiny log helpers (console appears in Vercel logs)
+  const tag = "[OT]";
+  console.info(
+    tag,
+    "POST /list attempt",
+    H({
+      url,
+      mode: AUTH_MODE,
+      apiKeyLen: (process.env.OT_API_KEY || "").length || undefined,
+      Type: body?.Type,
+      PageNumber: body?.PageNumber,
+      NumberOfRecords: body?.NumberOfRecords,
+      hasFilters: !!body?.hasFilters,
+    })
+  );
 
   const res = await fetch(url, {
-    method: 'POST',
+    method: "POST",
     headers,
     body: JSON.stringify(body),
   });
 
-  const preview = await res.text();
   if (!res.ok) {
-    throw new Error(`OT ${res.status} [/list] ${preview}`);
+    const preview = await res.text().catch(() => "");
+    console.error(tag, "/list response", { status: res.status, preview });
+    throw new Error(`OT ${res.status} [/list] ${preview || ""}`.trim());
   }
-  return JSON.parse(preview);
+
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
 }
+
+// Public helper you can import elsewhere
+async function otList({ Type, Filters = [], PageNumber = 1, NumberOfRecords = 500 }) {
+  const hasFilters = Array.isArray(Filters) && Filters.length > 0;
+
+  return postList({
+    Type,
+    Filters,
+    hasFilters,
+    PageNumber,
+    NumberOfRecords,
+  });
+}
+
+module.exports = { otList };
