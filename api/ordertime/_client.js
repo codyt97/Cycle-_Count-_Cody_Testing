@@ -1,100 +1,114 @@
 // api/ordertime/_client.js
 const BASE = (process.env.OT_BASE_URL || 'https://services.ordertime.com/api').replace(/\/+$/,'');
 
-function mode() {
-  const m = (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase().trim();
-  return m === 'API_KEY' ? 'API_KEY' : 'PASSWORD';
-}
-
-function sanitizeKey() {
-  return (process.env.OT_API_KEY || '').replace(/^["']|["']$/g,'').trim();
-}
 function clean(s){ return (s || '').trim(); }
+function stripQuotes(s){ return (s || '').replace(/^["']|["']$/g,'').trim(); }
 function mask(s){ if(!s) return {len:0, head:'', tail:''}; const t=String(s); return {len:t.length, head:t.slice(0,2), tail:t.slice(-2)}; }
 
-function buildBasePayload({ type, filters = [], page = 1, pageSize = 50 }) {
+function buildBase({ type, filters = [], page = 1, pageSize = 50 }) {
   return { Type: type, Filters: filters, PageNumber: page, NumberOfRecords: pageSize };
 }
 
-async function tryList(url, payload) {
-  const res = await fetch(url, { method: 'POST', headers: { 'content-type':'application/json' }, body: JSON.stringify(payload) });
+async function doPost(path, payload) {
+  const url = `${BASE}${path}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const text = await res.text();
+  let data; try { data = JSON.parse(text); } catch { data = { raw:text }; }
   if (!res.ok) {
-    const preview = await res.text().catch(()=> '');
-    return { ok:false, status:res.status, preview };
+    const msg = data?.Message || data?.error || text || `HTTP ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.payload = payload;
+    throw err;
   }
-  const data = await res.json();
-  return { ok:true, data };
+  return data;
 }
 
-async function postList(payload) {
-  // We’ll try both casings of the endpoint
-  const urls = [`${BASE}/list`, `${BASE}/List`];
+// Build attempt payloads for both modes
+function buildAttempts(base) {
+  const attempts = [];
 
-  // If PASSWORD mode, auto-try Company and Username permutations (common OT gotchas)
-  if (mode() === 'PASSWORD') {
-    const companyEnv  = clean(payload.Company);
-    const usernameEnv = clean(payload.Username);
-    const passwordEnv = clean(payload.Password);
+  // API KEY attempts
+  const apiKey = stripQuotes(process.env.OT_API_KEY);
+  const companyEnv = clean(process.env.OT_COMPANY);
+  if (apiKey) {
+    for (const c of [companyEnv, 'ConnectUs', 'ConnectUS', '']) {
+      attempts.push({
+        label: `API_KEY :: Company="${c}"`,
+        payload: (c ? { Company: c } : {}),
+        mode: 'API_KEY',
+      });
+    }
+  }
 
-    const companyCandidates = Array.from(new Set([
-      companyEnv,
-      'ConnectUs',
-      'Connect Us',
-      'ConnectUS',
-      'ConnectUs Corp',
-      'ConnectUs Corporation',
-      'ConnectUs - Live',
-      'ConnectUs Live',
-    ])).filter(Boolean);
+  // PASSWORD attempts
+  const usernameEnv = clean(process.env.OT_USERNAME);
+  const passwordEnv = clean(process.env.OT_PASSWORD);
+  if (usernameEnv && passwordEnv) {
+    const usernames = [usernameEnv];
+    // also try without domain if present
+    if (usernameEnv.includes('@')) usernames.push(usernameEnv.split('@')[0]);
+    const companies = [companyEnv, 'ConnectUs', 'ConnectUS'].filter(Boolean);
 
-    const bareUser = usernameEnv.includes('@') ? usernameEnv.split('@')[0] : usernameEnv;
-    const userCandidates = Array.from(new Set([usernameEnv, bareUser])).filter(Boolean);
-
-    for (const url of urls) {
-      for (const c of companyCandidates) {
-        for (const u of userCandidates) {
-          const attempt = { ...payload, Company: c, Username: u, Password: passwordEnv };
-          console.log('[OT] POST /list attempt', { url, mode:'PASSWORD', company:mask(c), username:mask(u), hasPassword:!!passwordEnv, Type: payload.Type, PageNumber: payload.PageNumber, NumberOfRecords: payload.NumberOfRecords });
-          const r = await tryList(url, attempt);
-          if (r.ok) return r.data;
-          // Only log the first ~160 chars of error to avoid noise
-          console.error('[OT] /list response', { status:r.status, preview:(r.preview || '').slice(0,160) });
-        }
+    for (const c of companies) {
+      for (const u of usernames) {
+        attempts.push({
+          label: `PASSWORD :: Company="${c}" Username="${u}"`,
+          payload: { Company: c, Username: u, Password: passwordEnv },
+          mode: 'PASSWORD',
+        });
       }
     }
-    throw new Error('All PASSWORD /list attempts failed');
   }
 
-  // API_KEY mode (optionally include Company)
-  const apiKey = sanitizeKey();
-  const company = clean(payload.Company);
-  const akPayload = { ApiKey: apiKey, Type: payload.Type, Filters: payload.Filters, PageNumber: payload.PageNumber, NumberOfRecords: payload.NumberOfRecords };
-  const keyVariants = [ { ...akPayload }, { ...(company ? { Company: company } : {}), ...akPayload } ];
-
-  for (const url of urls) {
-    for (const p of keyVariants) {
-      console.log('[OT] POST /list attempt', { url, mode:'API_KEY', apiKeyLen:(p.ApiKey||'').length, company: mask(p.Company), Type: p.Type, PageNumber: p.PageNumber, NumberOfRecords: p.NumberOfRecords });
-      const r = await tryList(url, p);
-      if (r.ok) return r.data;
-      console.error('[OT] /list response', { status:r.status, preview:(r.preview || '').slice(0,160) });
-    }
-  }
-
-  throw new Error('All API_KEY /list attempts failed');
+  // Attach base to each attempt
+  return attempts.map(a => ({ ...a, payload: { ...a.payload, ...base } }));
 }
 
-// Public helpers -------------------------------------------------------------
-function buildPayload({ type, filters = [], page = 1, pageSize = 50 }) {
-  const base = buildBasePayload({ type, filters, page, pageSize });
-  if (mode() === 'API_KEY') {
-    const company = clean(process.env.OT_COMPANY);
-    return { ...(company ? { Company: company } : {}), ApiKey: sanitizeKey(), ...base };
+async function postList(base) {
+  const pathCandidates = ['/list', '/List']; // some tenants are picky
+  const attempts = buildAttempts(base);
+
+  if (!attempts.length) {
+    throw new Error('No credentials configured. Set either OT_API_KEY or OT_USERNAME/OT_PASSWORD/OT_COMPANY.');
   }
-  const company = clean(process.env.OT_COMPANY);
-  const username = clean(process.env.OT_USERNAME);
-  const password = clean(process.env.OT_PASSWORD);
-  if (!company || !username || !password) throw new Error('Missing OT_COMPANY or OT_USERNAME or OT_PASSWORD.');
-  return { Company: company, Username: username, Password: password, ...base };
+
+  let lastErr;
+  // Try all auth attempts across both path casings
+  for (const a of attempts) {
+    for (const p of pathCandidates) {
+      const body = { ...a.payload };
+      if (a.mode === 'API_KEY') {
+        body.ApiKey = stripQuotes(process.env.OT_API_KEY);
+      }
+      try {
+        const dbg = {
+          url: `${BASE}${p}`,
+          mode: a.mode,
+          apiKeyLen: a.mode === 'API_KEY' ? mask(stripQuotes(process.env.OT_API_KEY)).len : 0,
+          company: mask(body.Company),
+          Type: body.Type, PageNumber: body.PageNumber, NumberOfRecords: body.NumberOfRecords
+        };
+        console.info('[OT] POST', p, 'attempt', JSON.stringify(dbg, null, 2));
+        const data = await doPost(p, body);
+        return data;
+      } catch (e) {
+        console.error('[OT] /list response { status:', e.status, ', preview:', JSON.stringify(e.message), '}');
+        lastErr = e;
+        // If API_KEY got a 400 "Incorrect api key...", immediately fall through to PASSWORD attempts
+        if (a.mode === 'API_KEY' && e.status === 400) continue;
+      }
+    }
+  }
+  throw new Error(lastErr?.message || 'All /list attempts failed');
+}
+
+function buildPayload({ type, filters = [], page = 1, pageSize = 50 }) {
+  return buildBase({ type, filters, page, pageSize });
 }
 
 async function otList({ Type, Filters = [], PageNumber = 1, NumberOfRecords = 50 }) {
