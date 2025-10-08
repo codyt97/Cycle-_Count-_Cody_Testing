@@ -1,77 +1,68 @@
-// api/ordertime/bin.js
-// Lists inventory lots filtered by BinRef.Name.
-// Works with either ?bin= or ?q= in the query string.
+// /api/ordertime/bin.js
 
-const { buildPayload, postList } = require('./_client');
+import { postList } from './_client';
 
-function pickBinParam(req) {
-  try {
-    // Vercel passes the full URL in req.url; use URL to parse query.
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    const sp = url.searchParams;
+// Force Node runtime (avoid Edge incompatibilities)
+export const config = { runtime: 'nodejs' };
 
-    // Accept both keys to stay compatible with older UI calls.
-    const val = sp.get('bin') ?? sp.get('q') ?? '';
-    return (val || '').trim();
-  } catch {
-    return '';
-  }
+// Helper: uniform JSON response
+function send(res, status, body) {
+  res.status(status).json(body);
 }
 
-function error(res, status, msg) {
-  res.statusCode = status;
-  res.setHeader('Content-Type', 'application/json');
-  res.end(JSON.stringify({ error: msg }));
-}
-
-module.exports.handler = async function handler(req, res) {
-  if (req.method !== 'GET' && req.method !== 'POST') {
-    return error(res, 405, 'Method not allowed');
-  }
-
-  const binName = pickBinParam(req);
-
-  if (!binName) {
-    // Keep message consistent with what you saw in the UI logs.
-    return error(res, 400, 'Missing bin name (?q=…)');
-  }
-
+// Next.js API Route default export
+export default async function handler(req, res) {
   try {
-    console.info('[BIN] Querying 1141 by BinRef.Name=', binName);
+    // Only GET supported: /api/ordertime/bin?bin=B-04-03
+    if (req.method !== 'GET') {
+      res.setHeader('Allow', 'GET');
+      return send(res, 405, { error: 'Method not allowed' });
+    }
 
-    // Build OT list payload
-    const payload = buildPayload({
-      type: 1141,          // Inventory Lots / Item Lots table
-      page: 1,
-      pageSize: 500,
-      filters: [
-        {
-          Field: 'BinRef.Name',
-          // Equality comparison; OT API expects the numeric enum for Equals.
-          // (If your _client converts string names, that's fine too.)
-          Comparison: 0,
-          Values: [binName],
-        },
-      ],
+    const bin = (req.query.bin || req.query.q || '').toString().trim();
+
+    // Guard against missing/empty bin param (this produced a 400 in your UI)
+    if (!bin) {
+      return send(res, 400, { error: 'Missing bin name (?bin=...)' });
+    }
+
+    // Call OrderTime: Type 1141 (inventory lots / movements)
+    const ot = await postList({
+      Type: 1141,
+      PageNumber: 1,
+      NumberOfRecords: 500
+      // NOTE: If you later need server-side filtering by Bin,
+      // augment the /api/list body to include Filters for BinRef.Name.
+      // For now we’re mirroring the successful Postman call you shared.
     });
 
-    // POST to OT /list
-    const rows = await postList(payload);
+    if (!ot.ok) {
+      // Bubble up useful upstream details while keeping a 4xx/5xx boundary
+      const status = ot.status === 400 ? 400 : 502;
+      return send(res, status, {
+        error: `OT ${ot.status} [/list]`,
+        Message: ot.error || 'OrderTime request failed',
+        upstream: ot.data ?? null
+      });
+    }
 
-    res.statusCode = 200;
-    res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify(rows));
+    // Optional: filter by bin on our side if payload contains Bin info.
+    // Many 1141 rows include BinRef; if present we can narrow to that bin.
+    let rows = Array.isArray(ot.data) ? ot.data : [];
+    if (rows.length && rows[0] && typeof rows[0] === 'object' && 'BinRef' in rows[0]) {
+      rows = rows.filter((r) => {
+        const name = r?.BinRef?.Name;
+        return typeof name === 'string' && name.trim().toLowerCase() === bin.toLowerCase();
+      });
+    }
+
+    return send(res, 200, { bin, count: rows.length, rows });
   } catch (err) {
-    // Normalize error messages coming back from OrderTime
-    const msg =
-      (err && err.message) ||
-      'Failed to query OrderTime /list';
-
-    // If our client wrapped it like: "OT 400 [/list] {...}"
-    const statusMatch = /OT\s+(\d{3})\s+\[\/list\]/.exec(msg);
-    const status = statusMatch ? Number(statusMatch[1]) : 502;
-
-    console.error('[BIN] error', err);
-    error(res, status, status === 502 ? msg : `OT ${status} [/list] ${msg.replace(/^OT \d+ \[\/list\]\s*/,'')}`);
+    // Never throw raw – always respond JSON so UI shows a clear message
+    const message =
+      err && typeof err.message === 'string'
+        ? err.message
+        : 'Unexpected server error';
+    return send(res, 500, { error: 'BIN API 500', message });
   }
-};
+}
