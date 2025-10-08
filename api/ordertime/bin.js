@@ -1,39 +1,34 @@
 // api/ordertime/bin.js
-const { withCORS, ok, bad, method } = require("../_lib/respond");
-const { otList } = require("./_client");
+import { postList } from './_client';
 
-// Report type for "Inventory By Bin"
-const RT_INV_BY_BIN = 1141;
+export const config = { runtime: 'edge' }; // or remove if you use node runtime
 
-module.exports = async (req, res) => {
-  if (req.method === "OPTIONS") {
-    withCORS(res);
-    return res.status(204).end();
-  }
-  if (req.method !== "GET") return method(res, ["GET", "OPTIONS"]);
-
-  const bin = String(req.query.bin || "").trim();
-  if (!bin) return bad(res, "bin is required", 400);
-
+export default async function handler(req) {
   try {
-    console.info("[BIN] Querying 1141 by BinRef.Name=", bin);
+    const { q } = Object.fromEntries(new URL(req.url).searchParams); // e.g. ?q=B-04-03
+    const binName = (q || '').trim();
+    if (!binName) {
+      return new Response(JSON.stringify({ error: 'Missing bin name (?q=...)' }), { status: 400 });
+    }
 
-    const rows = await otList({
-      Type: RT_INV_BY_BIN,
+    // Type 1141 = Inventory Lots/Serials (your working Postman case)
+    const Type = 1141;
+
+    // OT expects FilterOperator codes; 0 = Equals
+    const Filters = [
+      { FieldName: 'BinRef.Name', FilterOperator: 0, Value: binName }
+    ];
+
+    const data = await postList({
+      mode: (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase(), // 'PASSWORD' or 'API_KEY'
+      Type,
       PageNumber: 1,
       NumberOfRecords: 500,
-      Filters: [
-        {
-          // exact match on bin name (Operator 1)
-          PropertyName: "BinRef.Name",
-          Operator: 1,
-          FilterValueArray: [bin],
-        },
-      ],
+      filters: Filters
     });
 
-    return ok(res, rows);
-  } catch (e) {
-    return bad(res, String(e.message || e), 502);
+    return new Response(JSON.stringify({ rows: data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  } catch (err) {
+    return new Response(JSON.stringify({ error: String(err.message || err) }), { status: 502 });
   }
-};
+}
