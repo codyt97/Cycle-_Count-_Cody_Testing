@@ -1,60 +1,104 @@
 // /api/ordertime/_client.js
 
-const ORDERTIME_URL = 'https://services.ordertime.com/api/list';
+const BASE_URL = process.env.OT_BASE_URL?.trim() || 'https://services.ordertime.com';
+
+function readEnv(name, fallbacks = []) {
+  const val =
+    process.env[name] ??
+    fallbacks
+      .map((n) => process.env[n])
+      .find((v) => typeof v === 'string' && v.length > 0);
+  return typeof val === 'string' ? val.trim() : undefined;
+}
+
+/**
+ * Resolve auth config from env; supports multiple aliases so a typo
+ * in the project settings doesn't break prod.
+ */
+function getAuthFromEnv() {
+  const mode = readEnv('OT_AUTH_MODE', ['ORDERTIME_AUTH_MODE']) || 'API_KEY';
+
+  // Accept several aliases for each field
+  const apiKey = readEnv('OT_API_KEY', ['ORDERTIME_API_KEY', 'API_KEY']);
+  const username = readEnv('OT_USERNAME', ['OT_EMAIL', 'ORDERTIME_USERNAME', 'ORDERTIME_EMAIL', 'EMAIL']);
+  const password = readEnv('OT_PASSWORD', ['ORDERTIME_PASSWORD', 'PASSWORD']);
+  const company = readEnv('OT_COMPANY', ['ORDERTIME_COMPANY', 'COMPANY']);
+
+  return { mode: mode.toUpperCase(), apiKey, username, password, company };
+}
+
+function buildHeaders(auth) {
+  const headers = { 'Content-Type': 'application/json' };
+
+  // The OrderTime REST API is case-sensitive on these:
+  // email, password, apiKey, company
+  if (auth.apiKey) headers['apiKey'] = auth.apiKey;
+
+  if (auth.mode === 'PASSWORD') {
+    if (!auth.username || !auth.password) {
+      const miss = !auth.username && !auth.password ? 'email & password' : !auth.username ? 'email' : 'password';
+      const err = new Error(`Missing ${miss} for PASSWORD mode`);
+      err.code = 500;
+      throw err;
+    }
+    headers['email'] = auth.username;
+    headers['password'] = auth.password;
+  }
+
+  if (auth.company) headers['company'] = auth.company;
+
+  return headers;
+}
 
 /**
  * POST /api/list
- * mode: 'PASSWORD' | 'API_KEY'
- * opts: {
- *   email?: string,
- *   password?: string,
- *   apiKey?: string,
- *   body: object
- * }
  */
-export async function postList(mode, opts) {
-  const { email, password, apiKey, body } = opts ?? {};
+async function postList({ type, pageNumber = 1, numberOfRecords = 50, filters = undefined }) {
+  const auth = getAuthFromEnv();
+  const headers = buildHeaders(auth);
 
-  // Build headers depending on auth mode.
-  /** @type {Record<string,string>} */
-  const headers = { 'Content-Type': 'application/json' };
+  const body = {
+    Type: type,
+    PageNumber: pageNumber,
+    NumberOfRecords: numberOfRecords,
+  };
 
-  if (mode === 'PASSWORD') {
-    // IMPORTANT: do NOT include apiKey header in PASSWORD mode.
-    if (!email || !password) {
-      throw new Error('Missing email/password for PASSWORD mode');
-    }
-    headers.email = email;
-    headers.password = password;
-  } else if (mode === 'API_KEY') {
-    if (!apiKey) throw new Error('Missing apiKey for API_KEY mode');
-    headers.apiKey = apiKey;
-  } else {
-    throw new Error(`Unknown auth mode: ${mode}`);
+  // Only add hasFilters/Filters when caller provided filters
+  if (filters && Array.isArray(filters) && filters.length > 0) {
+    body.hasFilters = true;
+    body.Filters = filters;
   }
 
-  // Call OrderTime
-  const res = await fetch(ORDERTIME_URL, {
+  // Always use lowercase path as in Postman that worked
+  const url = `${BASE_URL}/api/list`;
+
+  const res = await fetch(url, {
     method: 'POST',
     headers,
-    body: JSON.stringify(body ?? {}),
+    body: JSON.stringify(body),
+    // Edge/runtime safe
+    // @ts-ignore
+    cache: 'no-store',
   });
 
-  // Helpful preview for logs
-  let preview = '';
+  const text = await res.text();
+  let json;
   try {
-    preview = await res.clone().text();
+    json = text ? JSON.parse(text) : null;
   } catch {
-    // ignore
+    json = null;
   }
 
   if (!res.ok) {
-    const code = res.status;
-    throw Object.assign(
-      new Error(`[OT] /list response error ${code}`),
-      { code, preview }
-    );
+    const preview = json ?? { preview: text?.slice(0, 200) };
+    const err = new Error(json?.Message || `OT ${res.status} [/list]`);
+    err.code = res.status;
+    err.upstream = preview;
+    throw err;
   }
 
-  return res.json();
+  // /list returns an array
+  return Array.isArray(json) ? json : [];
 }
+
+export { postList, getAuthFromEnv };
