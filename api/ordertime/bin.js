@@ -1,34 +1,77 @@
 // api/ordertime/bin.js
-import { postList } from './_client';
+// Lists inventory lots filtered by BinRef.Name.
+// Works with either ?bin= or ?q= in the query string.
 
-export const config = { runtime: 'edge' }; // or remove if you use node runtime
+const { buildPayload, postList } = require('./_client');
 
-export default async function handler(req) {
+function pickBinParam(req) {
   try {
-    const { q } = Object.fromEntries(new URL(req.url).searchParams); // e.g. ?q=B-04-03
-    const binName = (q || '').trim();
-    if (!binName) {
-      return new Response(JSON.stringify({ error: 'Missing bin name (?q=...)' }), { status: 400 });
-    }
+    // Vercel passes the full URL in req.url; use URL to parse query.
+    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const sp = url.searchParams;
 
-    // Type 1141 = Inventory Lots/Serials (your working Postman case)
-    const Type = 1141;
-
-    // OT expects FilterOperator codes; 0 = Equals
-    const Filters = [
-      { FieldName: 'BinRef.Name', FilterOperator: 0, Value: binName }
-    ];
-
-    const data = await postList({
-      mode: (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase(), // 'PASSWORD' or 'API_KEY'
-      Type,
-      PageNumber: 1,
-      NumberOfRecords: 500,
-      filters: Filters
-    });
-
-    return new Response(JSON.stringify({ rows: data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-  } catch (err) {
-    return new Response(JSON.stringify({ error: String(err.message || err) }), { status: 502 });
+    // Accept both keys to stay compatible with older UI calls.
+    const val = sp.get('bin') ?? sp.get('q') ?? '';
+    return (val || '').trim();
+  } catch {
+    return '';
   }
 }
+
+function error(res, status, msg) {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify({ error: msg }));
+}
+
+module.exports.handler = async function handler(req, res) {
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    return error(res, 405, 'Method not allowed');
+  }
+
+  const binName = pickBinParam(req);
+
+  if (!binName) {
+    // Keep message consistent with what you saw in the UI logs.
+    return error(res, 400, 'Missing bin name (?q=…)');
+  }
+
+  try {
+    console.info('[BIN] Querying 1141 by BinRef.Name=', binName);
+
+    // Build OT list payload
+    const payload = buildPayload({
+      type: 1141,          // Inventory Lots / Item Lots table
+      page: 1,
+      pageSize: 500,
+      filters: [
+        {
+          Field: 'BinRef.Name',
+          // Equality comparison; OT API expects the numeric enum for Equals.
+          // (If your _client converts string names, that's fine too.)
+          Comparison: 0,
+          Values: [binName],
+        },
+      ],
+    });
+
+    // POST to OT /list
+    const rows = await postList(payload);
+
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(rows));
+  } catch (err) {
+    // Normalize error messages coming back from OrderTime
+    const msg =
+      (err && err.message) ||
+      'Failed to query OrderTime /list';
+
+    // If our client wrapped it like: "OT 400 [/list] {...}"
+    const statusMatch = /OT\s+(\d{3})\s+\[\/list\]/.exec(msg);
+    const status = statusMatch ? Number(statusMatch[1]) : 502;
+
+    console.error('[BIN] error', err);
+    error(res, status, status === 502 ? msg : `OT ${status} [/list] ${msg.replace(/^OT \d+ \[\/list\]\s*/,'')}`);
+  }
+};
