@@ -1,79 +1,53 @@
 // api/ordertime/_client.js
-const BASE =
-  (process.env.OT_BASE_URL || "https://services.ordertime.com").replace(/\/+$/, "");
-const AUTH_MODE = (process.env.OT_AUTH_MODE || "PASSWORD").toUpperCase();
+const OT_BASE_URL = process.env.OT_BASE_URL || 'https://services.ordertime.com';
 
-const H = (o) =>
-  Object.fromEntries(
-    Object.entries(o).filter(([_, v]) => v !== undefined && v !== "")
-  );
+function buildHeaders(mode) {
+  const headers = { 'Content-Type': 'application/json' };
 
-async function postList(payload, dbg = {}) {
-  const url = `${BASE}/api/list`;
+  // Company header is optional but harmless if present
+  if (process.env.OT_COMPANY) headers.company = process.env.OT_COMPANY;
 
-  // Build headers exactly like the working Postman request
-  const headers =
-    AUTH_MODE === "API_KEY"
-      ? H({
-          "Content-Type": "application/json",
-          apiKey: process.env.OT_API_KEY, // required in API_KEY mode
-        })
-      : H({
-          "Content-Type": "application/json",
-          apiKey: process.env.OT_API_KEY, // harmless if present
-          email: process.env.OT_USERNAME, // REQUIRED in PASSWORD mode
-          password: process.env.OT_PASSWORD, // REQUIRED in PASSWORD mode
-        });
-
-  // In PASSWORD mode Postman included hasApiKey:false in the body.
-  const body =
-    AUTH_MODE === "API_KEY"
-      ? { ...payload }
-      : { hasApiKey: false, ...payload };
-
-  // Tiny log helpers (console appears in Vercel logs)
-  const tag = "[OT]";
-  console.info(
-    tag,
-    "POST /list attempt",
-    H({
-      url,
-      mode: AUTH_MODE,
-      apiKeyLen: (process.env.OT_API_KEY || "").length || undefined,
-      Type: body?.Type,
-      PageNumber: body?.PageNumber,
-      NumberOfRecords: body?.NumberOfRecords,
-      hasFilters: !!body?.hasFilters,
-    })
-  );
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const preview = await res.text().catch(() => "");
-    console.error(tag, "/list response", { status: res.status, preview });
-    throw new Error(`OT ${res.status} [/list] ${preview || ""}`.trim());
+  if (mode === 'PASSWORD') {
+    headers.email = process.env.OT_USERNAME;
+    headers.password = process.env.OT_PASSWORD;
+  } else if (mode === 'API_KEY') {
+    headers.apiKey = process.env.OT_API_KEY;
+  } else {
+    throw new Error(`Unknown auth mode: ${mode}`);
   }
-
-  const data = await res.json();
-  return Array.isArray(data) ? data : [];
+  return headers;
 }
 
-// Public helper you can import elsewhere
-async function otList({ Type, Filters = [], PageNumber = 1, NumberOfRecords = 500 }) {
-  const hasFilters = Array.isArray(Filters) && Filters.length > 0;
+// Generic list poster
+async function postList({ mode, Type, PageNumber = 1, NumberOfRecords = 500, filters = [] }) {
+  const url = `${OT_BASE_URL}/api/list`;
+  const hasFilters = Array.isArray(filters) && filters.length > 0;
 
-  return postList({
+  const body = {
     Type,
-    Filters,
-    hasFilters,
     PageNumber,
     NumberOfRecords,
+    hasFilters,
+    ...(hasFilters ? { Filters: filters } : {})
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: buildHeaders(mode),
+    body: JSON.stringify(body)
   });
+
+  // small preview for logs without leaking secrets
+  const previewText = await res.text();
+  if (!res.ok) {
+    throw new Error(`OT ${res.status} [/list] ${previewText}`);
+  }
+  try {
+    return JSON.parse(previewText);
+  } catch {
+    // some OT endpoints return text for errors; success should be JSON
+    return previewText;
+  }
 }
 
-module.exports = { otList };
+export { postList };
