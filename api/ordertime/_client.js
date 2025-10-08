@@ -1,5 +1,6 @@
 // api/ordertime/_client.js
-const BASE = (process.env.OT_BASE_URL || 'https://services.ordertime.com/api').replace(/\/+$/,'') + '';
+const BASE = (process.env.OT_BASE_URL || 'https://services.ordertime.com/api')
+  .replace(/\/+$/,''); // ensure no trailing slash
 
 function mode() {
   const m = (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase().trim();
@@ -7,19 +8,17 @@ function mode() {
 }
 
 function sanitizeKey() {
-  // strip quotes and whitespace that sneak in from copy/paste
+  // strip accidental quotes/whitespace from copy/paste
   return (process.env.OT_API_KEY || '').replace(/^["']|["']$/g,'').trim();
 }
 
 function buildPayload({ type, filters = [], page = 1, pageSize = 50 }) {
   const m = mode();
+
   if (m === 'API_KEY') {
     const apiKey = sanitizeKey();
     if (!apiKey) throw new Error('OT_API_KEY is missing. Set OT_AUTH_MODE=API_KEY and OT_API_KEY.');
-
-    // Some tenants still expect Company even with ApiKey; allow it if provided.
-    const company = (process.env.OT_COMPANY || '').trim();
-
+    const company = (process.env.OT_COMPANY || '').trim(); // some tenants require Company even with ApiKey
     return {
       ...(company ? { Company: company } : {}),
       ApiKey: apiKey,
@@ -30,6 +29,7 @@ function buildPayload({ type, filters = [], page = 1, pageSize = 50 }) {
     };
   }
 
+  // PASSWORD mode
   const company = (process.env.OT_COMPANY || '').trim();
   const username = (process.env.OT_USERNAME || '').trim();
   const password = (process.env.OT_PASSWORD || '').trim();
@@ -49,6 +49,7 @@ function buildPayload({ type, filters = [], page = 1, pageSize = 50 }) {
 
 async function postList(payload) {
   const url = `${BASE}/list`;
+
   console.log('[OT] POST /list', {
     url,
     Type: payload.Type,
@@ -71,11 +72,10 @@ async function postList(payload) {
     console.error('[OT] /list response', { status: res.status, preview });
     throw new Error(`OT ${res.status} [/list] ${preview || 'Unknown error'}`);
   }
-
   return res.json(); // { Rows: [...] }
 }
 
-// Convenience wrapper used by other routes
+// Small helper used by other routes
 async function otList({ Type, Filters = [], PageNumber = 1, NumberOfRecords = 50 }) {
   const payload = buildPayload({
     type: Type,
