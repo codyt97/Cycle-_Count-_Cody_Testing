@@ -1,47 +1,88 @@
-// /api/ordertime/bin.js
-export const runtime = 'edge';
+// api/ordertime/bin.js  — CommonJS (Node) serverless function
 
-import { postList } from './_client';
+const OT_BASE_URL = (process.env.OT_BASE_URL || 'https://services.ordertime.com').replace(/\/$/, '');
+const AUTH_MODE   = (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase(); // 'PASSWORD' | 'API_KEY'
+const USERNAME    = process.env.OT_USERNAME || '';
+const PASSWORD    = process.env.OT_PASSWORD || '';
+const API_KEY     = process.env.OT_API_KEY  || '';
+const COMPANY     = process.env.OT_COMPANY  || ''; // optional
 
-/**
- * OrderTime "Inventory Lot Item" list type for Bin movements.
- * 1141 is what you were querying in Postman.
- */
-const LIST_TYPE = 1141;
+async function callOrderTimeList(type, extraBody = {}, extraHeaders = {}) {
+  const hasApiKey = AUTH_MODE === 'API_KEY';
 
-function jsonResponse(status, payload) {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
+  const body = {
+    Type: type,
+    PageNumber: 1,
+    NumberOfRecords: 500,
+    hasFilters: Boolean(extraBody.Filters?.length),
+    mode: AUTH_MODE,      // IMPORTANT for OrderTime
+    hasApiKey: hasApiKey, // mirrors the header auth we send
+    ...extraBody,
+  };
+
+  const headers = {
+    'Content-Type': 'application/json',
+    ...extraHeaders,
+  };
+
+  if (hasApiKey) {
+    headers.apiKey = API_KEY;
+  } else {
+    headers.email = USERNAME;
+    headers.password = PASSWORD;
+  }
+  if (COMPANY) headers.company = COMPANY;
+
+  const resp = await fetch(`${OT_BASE_URL}/api/list`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
   });
+
+  const text = await resp.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = text; }
+
+  if (!resp.ok) {
+    const err = new Error(`OT /list failed (${resp.status})`);
+    err.status = resp.status;
+    err.response = data;
+    throw err;
+  }
+  return data;
 }
 
-export default async function handler(req) {
+module.exports = async (req, res) => {
   try {
-    const { searchParams } = new URL(req.url);
-    const binName = (searchParams.get('bin') || '').trim();
-
-    if (!binName) {
-      return jsonResponse(400, { error: 'Missing bin name (?bin=...)' });
+    const bin = (req.query?.bin || req.query?.q || '').trim();
+    if (!bin) {
+      res.status(400).json({ error: 'Missing bin (use ?bin= or ?q=)' });
+      return;
     }
 
-    // Filters match what worked in Postman:
-    // Filter on BinRef.Name = <binName>
-    const filters = [
-      {
-        Field: 'BinRef.Name',
-        Operator: 0, // 0 = equals
-        Value: binName,
-      },
-    ];
+    // OrderTime "Inventory Movements / Lots" list — Type 1141 (matches your Postman success)
+    const upstream = await callOrderTimeList(1141);
 
-    const rows = await postList({
-      type: LIST_TYPE,
-      pageNumber: 1,
-      numberOfRecords: 500,
-      filters,
+    // OT sometimes returns the array directly; sometimes { data: [...] }
+    const rows = Array.isArray(upstream) ? upstream : (upstream?.data || upstream?.rows || []);
+
+    // Filter by BinRef.Name here (avoids guessing OT filter syntax)
+    const items = rows.filter(r => (r?.BinRef?.Name || '').toUpperCase() === bin.toUpperCase());
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).json({
+      ok: true,
+      bin,
+      count: items.length,
+      upstreamCount: rows.length,
+      items,
     });
-
-    return jsonResponse(200, { ok: true, rowsCount: rows.length, rows });
   } catch (err) {
-    // Keep the message clear for you
+    console.error('[BIN] error', { code: err.status || 500, message: err.message, upstream: err.response });
+    res.status(err.status || 500).json({
+      error: `[BIN] ${err.status || 500}`,
+      message: err.message,
+      upstream: err.response,
+    });
+  }
+};
