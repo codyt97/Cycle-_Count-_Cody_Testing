@@ -1,5 +1,9 @@
 // api/ordertime/_client.js
-const BASE = (process.env.OT_BASE_URL || 'https://services.ordertime.com/api').replace(/\/+$/,'');
+const PRIMARY_BASE = (process.env.OT_BASE_URL || 'https://services.ordertime.com/api').replace(/\/+$/,'');
+// Optional tenant hint (e.g., connectus.ordertime.com/api)
+const TENANT_BASE  = (process.env.OT_TENANT_BASE_URL || '').replace(/\/+$/,'');
+const BASES = [PRIMARY_BASE, TENANT_BASE].filter(Boolean);
+
 
 function clean(s){ return (s || '').trim(); }
 function stripQuotes(s){ return (s || '').replace(/^["']|["']$/g,'').trim(); }
@@ -10,7 +14,34 @@ function buildBase({ type, filters = [], page = 1, pageSize = 50 }) {
 }
 
 async function doPost(path, payload) {
-  const url = `${BASE}${path}`;
+  async function doPostMulti(path, payload) {
+  let lastErr;
+  for (const base of BASES) {
+    const url = `${base}${path}`;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const text = await res.text();
+      let data; try { data = JSON.parse(text); } catch { data = { raw:text }; }
+      if (!res.ok) {
+        const msg = data?.Message || data?.error || text || `HTTP ${res.status}`;
+        const err = new Error(msg);
+        err.status = res.status;
+        err.url = url;
+        throw err;
+      }
+      return data;
+    } catch (e) {
+      lastErr = e;
+      console.error('[OT] POST fail', { url, status: e.status, preview: e.message });
+    }
+  }
+  throw lastErr || new Error('All base URL attempts failed');
+}
+
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -72,6 +103,8 @@ function buildAttempts(base) {
 async function postList(base) {
   const pathCandidates = ['/list', '/List']; // some tenants are picky
   const attempts = buildAttempts(base);
+  const data = await doPostMulti(p, body);
+
 
   if (!attempts.length) {
     throw new Error('No credentials configured. Set either OT_API_KEY or OT_USERNAME/OT_PASSWORD/OT_COMPANY.');
