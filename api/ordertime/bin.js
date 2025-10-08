@@ -15,7 +15,6 @@ module.exports = async function handler(req, res) {
 
     console.log('[BIN] Querying 1141 by BinRef.Name=', bin);
 
-    // Try BinRef.Name first; some tenants expose LocationBinRef.Name
     const filters = [
       { PropertyName: 'BinRef.Name', Operator: 1, FilterValueArray: [bin] },
     ];
@@ -29,6 +28,7 @@ module.exports = async function handler(req, res) {
 
     const raw = Array.isArray(data?.Rows) ? data.Rows : [];
 
+    // Map to UI contract: {records:[{location, sku, description, systemImei}]}
     const records = raw.map(r => ({
       location:    r?.BinRef?.Name || r?.LocationBinRef?.Name || r?.LocationRef?.Name || bin,
       sku:         r?.ItemRef?.Code || r?.ItemRef?.Name || r?.ItemCode || '—',
