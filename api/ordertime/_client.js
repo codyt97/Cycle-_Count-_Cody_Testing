@@ -1,53 +1,75 @@
-// api/ordertime/_client.js
-const OT_BASE_URL = process.env.OT_BASE_URL || 'https://services.ordertime.com';
+// /api/ordertime/_client.js
 
-function buildHeaders(mode) {
-  const headers = { 'Content-Type': 'application/json' };
+const ORDERTIME_BASE = 'https://services.ordertime.com';
 
-  // Company header is optional but harmless if present
-  if (process.env.OT_COMPANY) headers.company = process.env.OT_COMPANY;
+/**
+ * Post to OrderTime /api/list in PASSWORD mode.
+ * Mirrors the successful Postman call you shared:
+ *   headers: email, password, (optional) apiKey
+ *   body: { Type, PageNumber, NumberOfRecords, mode: 'PASSWORD', hasApiKey: false }
+ *
+ * @param {object} opts
+ * @param {number} opts.Type
+ * @param {number} [opts.PageNumber=1]
+ * @param {number} [opts.NumberOfRecords=500]
+ * @param {AbortSignal} [opts.signal]
+ * @returns {Promise<{ ok: boolean, status: number, data?: any, error?: string }>}
+ */
+export async function postList({
+  Type,
+  PageNumber = 1,
+  NumberOfRecords = 500,
+  signal
+}) {
+  const email = process.env.ORDERTIME_EMAIL || '';
+  const password = process.env.ORDERTIME_PASSWORD || '';
+  const apiKey = process.env.ORDERTIME_API_KEY || '';
 
-  if (mode === 'PASSWORD') {
-    headers.email = process.env.OT_USERNAME;
-    headers.password = process.env.OT_PASSWORD;
-  } else if (mode === 'API_KEY') {
-    headers.apiKey = process.env.OT_API_KEY;
-  } else {
-    throw new Error(`Unknown auth mode: ${mode}`);
-  }
-  return headers;
-}
+  const headers = {
+    'Content-Type': 'application/json',
+    email,
+    password
+  };
 
-// Generic list poster
-async function postList({ mode, Type, PageNumber = 1, NumberOfRecords = 500, filters = [] }) {
-  const url = `${OT_BASE_URL}/api/list`;
-  const hasFilters = Array.isArray(filters) && filters.length > 0;
+  // Postman worked even with apiKey present in headers, but your latest
+  // successful request showed `hasApiKey: false`. We'll still send apiKey
+  // if available since the server ignores it when hasApiKey=false.
+  if (apiKey) headers.apiKey = apiKey;
 
   const body = {
     Type,
     PageNumber,
     NumberOfRecords,
-    hasFilters,
-    ...(hasFilters ? { Filters: filters } : {})
+    // Critical bits that matched your good Postman call:
+    mode: 'PASSWORD',
+    hasApiKey: false
   };
+
+  const url = `${ORDERTIME_BASE}/api/list`;
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: buildHeaders(mode),
-    body: JSON.stringify(body)
+    headers,
+    body: JSON.stringify(body),
+    signal
   });
 
-  // small preview for logs without leaking secrets
-  const previewText = await res.text();
-  if (!res.ok) {
-    throw new Error(`OT ${res.status} [/list] ${previewText}`);
-  }
+  let payload;
   try {
-    return JSON.parse(previewText);
+    // OrderTime tends to always return JSON
+    payload = await res.json();
   } catch {
-    // some OT endpoints return text for errors; success should be JSON
-    return previewText;
+    payload = null;
   }
-}
 
-export { postList };
+  if (!res.ok) {
+    // Surface their message if present
+    const msg =
+      payload && typeof payload.Message === 'string'
+        ? payload.Message
+        : `Upstream error (${res.status})`;
+    return { ok: false, status: res.status, error: msg, data: payload };
+  }
+
+  return { ok: true, status: res.status, data: payload };
+}
