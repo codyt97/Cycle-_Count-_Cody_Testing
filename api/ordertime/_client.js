@@ -13,8 +13,7 @@ function buildBase({ type, filters = [], page = 1, pageSize = 50 }) {
   return { Type: type, Filters: filters, PageNumber: page, NumberOfRecords: pageSize };
 }
 
-async function doPost(path, payload) {
-  async function doPostMulti(path, payload) {
+async function doPostMulti(path, payload) {
   let lastErr;
   for (const base of BASES) {
     const url = `${base}${path}`;
@@ -42,6 +41,7 @@ async function doPost(path, payload) {
   throw lastErr || new Error('All base URL attempts failed');
 }
 
+async function doPost(path, payload) {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -127,7 +127,7 @@ async function postList(base) {
           Type: body.Type, PageNumber: body.PageNumber, NumberOfRecords: body.NumberOfRecords
         };
         console.info('[OT] POST', p, 'attempt', JSON.stringify(dbg, null, 2));
-        const data = await doPost(p, body);
+        const data = await doPostMulti(p, body);
         return data;
       } catch (e) {
         console.error('[OT] /list response { status:', e.status, ', preview:', JSON.stringify(e.message), '}');
