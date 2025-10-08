@@ -1,88 +1,78 @@
-// api/ordertime/bin.js  — CommonJS (Node) serverless function
+// api/ordertime/bin.js
+// CommonJS, Node runtime (no ESM/export), PASSWORD-only to avoid apiKey being sent by mistake.
 
-const OT_BASE_URL = (process.env.OT_BASE_URL || 'https://services.ordertime.com').replace(/\/$/, '');
-const AUTH_MODE   = (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase(); // 'PASSWORD' | 'API_KEY'
-const USERNAME    = process.env.OT_USERNAME || '';
-const PASSWORD    = process.env.OT_PASSWORD || '';
-const API_KEY     = process.env.OT_API_KEY  || '';
-const COMPANY     = process.env.OT_COMPANY  || ''; // optional
+const OT_BASE = process.env.OT_BASE_URL || 'https://services.ordertime.com';
+const USERNAME = process.env.OT_USERNAME || '';
+const PASSWORD = process.env.OT_PASSWORD || '';
+const COMPANY  = process.env.OT_COMPANY || ''; // optional
 
-async function callOrderTimeList(type, extraBody = {}, extraHeaders = {}) {
-  const hasApiKey = AUTH_MODE === 'API_KEY';
+function json(res, code, payload) {
+  res.statusCode = code;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(payload));
+}
 
-  const body = {
-    Type: type,
-    PageNumber: 1,
-    NumberOfRecords: 500,
-    hasFilters: Boolean(extraBody.Filters?.length),
-    mode: AUTH_MODE,      // IMPORTANT for OrderTime
-    hasApiKey: hasApiKey, // mirrors the header auth we send
-    ...extraBody,
-  };
-
-  const headers = {
-    'Content-Type': 'application/json',
-    ...extraHeaders,
-  };
-
-  if (hasApiKey) {
-    headers.apiKey = API_KEY;
-  } else {
-    headers.email = USERNAME;
-    headers.password = PASSWORD;
-  }
-  if (COMPANY) headers.company = COMPANY;
-
-  const resp = await fetch(`${OT_BASE_URL}/api/list`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  const text = await resp.text();
-  let data;
-  try { data = JSON.parse(text); } catch { data = text; }
-
-  if (!resp.ok) {
-    const err = new Error(`OT /list failed (${resp.status})`);
-    err.status = resp.status;
-    err.response = data;
-    throw err;
-  }
-  return data;
+function safeParse(text) {
+  try { return JSON.parse(text); } catch { return text; }
 }
 
 module.exports = async (req, res) => {
   try {
-    const bin = (req.query?.bin || req.query?.q || '').trim();
-    if (!bin) {
-      res.status(400).json({ error: 'Missing bin (use ?bin= or ?q=)' });
-      return;
+    // Parse query (?bin=B-04-03)
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const bin = (url.searchParams.get('bin') || '').trim();
+    if (!bin) return json(res, 400, { error: 'Missing bin name (?bin=...)' });
+
+    if (!USERNAME || !PASSWORD) {
+      return json(res, 500, { error: 'Missing email/password for PASSWORD mode' });
     }
 
-    // OrderTime "Inventory Movements / Lots" list — Type 1141 (matches your Postman success)
-    const upstream = await callOrderTimeList(1141);
+    // Build OT /api/list request
+    const body = {
+      Type: 1141,               // Inventory Lot/Serial ledger
+      PageNumber: 1,
+      NumberOfRecords: 500,
+      hasFilters: true,
+      mode: 'PASSWORD'          // <- force PASSWORD auth
+      // NOTE: we are NOT adding the "filters" object here on purpose. We pull all and filter locally.
+    };
 
-    // OT sometimes returns the array directly; sometimes { data: [...] }
-    const rows = Array.isArray(upstream) ? upstream : (upstream?.data || upstream?.rows || []);
+    // PASSWORD headers (no apiKey ever)
+    const headers = {
+      'Content-Type': 'application/json',
+      email: USERNAME,
+      password: PASSWORD
+    };
+    if (COMPANY) headers.company = COMPANY;
 
-    // Filter by BinRef.Name here (avoids guessing OT filter syntax)
-    const items = rows.filter(r => (r?.BinRef?.Name || '').toUpperCase() === bin.toUpperCase());
-
-    res.setHeader('Cache-Control', 'no-store');
-    res.status(200).json({
-      ok: true,
-      bin,
-      count: items.length,
-      upstreamCount: rows.length,
-      items,
+    const upstream = await fetch(`${OT_BASE}/api/list`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body)
     });
+
+    const text = await upstream.text();
+    if (!upstream.ok) {
+      // Surface OT’s message for quick diagnosis
+      return json(res, upstream.status, {
+        error: `[BIN] ${upstream.status}`,
+        message: 'OT /list failed',
+        upstream: safeParse(text)
+      });
+    }
+
+    // Expecting an array of ledger rows
+    const rows = safeParse(text);
+    if (!Array.isArray(rows)) {
+      return json(res, 502, { error: 'Unexpected OT payload', upstream: rows });
+    }
+
+    // Filter by bin name (case-insensitive)
+    const target = bin.toUpperCase();
+    const filtered = rows.filter(r => (r?.BinRef?.Name || '').toUpperCase() === target);
+
+    return json(res, 200, { bin, count: filtered.length, data: filtered });
   } catch (err) {
-    console.error('[BIN] error', { code: err.status || 500, message: err.message, upstream: err.response });
-    res.status(err.status || 500).json({
-      error: `[BIN] ${err.status || 500}`,
-      message: err.message,
-      upstream: err.response,
-    });
+    return json(res, 500, { error: 'BIN function crashed', message: err.message });
   }
 };
