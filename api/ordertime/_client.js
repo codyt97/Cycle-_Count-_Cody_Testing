@@ -101,9 +101,9 @@ function buildAttempts(base) {
 }
 
 async function postList(base) {
-  const pathCandidates = ['/list', '/List']; // some tenants are picky
-  const attempts = buildAttempts(base);
-  const data = await doPostMulti(p, body);
+    const pathCandidates = ['/list', '/List']; // some tenants are picky
+    const attempts = buildAttempts(base);
+
 
 
   if (!attempts.length) {
@@ -120,8 +120,10 @@ async function postList(base) {
       }
       try {
         const dbg = {
-          url: `${BASE}${p}`,
+          bases: BASES,
+          path: p,
           mode: a.mode,
+
           apiKeyLen: a.mode === 'API_KEY' ? mask(stripQuotes(process.env.OT_API_KEY)).len : 0,
           company: mask(body.Company),
           Type: body.Type, PageNumber: body.PageNumber, NumberOfRecords: body.NumberOfRecords
