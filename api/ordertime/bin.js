@@ -1,78 +1,132 @@
-// api/ordertime/bin.js
-// CommonJS, Node runtime (no ESM/export), PASSWORD-only to avoid apiKey being sent by mistake.
+// NEXT.JS PAGES API ROUTE (CommonJS)
+// Path: /pages/api/ordertime/bin.js
 
-const OT_BASE = process.env.OT_BASE_URL || 'https://services.ordertime.com';
-const USERNAME = process.env.OT_USERNAME || '';
-const PASSWORD = process.env.OT_PASSWORD || '';
-const COMPANY  = process.env.OT_COMPANY || ''; // optional
+/* eslint-disable no-console */
 
-function json(res, code, payload) {
-  res.statusCode = code;
-  res.setHeader('Content-Type', 'application/json');
-  res.end(JSON.stringify(payload));
+const BASE_URL = process.env.OT_BASE_URL || 'https://services.ordertime.com';
+const AUTH_MODE = (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase(); // 'PASSWORD' | 'APIKEY'
+const OT_USERNAME = process.env.OT_USERNAME || '';
+const OT_PASSWORD = process.env.OT_PASSWORD || '';
+const OT_COMPANY  = process.env.OT_COMPANY  || '';
+const OT_API_KEY  = process.env.OT_API_KEY  || ''; // only used if AUTH_MODE === 'APIKEY'
+
+// ---- Helper: normalize base URL
+function otUrl(path) {
+  const base = BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL;
+  return `${base}${path}`;
 }
 
-function safeParse(text) {
-  try { return JSON.parse(text); } catch { return text; }
+// ---- Helper: standard error reply
+function sendError(res, code, message, upstream) {
+  res.status(code).json({
+    error: `[BIN] ${code}`,
+    message,
+    ...(upstream ? { upstream } : {})
+  });
 }
 
-module.exports = async (req, res) => {
-  try {
-    // Parse query (?bin=B-04-03)
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const bin = (url.searchParams.get('bin') || '').trim();
-    if (!bin) return json(res, 400, { error: 'Missing bin name (?bin=...)' });
+// ---- Build auth headers for OrderTime
+function buildAuthHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
 
-    if (!USERNAME || !PASSWORD) {
-      return json(res, 500, { error: 'Missing email/password for PASSWORD mode' });
+  if (AUTH_MODE === 'PASSWORD') {
+    // IMPORTANT: do NOT include apiKey in PASSWORD mode
+    headers.company  = OT_COMPANY;
+    headers.email    = OT_USERNAME;
+    headers.password = OT_PASSWORD;
+  } else if (AUTH_MODE === 'APIKEY') {
+    // IMPORTANT: ONLY include apiKey in APIKEY mode
+    headers.apiKey = OT_API_KEY;
+  } else {
+    throw new Error(`Unsupported OT_AUTH_MODE: ${AUTH_MODE}`);
+  }
+
+  return headers;
+}
+
+// ---- Build /api/list body to query Bin transactions (Type 1141)
+function buildListBody(binName) {
+  // Filter by BinRef.Name equals <binName>
+  const filters = [
+    {
+      FieldName: 'BinRef.Name',
+      Operator: 0,          // 0 = equals
+      Value: binName
     }
+  ];
 
-    // Build OT /api/list request
-    const body = {
-      Type: 1141,               // Inventory Lot/Serial ledger
-      PageNumber: 1,
-      NumberOfRecords: 500,
-      hasFilters: true,
-      mode: 'PASSWORD'          // <- force PASSWORD auth
-      // NOTE: we are NOT adding the "filters" object here on purpose. We pull all and filter locally.
-    };
+  return {
+    Type: 1141,            // Bin Transactions
+    hasFilters: true,
+    Filters: filters,
+    PageNumber: 1,
+    NumberOfRecords: 500,
+    mode: AUTH_MODE,
+    // Let the server infer based on headers; set explicitly to guide it
+    hasApiKey: AUTH_MODE === 'APIKEY'
+  };
+}
 
-    // PASSWORD headers (no apiKey ever)
-    const headers = {
-      'Content-Type': 'application/json',
-      email: USERNAME,
-      password: PASSWORD
-    };
-    if (COMPANY) headers.company = COMPANY;
+// ---- Main handler
+async function handler(req, res) {
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    return res.status(405).end('Method Not Allowed');
+  }
 
-    const upstream = await fetch(`${OT_BASE}/api/list`, {
+  const bin = String(req.query.bin || '').trim();
+  if (!bin) {
+    return sendError(res, 400, 'Missing bin name (?bin=...)');
+  }
+
+  // Basic safety checks to avoid 500s due to missing envs
+  try {
+    if (AUTH_MODE === 'PASSWORD') {
+      if (!OT_USERNAME || !OT_PASSWORD || !OT_COMPANY) {
+        return sendError(res, 500, 'Missing email/password/company for PASSWORD mode');
+      }
+    } else if (AUTH_MODE === 'APIKEY') {
+      if (!OT_API_KEY) {
+        return sendError(res, 500, 'Missing OT_API_KEY for APIKEY mode');
+      }
+    }
+  } catch (e) {
+    return sendError(res, 500, e.message);
+  }
+
+  const url = otUrl('/api/list');
+  const headers = buildAuthHeaders();
+  const body = buildListBody(bin);
+
+  try {
+    const resp = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
     });
 
-    const text = await upstream.text();
-    if (!upstream.ok) {
-      // Surface OT’s message for quick diagnosis
-      return json(res, upstream.status, {
-        error: `[BIN] ${upstream.status}`,
-        message: 'OT /list failed',
-        upstream: safeParse(text)
-      });
+    const text = await resp.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { /* keep raw text */ }
+
+    if (!resp.ok) {
+      // Bubble up OrderTime's message so you see the real cause
+      const upstream = data || { raw: text };
+      console.error('[BIN] OT /list failed', resp.status, upstream);
+      return sendError(
+        res,
+        400,
+        `OT /list failed (${resp.status})`,
+        upstream
+      );
     }
 
-    // Expecting an array of ledger rows
-    const rows = safeParse(text);
-    if (!Array.isArray(rows)) {
-      return json(res, 502, { error: 'Unexpected OT payload', upstream: rows });
-    }
-
-    // Filter by bin name (case-insensitive)
-    const target = bin.toUpperCase();
-    const filtered = rows.filter(r => (r?.BinRef?.Name || '').toUpperCase() === target);
-
-    return json(res, 200, { bin, count: filtered.length, data: filtered });
+    // Success — should be an array of transactions
+    return res.status(200).json(data || []);
   } catch (err) {
-    return json(res, 500, { error: 'BIN function crashed', message: err.message });
+    console.error('[BIN] error', err);
+    return sendError(res, 500, err.message);
   }
-};
+}
+
+module.exports = handler;
