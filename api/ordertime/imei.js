@@ -12,12 +12,13 @@ async function findIn1141(imei) {
     PageNumber: 1, NumberOfRecords: 1,
   });
   const r = rows?.[0]; if (!r) return null;
-  return {
+    return {
     imei,
     location:    r?.BinRef?.Name || r?.LocationBinRef?.Name || r?.LocationRef?.Name || "",
-    sku:         r?.ItemRef?.Code || r?.ItemCode || "",
-    description: r?.ItemRef?.Name || r?.Description || "",
+    sku:         r?.ItemRef?.Code || r?.ItemCode || r?.ItemRef?.Name || "",
+    description: r?.ItemRef?.Name || r?.ItemName || r?.Description || "",
   };
+
 }
 
 async function findIn1100(imei) {
