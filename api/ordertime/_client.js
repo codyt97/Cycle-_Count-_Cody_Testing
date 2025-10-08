@@ -1,16 +1,29 @@
 // api/ordertime/_client.js
-const PRIMARY_BASE = (process.env.OT_BASE_URL || 'https://services.ordertime.com/api').replace(/\/+$/,'');
-// Optional tenant hint (e.g., connectus.ordertime.com/api)
-const TENANT_BASE  = (process.env.OT_TENANT_BASE_URL || '').replace(/\/+$/,'');
-const BASES = [PRIMARY_BASE, TENANT_BASE].filter(Boolean);
 
+// ---- base URLs (tries tenant base, then services base) ----
+const PRIMARY_BASE = (process.env.OT_BASE_URL || 'https://services.ordertime.com/api').replace(/\/+$/,'');
+const TENANT_BASE  = (process.env.OT_TENANT_BASE_URL || '').replace(/\/+$/,'');
+const BASES = [TENANT_BASE, PRIMARY_BASE].filter(Boolean);
 
 function clean(s){ return (s || '').trim(); }
 function stripQuotes(s){ return (s || '').replace(/^["']|["']$/g,'').trim(); }
 function mask(s){ if(!s) return {len:0, head:'', tail:''}; const t=String(s); return {len:t.length, head:t.slice(0,2), tail:t.slice(-2)}; }
 
-function buildBase({ type, filters = [], page = 1, pageSize = 50 }) {
-  return { Type: type, Filters: filters, PageNumber: page, NumberOfRecords: pageSize };
+const CONF = {
+  company: clean(process.env.OT_COMPANY),
+  username: clean(process.env.OT_USERNAME),
+  password: clean(process.env.OT_PASSWORD),
+  envApiKey: stripQuotes(process.env.OT_API_KEY),
+  authMode: (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase().trim() // API_KEY or PASSWORD
+};
+
+// ---- small cache for a session key from /Login ----
+let cachedKey = null;
+let cachedAt  = 0;
+const KEY_TTL_MS = 1000 * 60 * 20; // 20 minutes
+
+function haveFreshKey(){
+  return cachedKey && (Date.now() - cachedAt) < KEY_TTL_MS;
 }
 
 async function doPostMulti(path, payload) {
@@ -41,109 +54,99 @@ async function doPostMulti(path, payload) {
   throw lastErr || new Error('All base URL attempts failed');
 }
 
-async function doPost(path, payload) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  const text = await res.text();
-  let data; try { data = JSON.parse(text); } catch { data = { raw:text }; }
-  if (!res.ok) {
-    const msg = data?.Message || data?.error || text || `HTTP ${res.status}`;
-    const err = new Error(msg);
-    err.status = res.status;
-    err.payload = payload;
-    throw err;
+// ---- /Login to obtain a session ApiKey (works across tenants) ----
+async function otLogin() {
+  const company  = CONF.company;
+  const username = CONF.username;
+  const password = CONF.password;
+
+  if (!company || !username || !password) {
+    throw new Error('Missing OT_COMPANY or OT_USERNAME or OT_PASSWORD for PASSWORD mode.');
   }
-  return data;
+
+  const payload = { Company: company, Username: username, Password: password };
+  console.info('[OT] POST /Login attempt', { bases: BASES, company: mask(company) });
+
+  // Try both casings (/login, /Login)
+  const data = await (async () => {
+    try { return await doPostMulti('/login', payload); } catch (e1) {
+      return await doPostMulti('/Login', payload);
+    }
+  })();
+
+  const apiKey = data?.ApiKey || data?.Api_Key || data?.Key || data?.ApiToken || null;
+  if (!apiKey) throw new Error('Login succeeded but no ApiKey returned.');
+  cachedKey = apiKey;
+  cachedAt  = Date.now();
+  console.info('[OT] /Login success, keyLen=', mask(apiKey).len);
+  return apiKey;
 }
 
-// Build attempt payloads for both modes
-function buildAttempts(base) {
-  const attempts = [];
+async function getApiKeyForList() {
+  // 1) Use env key in API_KEY mode if present
+  if (CONF.authMode === 'API_KEY' && CONF.envApiKey) return CONF.envApiKey;
 
-  // API KEY attempts
-  const apiKey = stripQuotes(process.env.OT_API_KEY);
-  const companyEnv = clean(process.env.OT_COMPANY);
-  if (apiKey) {
-    for (const c of [companyEnv, 'ConnectUs', 'ConnectUS', '']) {
-      attempts.push({
-        label: `API_KEY :: Company="${c}"`,
-        payload: (c ? { Company: c } : {}),
-        mode: 'API_KEY',
-      });
-    }
-  }
+  // 2) If we already logged in recently, reuse
+  if (haveFreshKey()) return cachedKey;
 
-  // PASSWORD attempts
-  const usernameEnv = clean(process.env.OT_USERNAME);
-  const passwordEnv = clean(process.env.OT_PASSWORD);
-  if (usernameEnv && passwordEnv) {
-    const usernames = [usernameEnv];
-    // also try without domain if present
-    if (usernameEnv.includes('@')) usernames.push(usernameEnv.split('@')[0]);
-    const companies = [companyEnv, 'ConnectUs', 'ConnectUS'].filter(Boolean);
-
-    for (const c of companies) {
-      for (const u of usernames) {
-        attempts.push({
-          label: `PASSWORD :: Company="${c}" Username="${u}"`,
-          payload: { Company: c, Username: u, Password: passwordEnv },
-          mode: 'PASSWORD',
-        });
-      }
-    }
-  }
-
-  // Attach base to each attempt
-  return attempts.map(a => ({ ...a, payload: { ...a.payload, ...base } }));
+  // 3) Login to fetch a fresh key
+  return await otLogin();
 }
 
+// ---- public helpers ----
+function buildPayload({ type, filters = [], page = 1, pageSize = 50 }) {
+  return { Type: type, Filters: filters, PageNumber: page, NumberOfRecords: pageSize };
+}
+
+// This always calls /list with an ApiKey, regardless of how we obtained it (env or /Login)
 async function postList(base) {
-    const pathCandidates = ['/list', '/List']; // some tenants are picky
-    const attempts = buildAttempts(base);
+  const pathCandidates = ['/list', '/List'];
 
-
-
-  if (!attempts.length) {
-    throw new Error('No credentials configured. Set either OT_API_KEY or OT_USERNAME/OT_PASSWORD/OT_COMPANY.');
+  // figure out an api key
+  let apiKey = null;
+  try {
+    apiKey = await getApiKeyForList();
+  } catch (e) {
+    // if API_KEY mode but env key is invalid, we still try login with PASSWORD if creds exist
+    if (CONF.username && CONF.password && CONF.company) {
+      console.warn('[OT] Falling back to /Login because env key not usable:', e.message);
+      apiKey = await otLogin();
+    } else {
+      throw e;
+    }
   }
+
+  const attempts = pathCandidates.map(p => ({ path: p, payload: { ...base, ApiKey: apiKey } }));
 
   let lastErr;
-  // Try all auth attempts across both path casings
   for (const a of attempts) {
-    for (const p of pathCandidates) {
-      const body = { ...a.payload };
-      if (a.mode === 'API_KEY') {
-        body.ApiKey = stripQuotes(process.env.OT_API_KEY);
-      }
-      try {
-        const dbg = {
-          bases: BASES,
-          path: p,
-          mode: a.mode,
-
-          apiKeyLen: a.mode === 'API_KEY' ? mask(stripQuotes(process.env.OT_API_KEY)).len : 0,
-          company: mask(body.Company),
-          Type: body.Type, PageNumber: body.PageNumber, NumberOfRecords: body.NumberOfRecords
-        };
-        console.info('[OT] POST', p, 'attempt', JSON.stringify(dbg, null, 2));
-        const data = await doPostMulti(p, body);
+    try {
+      const dbg = {
+        bases: BASES,
+        path: a.path,
+        mode: CONF.authMode,
+        apiKeyLen: mask(apiKey).len,
+        Type: base.Type, PageNumber: base.PageNumber, NumberOfRecords: base.NumberOfRecords
+      };
+      console.info('[OT] POST', a.path, 'attempt', JSON.stringify(dbg, null, 2));
+      const data = await doPostMulti(a.path, a.payload);
+      return data;
+    } catch (e) {
+      lastErr = e;
+      // If we got a 400 about the key, nuke cache and try one more time by re-login
+      const msg = (e.message || '').toLowerCase();
+      const keyBad = e.status === 400 && (msg.includes('incorrect api key') || msg.includes('deactivated'));
+      if (keyBad && CONF.username && CONF.password && CONF.company) {
+        console.warn('[OT] Key rejected; refreshing via /Login once...');
+        cachedKey = null; cachedAt = 0;
+        const fresh = await otLogin();
+        // retry this exact path once with the new key
+        const data = await doPostMulti(a.path, { ...base, ApiKey: fresh });
         return data;
-      } catch (e) {
-        console.error('[OT] /list response { status:', e.status, ', preview:', JSON.stringify(e.message), '}');
-        lastErr = e;
-        // If API_KEY got a 400 "Incorrect api key...", immediately fall through to PASSWORD attempts
-        if (a.mode === 'API_KEY' && e.status === 400) continue;
       }
     }
   }
-  throw new Error(lastErr?.message || 'All /list attempts failed');
-}
-
-function buildPayload({ type, filters = [], page = 1, pageSize = 50 }) {
-  return buildBase({ type, filters, page, pageSize });
+  throw lastErr || new Error('All /list attempts failed');
 }
 
 async function otList({ Type, Filters = [], PageNumber = 1, NumberOfRecords = 50 }) {
