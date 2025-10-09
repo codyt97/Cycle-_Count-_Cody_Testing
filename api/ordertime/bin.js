@@ -18,17 +18,20 @@ function sendError(res, code, message, upstream) {
   res.status(code).json({ error: `[BIN] ${code}`, message, ...(upstream ? { upstream } : {}) });
 }
 
+// Query LotOrSerialNo (1100) by bin name using PropertyName filters
 function buildListBody(bin) {
   return {
-    Type: 1141,               // Bin Transactions
+    Type: 1100, // LotOrSerialNo
     hasFilters: true,
-    Filters: [{ FieldName: 'BinRef.Name', Operator: 0, Value: bin }],
+    // Use PropertyName / Operator / FilterValueArray — consistent with the rest of your OT calls
+    Filters: [
+      { PropertyName: 'LocationBinRef.Name', Operator: 1, FilterValueArray: [bin] } // 1 = Equals
+    ],
     PageNumber: 1,
-    NumberOfRecords: 500,
-    mode: AUTH_MODE,
-    hasApiKey: AUTH_MODE === 'APIKEY',
+    NumberOfRecords: 500
   };
 }
+
 
 async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -83,9 +86,20 @@ async function handler(req, res) {
     let data = null; try { data = text ? JSON.parse(text) : null; } catch {}
 
     if (!resp.ok) {
-      console.error('[BIN] OT /list failed', resp.status, data || text);
-      return sendError(res, 400, `OT /list failed (${resp.status})`, data || { raw: text });
-    }
+  console.error('[BIN] OT /list failed', resp.status, data || text);
+  return sendError(res, 400, `OT /list failed (${resp.status})`, data || { raw: text });
+}
+
+// Normalize to the front-end shape: { records: [{ location, sku, description, systemImei }...] }
+const rows = Array.isArray(data) ? data : [];
+const records = rows.map(r => ({
+  location:    r?.LocationBinRef?.Name || r?.LocationRef?.Name || '',
+  sku:         r?.ItemRef?.Code || r?.ItemCode || '',
+  description: r?.ItemRef?.Name || r?.ItemName || '',
+  systemImei:  String(r?.LotOrSerialNo || r?.SerialNo || r?.Imei || '')
+}));
+return res.status(200).json({ records });
+
 
     return res.status(200).json(data || []);
   } catch (err) {
