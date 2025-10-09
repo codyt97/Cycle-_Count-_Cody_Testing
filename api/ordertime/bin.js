@@ -56,22 +56,13 @@ async function handler(req, res) {
   const headers = new Headers();
   headers.set('Content-Type', 'application/json');
 
-  if (AUTH_MODE === 'PASSWORD') {
-    // STRICT: do not send any apiKey-style header in PASSWORD mode
-    headers.set('company', OT_COMPANY);
-    headers.set('email', OT_USER);
-    headers.set('password', OT_PASS);
-
-    // Belt & suspenders: in case any middleware tried to add them
-    headers.delete('apiKey');
-    headers.delete('apikey');
-    headers.delete('x-api-key');
-    headers.delete('x-apikey');
-  } else {
-  // APIKEY mode: apiKey is required; some tenants ALSO require company
-  headers.set('apiKey', OT_API_KEY);
-  if (OT_COMPANY) headers.set('company', OT_COMPANY);
+  // Keep headers minimal; OT auth will go into the JSON body for /list
+if (AUTH_MODE === 'PASSWORD') {
+  // No auth headers; put Company/Username/Password in body below
+} else {
+  // No auth headers; put ApiKey (and optional Company) in body below
 }
+
 
 
   // Debug: log only header names (no secrets)
@@ -79,11 +70,24 @@ async function handler(req, res) {
     console.log('[BIN] AUTH_MODE:', AUTH_MODE, 'headers:', Array.from(headers.keys()));
   } catch (_) {}
 
-  const url  = otUrl('/api/list');
-  const body = JSON.stringify(buildListBody(bin));
+  const url = otUrl('/api/list');
+const payload = buildListBody(bin);
 
-  try {
-    const resp = await fetch(url, { method: 'POST', headers, body });
+// >>> AUTH GOES IN BODY <<<
+if (AUTH_MODE === 'PASSWORD') {
+  payload.Company  = OT_COMPANY;
+  payload.Username = OT_USER;
+  payload.Password = OT_PASS;
+} else {
+  payload.ApiKey = OT_API_KEY;
+  if (OT_COMPANY) payload.Company = OT_COMPANY; // some tenants require it even with ApiKey
+}
+
+const body = JSON.stringify(payload);
+
+try {
+  const resp = await fetch(url, { method: 'POST', headers, body });
+
     const text = await resp.text();
     let data = null; try { data = text ? JSON.parse(text) : null; } catch {}
 
