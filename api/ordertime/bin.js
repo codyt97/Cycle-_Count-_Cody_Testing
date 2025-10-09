@@ -68,9 +68,11 @@ async function handler(req, res) {
     headers.delete('x-api-key');
     headers.delete('x-apikey');
   } else {
-    // APIKEY mode: only apiKey
-    headers.set('apiKey', OT_API_KEY);
-  }
+  // APIKEY mode: apiKey is required; some tenants ALSO require company
+  headers.set('apiKey', OT_API_KEY);
+  if (OT_COMPANY) headers.set('company', OT_COMPANY);
+}
+
 
   // Debug: log only header names (no secrets)
   try {
