@@ -1,73 +1,35 @@
-// NEXT.JS PAGES API ROUTE (CommonJS)
-// Path: /pages/api/ordertime/bin.js
-
+// /pages/api/ordertime/bin.js  (Next.js Pages API, CommonJS, Node runtime)
 /* eslint-disable no-console */
 
-const BASE_URL = process.env.OT_BASE_URL || 'https://services.ordertime.com';
-const AUTH_MODE = (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase(); // 'PASSWORD' | 'APIKEY'
-const OT_USERNAME = process.env.OT_USERNAME || '';
-const OT_PASSWORD = process.env.OT_PASSWORD || '';
-const OT_COMPANY  = process.env.OT_COMPANY  || '';
-const OT_API_KEY  = process.env.OT_API_KEY  || ''; // only used if AUTH_MODE === 'APIKEY'
+const BASE_URL   = process.env.OT_BASE_URL || 'https://services.ordertime.com';
+const AUTH_MODE  = (process.env.OT_AUTH_MODE || 'PASSWORD').toUpperCase(); // 'PASSWORD' | 'APIKEY'
+const OT_USER    = process.env.OT_USERNAME || '';
+const OT_PASS    = process.env.OT_PASSWORD || '';
+const OT_COMPANY = process.env.OT_COMPANY  || '';
+const OT_API_KEY = process.env.OT_API_KEY  || '';
 
-// ---- Helper: normalize base URL
+// Build absolute URL
 function otUrl(path) {
   const base = BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL;
   return `${base}${path}`;
 }
 
-// ---- Helper: standard error reply
 function sendError(res, code, message, upstream) {
-  res.status(code).json({
-    error: `[BIN] ${code}`,
-    message,
-    ...(upstream ? { upstream } : {})
-  });
+  res.status(code).json({ error: `[BIN] ${code}`, message, ...(upstream ? { upstream } : {}) });
 }
 
-// ---- Build auth headers for OrderTime
-function buildAuthHeaders() {
-  const headers = { 'Content-Type': 'application/json' };
-
-  if (AUTH_MODE === 'PASSWORD') {
-    // IMPORTANT: do NOT include apiKey in PASSWORD mode
-    headers.company  = OT_COMPANY;
-    headers.email    = OT_USERNAME;
-    headers.password = OT_PASSWORD;
-  } else if (AUTH_MODE === 'APIKEY') {
-    // IMPORTANT: ONLY include apiKey in APIKEY mode
-    headers.apiKey = OT_API_KEY;
-  } else {
-    throw new Error(`Unsupported OT_AUTH_MODE: ${AUTH_MODE}`);
-  }
-
-  return headers;
-}
-
-// ---- Build /api/list body to query Bin transactions (Type 1141)
-function buildListBody(binName) {
-  // Filter by BinRef.Name equals <binName>
-  const filters = [
-    {
-      FieldName: 'BinRef.Name',
-      Operator: 0,          // 0 = equals
-      Value: binName
-    }
-  ];
-
+function buildListBody(bin) {
   return {
-    Type: 1141,            // Bin Transactions
+    Type: 1141,               // Bin Transactions
     hasFilters: true,
-    Filters: filters,
+    Filters: [{ FieldName: 'BinRef.Name', Operator: 0, Value: bin }],
     PageNumber: 1,
     NumberOfRecords: 500,
     mode: AUTH_MODE,
-    // Let the server infer based on headers; set explicitly to guide it
-    hasApiKey: AUTH_MODE === 'APIKEY'
+    hasApiKey: AUTH_MODE === 'APIKEY',
   };
 }
 
-// ---- Main handler
 async function handler(req, res) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
@@ -75,56 +37,59 @@ async function handler(req, res) {
   }
 
   const bin = String(req.query.bin || '').trim();
-  if (!bin) {
-    return sendError(res, 400, 'Missing bin name (?bin=...)');
-  }
+  if (!bin) return sendError(res, 400, 'Missing bin name (?bin=...)');
 
-  // Basic safety checks to avoid 500s due to missing envs
-  try {
-    if (AUTH_MODE === 'PASSWORD') {
-      if (!OT_USERNAME || !OT_PASSWORD || !OT_COMPANY) {
-        return sendError(res, 500, 'Missing email/password/company for PASSWORD mode');
-      }
-    } else if (AUTH_MODE === 'APIKEY') {
-      if (!OT_API_KEY) {
-        return sendError(res, 500, 'Missing OT_API_KEY for APIKEY mode');
-      }
+  if (AUTH_MODE === 'PASSWORD') {
+    if (!OT_USER || !OT_PASS || !OT_COMPANY) {
+      return sendError(res, 500, 'Missing email/password/company for PASSWORD mode');
     }
-  } catch (e) {
-    return sendError(res, 500, e.message);
+  } else if (AUTH_MODE === 'APIKEY') {
+    if (!OT_API_KEY) return sendError(res, 500, 'Missing OT_API_KEY for APIKEY mode');
+  } else {
+    return sendError(res, 500, `Unsupported OT_AUTH_MODE: ${AUTH_MODE}`);
   }
 
-  const url = otUrl('/api/list');
-  const headers = buildAuthHeaders();
-  const body = buildListBody(bin);
+  // Build a *clean* header set so nothing global can sneak in
+  const headers = new Headers();
+  headers.set('Content-Type', 'application/json');
+
+  if (AUTH_MODE === 'PASSWORD') {
+    // STRICT: do not send any apiKey-style header in PASSWORD mode
+    headers.set('company', OT_COMPANY);
+    headers.set('email', OT_USER);
+    headers.set('password', OT_PASS);
+
+    // Belt & suspenders: in case any middleware tried to add them
+    headers.delete('apiKey');
+    headers.delete('apikey');
+    headers.delete('x-api-key');
+    headers.delete('x-apikey');
+  } else {
+    // APIKEY mode: only apiKey
+    headers.set('apiKey', OT_API_KEY);
+  }
+
+  // Debug: log only header names (no secrets)
+  try {
+    console.log('[BIN] AUTH_MODE:', AUTH_MODE, 'headers:', Array.from(headers.keys()));
+  } catch (_) {}
+
+  const url  = otUrl('/api/list');
+  const body = JSON.stringify(buildListBody(bin));
 
   try {
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
-
+    const resp = await fetch(url, { method: 'POST', headers, body });
     const text = await resp.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch { /* keep raw text */ }
+    let data = null; try { data = text ? JSON.parse(text) : null; } catch {}
 
     if (!resp.ok) {
-      // Bubble up OrderTime's message so you see the real cause
-      const upstream = data || { raw: text };
-      console.error('[BIN] OT /list failed', resp.status, upstream);
-      return sendError(
-        res,
-        400,
-        `OT /list failed (${resp.status})`,
-        upstream
-      );
+      console.error('[BIN] OT /list failed', resp.status, data || text);
+      return sendError(res, 400, `OT /list failed (${resp.status})`, data || { raw: text });
     }
 
-    // Success — should be an array of transactions
     return res.status(200).json(data || []);
   } catch (err) {
-    console.error('[BIN] error', err);
+    console.error('[BIN] fatal', err);
     return sendError(res, 500, err.message);
   }
 }
