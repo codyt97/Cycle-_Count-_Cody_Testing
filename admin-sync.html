@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Drive Sync</title>
+<style>body{font-family:system-ui;padding:24px;max-width:520px;margin:auto}</style></head>
+<body>
+  <h1>Sync Inventory from Drive</h1>
+  <label>Sync Token<br><input id="t" type="password" style="width:100%"></label><br><br>
+  <button id="b">Run Sync</button>
+  <pre id="out"></pre>
+<script>
+document.getElementById('b').onclick = async ()=>{
+  const t = document.getElementById('t').value.trim();
+  const res = await fetch('/api/inventory/drive-sync', { method:'POST', headers: { 'X-Sync-Token': t }});
+  document.getElementById('out').textContent = await res.text();
+};
+</script>
+</body></html>
