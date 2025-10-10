@@ -72,7 +72,7 @@ module.exports = {
     }
     await setArray("cc:bins", bins);
   },
-  async escalateBin(bin, actor) {
+    async escalateBin(bin, actor) {
     const bins = await getArray("cc:bins");
     const idx = bins.findIndex(b => (b.bin || "").toLowerCase() === (bin || "").toLowerCase());
     if (idx === -1) return null;
@@ -86,4 +86,31 @@ module.exports = {
     await setArray("cc:bins", bins);
     return bins[idx];
   },
+
+  // === Inventory (Drive-sync snapshot) ===
+  async getInventory() {
+    const inv = await getArray("cc:inventory");
+    return Array.isArray(inv) ? inv : [];
+  },
+  async setInventory(rows) {
+    if (!Array.isArray(rows)) throw new Error("inventory must be array");
+    await setArray("cc:inventory", rows);
+  },
+  async getInventoryMeta() {
+    if (hasKV) {
+      const meta = await kv.get("cc:inventory:meta");
+      return meta && typeof meta === "object" ? meta : {};
+    }
+    return mem["cc:inventory:meta"] || {};
+  },
+  async setInventoryMeta(meta) {
+    const payload = { ...(meta || {}), updatedAt: nowISO() };
+    if (hasKV) {
+      await kv.set("cc:inventory:meta", payload);
+    } else {
+      mem["cc:inventory:meta"] = payload;
+    }
+    return payload;
+  },
 };
+
