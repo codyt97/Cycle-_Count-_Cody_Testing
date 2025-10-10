@@ -14,7 +14,7 @@ module.exports = async (req, res) => {
   const match = bin.toLowerCase();
 
   const records = all
-    .filter(r => (r.location || "").toLowerCase() === match)
+    .filter(r => ((r.location || "").trim().toLowerCase() === match))
     .map(r => ({
       location: r.location || "",
       sku: r.sku || "",
