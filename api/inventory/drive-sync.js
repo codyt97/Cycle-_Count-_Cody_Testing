@@ -31,12 +31,14 @@ function normalizeSheet(workbook) {
       return "";
     };
     return {
-      location:    pick("bin","location","locationbin","locationbinref.name").trim(),
-      sku:         pick("sku","item","itemcode","itemref.code","item ").trim(), // optional extra alias
-      description: pick("description","itemname","itemref.name","desc").trim(),
-      systemImei:  pick("systemimei","imei","serial","lotorserialno","serialno").trim(),
+  // Use the “Bin” column as our searchable location
+  location:    pick("bin","location","locationbin","locationbinref.name").trim(),
+  // Be tolerant of header quirks (some exports add a space)
+  sku:         pick("sku","item","item ","itemcode","itemref.code").trim(),
+  description: pick("description","itemname","itemref.name","desc").trim(),
+  systemImei:  pick("systemimei","imei","serial","lotorserialno","serialno").trim(),
+};
 
-    };
   }).filter(x => x.location || x.sku || x.systemImei);
   return rows;
 }
