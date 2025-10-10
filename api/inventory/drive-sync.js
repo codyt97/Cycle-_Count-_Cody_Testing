@@ -31,10 +31,11 @@ function normalizeSheet(workbook) {
       return "";
     };
     return {
-      location:    pick("location","bin","locationbin","locationbinref.name"),
-      sku:         pick("sku","item","itemcode","itemref.code"),
-      description: pick("description","itemname","itemref.name","desc"),
-      systemImei:  pick("systemimei","imei","serial","lotorserialno","serialno"),
+      location:    pick("bin","location","locationbin","locationbinref.name").trim(),
+      sku:         pick("sku","item","itemcode","itemref.code","item ").trim(), // optional extra alias
+      description: pick("description","itemname","itemref.name","desc").trim(),
+      systemImei:  pick("systemimei","imei","serial","lotorserialno","serialno").trim(),
+
     };
   }).filter(x => x.location || x.sku || x.systemImei);
   return rows;
