@@ -111,4 +111,41 @@ const payload = {
   state: missingTotal ? "investigation" : "complete",
   submittedAt: new Date().toISOString(),
 };
+// --- NEW: persist wrong-bin audits on submit (per-user)
+const wrongBin = Array.isArray(body.wrongBin) ? body.wrongBin : [];
+if (wrongBin.length) {
+  const k = `wrong_bin_audits:${user}`;
+  const existing = (await Store.get?.(k)) || (await Store.read?.(k)) || [];
+  const byOpenImei = new Map(existing.filter(x => x.status === "open").map(x => [String(x.imei||"").trim(), x]));
+  for (const wb of wrongBin) {
+    const imei = String(wb.imei||"").trim();
+    if (!imei) continue;
+    if (byOpenImei.has(imei)) {
+      // merge minimal updates
+      const row = byOpenImei.get(imei);
+      row.scannedBin   ||= String(wb.scannedBin||"").trim();
+      row.trueLocation ||= String(wb.trueLocation||"").trim();
+      row.scannedBy    ||= String(wb.scannedBy||"").trim();
+      row.updatedAt = new Date().toISOString();
+    } else {
+      existing.unshift({
+        id: (typeof crypto!=="undefined" && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now())+Math.random().toString(16).slice(2),
+        user,
+        imei,
+        scannedBin:   String(wb.scannedBin||"").trim(),
+        trueLocation: String(wb.trueLocation||"").trim(),
+        scannedBy:    String(wb.scannedBy||counter||"—").trim(),
+        status: "open",
+        movedTo: "",
+        movedBy: "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+  }
+  if (Store.set)  await Store.set(k, existing);
+  else if (Store.write) await Store.write(k, existing);
+}
+
+    
 
