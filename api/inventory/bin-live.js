@@ -15,6 +15,20 @@ function drive() {
   return google.drive({ version: "v3", auth });
 }
 
+function pick(row, ...keys) {
+  for (const k of keys) {
+    const hit = Object.keys(row).find(x => x.toLowerCase().trim() === k.toLowerCase());
+    if (hit) return String(row[hit] ?? "").trim();
+  }
+  return "";
+}
+function pickNum(row, ...keys) {
+  const v = pick(row, ...keys);
+  if (v === "") return undefined;
+  const n = Number(String(v).replace(/,/g,""));
+  return Number.isFinite(n) ? n : undefined;
+}
+
 async function loadRowsFromSheet(fileId) {
   if (Date.now() - cache.at < TTL_MS && cache.rows.length) return cache.rows;
   const d = drive();
@@ -32,20 +46,19 @@ async function loadRowsFromSheet(fileId) {
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const json = XLSX.utils.sheet_to_json(sheet, { defval: "" });
 
-  const pick = (row, ...keys) => {
-    for (const k of keys) {
-      const hit = Object.keys(row).find(x => x.toLowerCase().trim() === k.toLowerCase());
-      if (hit) return String(row[hit] ?? "").trim();
-    }
-    return "";
-  };
-
-  const rows = json.map(r => ({
-    location:    pick(r, "bin","location","locationbin","locationbinref.name"),
-    sku:         pick(r, "sku","item","item ","itemcode","itemref.code"),
-    description: pick(r, "description","itemname","itemref.name","desc"),
-    systemImei:  pick(r, "systemimei","imei","serial","lotorserialno","serialno"),
-  })).filter(x => x.location || x.sku || x.systemImei);
+  const rows = json.map(r => {
+    const systemImei = pick(r, "systemimei","imei","serial","lotorserialno","serialno");
+    const hasSerial = !!systemImei;
+    const qtyFromSheet = pickNum(r, "systemqty","qty","quantity","onhand","on hand","on_hand");
+    return {
+      location:    pick(r, "bin","location","locationbin","locationbinref.name"),
+      sku:         pick(r, "sku","item","item ","itemcode","itemref.code"),
+      description: pick(r, "description","itemname","itemref.name","desc"),
+      systemImei,
+      hasSerial,
+      systemQty: hasSerial ? 1 : (qtyFromSheet ?? 0),
+    };
+  }).filter(x => x.location || x.sku || x.systemImei);
 
   cache = { at: Date.now(), rows };
   return rows;
@@ -66,7 +79,14 @@ module.exports = async (req, res) => {
     const rows = await loadRowsFromSheet(fileId);
     const records = rows
       .filter(r => (r.location || "").trim().toLowerCase() === match)
-      .map(r => ({ location: r.location, sku: r.sku, description: r.description, systemImei: r.systemImei }));
+      .map(r => ({
+        location: r.location,
+        sku: r.sku,
+        description: r.description,
+        systemImei: r.systemImei,
+        hasSerial: r.hasSerial,
+        systemQty: r.systemQty
+      }));
     return ok(res, { records, meta: { totalRows: rows.length, cachedMs: Math.max(0, TTL_MS - (Date.now() - cache.at)) }});
   } catch (e) {
     return bad(res, "Live sheet fetch failed: " + (e?.message || String(e)), 500);
