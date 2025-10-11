@@ -37,7 +37,16 @@ function normalizeWorkbook(wb) {
   return json.map(r => {
     const systemImei = pick(r, "systemimei","imei","serial","lotorserialno","serialno");
     const hasSerial = !!systemImei;
-    const qtyFromSheet = pickNum(r, "systemqty","qty","quantity","onhand","on hand","on_hand");
+    const qtyFromSheet = pickNum(
+  r,
+  // common forms
+  "systemqty","system qty","qty","quantity",
+  // on-hand variants
+  "onhand","on hand","on_hand","qtyonhand","qty on hand","qoh","soh","oh qty","ohqty",
+  // stock/available variants
+  "stock","inventory","available qty","availableqty","avail qty","availqty"
+);
+
 
     return {
       location:    pick(r, "bin","location","locationbin","locationbinref.name"),
