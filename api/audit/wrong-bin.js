@@ -34,5 +34,17 @@ module.exports = async (req, res) => {
     }
   }
 
-  return method(res, ["GET","POST","PATCH","OPTIONS"]);
+  if (req.method === "DELETE") {
+    try {
+      const id = String((req.query?.id || req.body?.id || "")).trim();
+      if (!id) return bad(res, "id required", 400);
+      const okDel = await Store.deleteAudit(id);
+      if (!okDel) return bad(res, "not found", 404);
+      return ok(res, { ok: true, deleted: id });
+    } catch (e) {
+      return bad(res, "delete failed: " + (e?.message || String(e)), 400);
+    }
+  }
+
+  return method(res, ["GET","POST","PATCH","DELETE","OPTIONS"]);
 };
