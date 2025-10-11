@@ -97,22 +97,18 @@ const missingImeis = [...expectedSerialSet]
 
     const missingTotal = Math.max(totalExpected - scannedTotal, 0);
 
-    const payload = {
-      bin,
-      counter,
-      total: totalExpected,
-      scanned: scannedTotal,
-      missing: missingTotal,
-      items: scannedItems,          // keep whatever the UI sends (including qtyEntered for non-serial rows)
-      missingImeis,                 // serial shortages detail
-      nonSerialShortages,           // non-serial shortages detail
-      state: missingTotal ? "investigation" : "complete",
-      submittedAt: new Date().toISOString(),
-    };
-
-    const saved = await Store.upsertBin(payload);
-    return ok(res, { ok: true, saved });
-  } catch (e) {
-    return bad(res, "Submit failed: " + (e?.message || String(e)), 500);
-  }
+    const user = String(body.user || req.query?.user || req.headers["x-user"] || "anon").toLowerCase();
+const payload = {
+  user,                   // <-- tag the record with the user
+  bin,
+  counter,
+  total: totalExpected,
+  scanned: scannedTotal,
+  missing: missingTotal,
+  items: scannedItems,
+  missingImeis,
+  nonSerialShortages,
+  state: missingTotal ? "investigation" : "complete",
+  submittedAt: new Date().toISOString(),
 };
+
