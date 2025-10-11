@@ -462,9 +462,13 @@
 
     // --- State (Page 1) -------------------------------------------
     let currentBin = "";
-    /** @type {{location:string, sku:string, description:string, systemImei:string, scannedImei?:string}[]} */
-    let rows = [];
-    const scanned = new Set();
+/** @type {{location:string, sku:string, description:string, systemImei:string, scannedImei?:string}[]} */
+let rows = [];
+const scanned = new Set();
+
+// buffer wrong-bin audits until Submit
+const pendingWrongBin = [];
+
 
     // --- DOM refs --------------------------------------------------
     const authOverlay = document.getElementById("authOverlay");
