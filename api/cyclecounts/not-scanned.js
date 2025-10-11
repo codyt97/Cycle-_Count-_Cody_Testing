@@ -11,10 +11,12 @@ module.exports = async (req, res) => {
   // DELETE -> remove a specific not-scanned entry from a bin
   // --------------------------
   if (req.method === "GET") {
-  const user = String(req.query?.user || "").toLowerCase();
-  const binsAll = await Store.listBins();
-  const bins = user ? binsAll.filter(b => String(b.user||"").toLowerCase() === user) : binsAll;
-  const records = [];
+    const wantUser = String(req.query?.user || "").toLowerCase();
+    const binsAll = await Store.listBins();
+    // Investigator default: show ALL bins unless explicitly filtered
+    const bins = wantUser ? binsAll.filter(b => String(b.user||"").toLowerCase() === wantUser) : binsAll;
+    const records = [];
+
 
 
     for (const b of bins) {
