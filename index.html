@@ -573,7 +573,7 @@ const pendingWrongBin = [];
     const renderTable = () => {
       if (!rows.length){ resultsCard.style.display="none"; emptyCard.style.display="block"; setKPIs(); submitBinBtn.disabled = true; return; }
       resultsCard.style.display="block"; emptyCard.style.display="none";
-      submitBinBtn.disabled = !/^(counter|investigator|supervisor)$/i.test(currentUser?.role || "");
+      submitBinBtn.disabled = (currentUser?.role !== ROLES.COUNTER);
       tbody.innerHTML = rows.map((r, i) => {
   const matched = !!(r.systemImei && r.scannedImei && String(r.scannedImei).trim() === String(r.systemImei).trim());
   const sysQty = Number(String(r.systemQty).replace(/,/g,"").trim()) || (r.systemImei ? 1 : 0);
@@ -961,30 +961,47 @@ async function escalateBinToSupervisor(bin){
       page3.style.display = (id==="page3" && canSee3) ? "" : "none";
     }
 
-    // --- Events: Auth ---------------------------------------------
-    loginForm.addEventListener("submit", (e)=>{
-      e.preventDefault();
-      const u = (loginUser.value||"").trim().toLowerCase();
-      const p = (loginPass.value||"").trim();
-      const found = USERS[u];
-      if (!found || found.password !== p){
-        loginMsg.textContent = "Invalid username or password.";
-        return;
-      }
-      currentUser = { username:u, ...found };
-      localStorage.setItem("cc_user", JSON.stringify(currentUser));
-      authOverlay.style.display = "none";
-      applyRoleUI();
-      binInput?.focus();
-    });
+loginForm.addEventListener("submit", (e)=>{
+  e.preventDefault();
+  const u = (loginUser.value||"").trim().toLowerCase();
+  const p = (loginPass.value||"").trim();
+  const found = USERS[u];
+  if (!found || found.password !== p){
+    loginMsg.textContent = "Invalid username or password.";
+    return;
+  }
+  currentUser = { username:u, ...found };
+  localStorage.setItem("cc_user", JSON.stringify(currentUser));
 
-    logoutBtn.addEventListener("click", ()=>{
-      localStorage.removeItem("cc_user");
-      currentUser = null;
-      authOverlay.style.display = "";
-      miniTabs.style.display = "none";
-      [page1,page2,page3].forEach(p => p.style.display = "none");
-    });
+  // ✨ reset any previous session state
+  currentBin = "";
+  rows = [];
+  scanned.clear();
+  renderTable();
+  showAlerts(alerts,[]);
+
+  authOverlay.style.display = "none";
+  applyRoleUI();
+  binInput?.focus();
+});
+
+
+logoutBtn.addEventListener("click", ()=>{
+  localStorage.removeItem("cc_user");
+  currentUser = null;
+
+  // ✨ clear in-memory scan data
+  currentBin = "";
+  rows = [];
+  scanned.clear();
+  renderTable();
+  showAlerts(alerts,[]);
+
+  authOverlay.style.display = "";
+  miniTabs.style.display = "none";
+  [page1,page2,page3].forEach(p => p.style.display = "none");
+});
+
 
     tab1.addEventListener("click", ()=> selectTab("page1"));
     tab2.addEventListener("click", ()=> { if (!tab2.disabled) { selectTab("page2"); refreshInvestigator(); }});
