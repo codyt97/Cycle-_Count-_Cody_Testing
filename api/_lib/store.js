@@ -1,116 +1,54 @@
 // api/_lib/store.js
-const { randomUUID } = require("crypto");
+const Redis = require("ioredis");
 
-let hasKV = false;
-let kv = null;
-try {
-  const mod = require("@vercel/kv"); // optional
-  kv = mod.kv || mod.default || null;
-  hasKV = !!kv && !!process.env.KV_REST_API_URL && !!process.env.KV_REST_API_TOKEN;
-} catch { /* no kv */ }
+const KEY_DATA = "inventory:data";
+const KEY_META = "inventory:meta";
 
-// In-memory (dev fallback – NOT persistent in production)
-const mem = {
-  "cc:audits": [], // wrong-bin items
-  "cc:bins": [],   // submitted bins & states
-};
-
-async function getArray(key) {
-  if (hasKV) {
-    const val = await kv.get(key);
-    return Array.isArray(val) ? val : [];
-  }
-  return Array.isArray(mem[key]) ? mem[key] : [];
+// Wire Redis from REDIS_URL; fallback to in-memory (per-instance)
+let redis = null;
+if (process.env.REDIS_URL) {
+  redis = new Redis(process.env.REDIS_URL, {
+    lazyConnect: true,
+    maxRetriesPerRequest: 3,
+    enableAutoPipelining: true,
+  });
+  redis.on("error", (e) => console.error("[redis] error:", e?.message || e));
 }
 
-async function setArray(key, arr) {
-  if (hasKV) {
-    // Upstash KV can store JSON directly
-    await kv.set(key, arr);
-  } else {
-    mem[key] = arr;
+// In-memory fallback (not shared across instances)
+let mem = { data: [], meta: null };
+
+async function readJSON(key, fallback) {
+  if (redis) {
+    try {
+      const v = await redis.get(key);
+      return v ? JSON.parse(v) : fallback;
+    } catch (e) {
+      console.error("[redis] get fail", key, e?.message || e);
+    }
   }
+  return mem[key === KEY_DATA ? "data" : "meta"] ?? fallback;
 }
 
-function nowISO() {
-  return new Date().toISOString();
+async function writeJSON(key, value) {
+  if (redis) {
+    try {
+      await redis.set(key, JSON.stringify(value));
+      return;
+    } catch (e) {
+      console.error("[redis] set fail", key, e?.message || e);
+    }
+  }
+  if (key === KEY_DATA) mem.data = value; else mem.meta = value;
 }
 
 module.exports = {
-  randomUUID,
-  nowISO,
-  async listAudits() {
-    return getArray("cc:audits");
-  },
-  async appendAudit(audit) {
-    const list = await getArray("cc:audits");
-    const rec = { id: randomUUID(), createdAt: nowISO(), status: "open", ...audit };
-    list.unshift(rec);
-    await setArray("cc:audits", list);
-    return rec;
-  },
-  async patchAudit(id, patch) {
-    const list = await getArray("cc:audits");
-    const idx = list.findIndex(x => x.id === id);
-    if (idx === -1) return null;
-    list[idx] = { ...list[idx], ...patch, updatedAt: nowISO() };
-    await setArray("cc:audits", list);
-    return list[idx];
-  },
-
-  async listBins() {
-    return getArray("cc:bins");
-  },
-  async upsertBin(binPayload) {
-    const bins = await getArray("cc:bins");
-    const idx = bins.findIndex(b => (b.bin || "").toLowerCase() === (binPayload.bin || "").toLowerCase());
-    if (idx === -1) {
-      const rec = { id: randomUUID(), createdAt: nowISO(), state: "investigation", ...binPayload };
-      bins.unshift(rec);
-    } else {
-      bins[idx] = { ...bins[idx], ...binPayload, updatedAt: nowISO() };
-    }
-    await setArray("cc:bins", bins);
-  },
-    async escalateBin(bin, actor) {
-    const bins = await getArray("cc:bins");
-    const idx = bins.findIndex(b => (b.bin || "").toLowerCase() === (bin || "").toLowerCase());
-    if (idx === -1) return null;
-    bins[idx] = {
-      ...bins[idx],
-      state: "supervisor",
-      escalatedBy: actor || "—",
-      escalatedAt: nowISO(),
-      updatedAt: nowISO(),
-    };
-    await setArray("cc:bins", bins);
-    return bins[idx];
-  },
-
-  // === Inventory (Drive-sync snapshot) ===
-  async getInventory() {
-    const inv = await getArray("cc:inventory");
-    return Array.isArray(inv) ? inv : [];
-  },
+  async getInventory() { return readJSON(KEY_DATA, []); },
   async setInventory(rows) {
-    if (!Array.isArray(rows)) throw new Error("inventory must be array");
-    await setArray("cc:inventory", rows);
+    if (!Array.isArray(rows)) rows = [];
+    await writeJSON(KEY_DATA, rows);
+    return rows.length;
   },
-  async getInventoryMeta() {
-    if (hasKV) {
-      const meta = await kv.get("cc:inventory:meta");
-      return meta && typeof meta === "object" ? meta : {};
-    }
-    return mem["cc:inventory:meta"] || {};
-  },
-  async setInventoryMeta(meta) {
-    const payload = { ...(meta || {}), updatedAt: nowISO() };
-    if (hasKV) {
-      await kv.set("cc:inventory:meta", payload);
-    } else {
-      mem["cc:inventory:meta"] = payload;
-    }
-    return payload;
-  },
+  async getInventoryMeta() { return readJSON(KEY_META, null); },
+  async setInventoryMeta(meta) { await writeJSON(KEY_META, meta); return meta; },
 };
-
