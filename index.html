@@ -307,11 +307,13 @@
     <thead>
       <tr>
         <th>Type</th>
-        <th>SKU</th>
-        <th>Description</th>
-        <th>System IMEI</th>
-        <th>System Qty</th>
-        <th>Qty Entered</th>
+<th>SKU</th>
+<th>Description</th>
+<th>System IMEI</th>
+<th>System Qty</th>
+<th>Qty Entered</th>
+<th></th>
+
       </tr>
     </thead>
     <tbody id="invNotScannedBody">
@@ -853,7 +855,10 @@ const payload = {
     ...(r.hasSerial ? {} : { qtyEntered: Number(r.qtyEntered || 0), systemQty: Number(r.systemQty || 0) })
   })),
   missingImeis: missingList,
+  // NEW: all wrong-bin audits buffered during this session
+  wrongBin: pendingWrongBin.slice()
 };
+
 
       try{
         if (!CONFIG.FORCE_MOCK){
@@ -865,7 +870,9 @@ const payload = {
 
           if (!res.ok) throw new Error(await res.text());
         }
-        showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
+        pendingWrongBin.length = 0;
+showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
+
       }catch(e){
         showAlerts(alerts,[{type:"warn",msg:`Submit failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
       }
@@ -1020,11 +1027,10 @@ renderTable(); scanInput.value=""; return;
       }
 
       // Not in current bin -> ask inventory API for true location (it also auto-logs audit)
+// Not in current bin -> ask inventory API for true location (no server audit yet; we buffer)
 const info = await locateImei(imei);
 if (info && info.location){
-  // Always log; backend can de-dup by (user, IMEI, status:'open')
-  await logWrongBin({
-    user: userId(),
+  pendingWrongBin.push({
     imei,
     scannedBin: currentBin || "",
     trueLocation: info.location,
@@ -1032,14 +1038,13 @@ if (info && info.location){
     scannedBy: currentUser?.name || "—",
     ts: new Date().toISOString()
   });
-  const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>.`;
-
+  const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>. (Will be logged on Submit)`;
   showAlerts(alerts,[{type:"warn",msg}]);
 } else {
-
   showAlerts(alerts,[{type:"warn",msg:`IMEI <b>${escapeHTML(imei)}</b> not found in snapshot.`}]);
 }
 scanInput.value="";
+
 
     });
 
