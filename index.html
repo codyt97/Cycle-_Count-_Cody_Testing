@@ -604,6 +604,30 @@ tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
 setKPIs();
 
     };
+
+function flashNote(msg, ms = 2500) {
+  let el = document.getElementById("dlToast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "dlToast";
+    el.style.position = "fixed";
+    el.style.left = "16px";
+    el.style.bottom = "16px";
+    el.style.zIndex = "1000";
+    el.style.background = "#134e4a";
+    el.style.color = "white";
+    el.style.padding = "10px 14px";
+    el.style.borderRadius = "10px";
+    el.style.border = "1px solid rgba(255,255,255,.15)";
+    el.style.boxShadow = "0 6px 18px rgba(0,0,0,.35)";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.opacity = "1";
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.opacity = "0"; }, ms);
+}
+
   // CSV field escaper
 const csvEscape = (v) => {
   const s = (v == null ? "" : String(v));
@@ -657,7 +681,7 @@ if (subset==="missing") {
       const a = document.createElement("a");
       const safeBin = (currentBin||"bin").replace(/[^A-Za-z0-9_-]+/g,"-");
       a.href=url; a.download=`connectus_${safeBin}_${ts()}_${subset}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-      showAlerts(alerts,[{type:"ok",msg:`Downloading <b>${escapeHTML(a.download)}</b>`}]);
+      flashNote(`Downloading ${escapeHTML(a.download)}`, 2500);
     };
 
     // --- Mock fallbacks (for demo) --------------------------------
