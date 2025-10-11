@@ -26,14 +26,28 @@ function normalizeWorkbook(wb) {
     }
     return "";
   };
+  const pickNum = (row, ...keys) => {
+    const v = pick(row, ...keys);
+    if (v === "") return undefined;
+    const n = Number(String(v).replace(/,/g,""));
+    return Number.isFinite(n) ? n : undefined;
+  };
 
-  return json.map(r => ({
-    // 👇 Use the Bin column as the searchable "location"
-    location:    pick(r, "bin","location","locationbin","locationbinref.name"),
-    sku:         pick(r, "sku","item","item ","itemcode","itemref.code"),
-    description: pick(r, "description","itemname","itemref.name","desc"),
-    systemImei:  pick(r, "systemimei","imei","serial","lotorserialno","serialno"),
-  })).filter(x => x.location || x.sku || x.systemImei);
+  // New: systemQty & hasSerial
+  return json.map(r => {
+    const systemImei = pick(r, "systemimei","imei","serial","lotorserialno","serialno");
+    const hasSerial = !!systemImei;
+    const qtyFromSheet = pickNum(r, "systemqty","qty","quantity","onhand","on hand","on_hand");
+
+    return {
+      location:    pick(r, "bin","location","locationbin","locationbinref.name"),
+      sku:         pick(r, "sku","item","item ","itemcode","itemref.code"),
+      description: pick(r, "description","itemname","itemref.name","desc"),
+      systemImei,
+      hasSerial,
+      systemQty: hasSerial ? 1 : (qtyFromSheet ?? 0),
+    };
+  }).filter(x => x.location || x.sku || x.systemImei);
 }
 
 async function fetchFromDrive(fileId) {
