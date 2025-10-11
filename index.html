@@ -301,7 +301,7 @@
                     <th></th>
                   </tr>
                 </thead>
-                <tbody id="investWrongBinBody"><tr><td colspan="7" class="empty">No wrong-bin items.</td></tr></tbody>
+                <tbody id="investWrongBinBody"><tr><td colspan="8" class="empty">No wrong-bin items.</td></tr></tbody>
               </table>
             </div>
             <h3 class="section-title">Not-Scanned Items</h3>
@@ -1083,6 +1083,29 @@ logoutBtn.addEventListener("click", ()=>{
 
     tab1.addEventListener("click", ()=> selectTab("page1"));
     tab2.addEventListener("click", ()=> { if (!tab2.disabled) { selectTab("page2"); refreshInvestigator(); }});
+    // Mark Wrong-IMEI rows as moved/not moved
+document.addEventListener("click", async (e)=>{
+  const y = e.target.closest("[data-move]");
+  const n = e.target.closest("[data-notmove]");
+  const id = y ? y.getAttribute("data-move")
+               : n ? n.getAttribute("data-notmove")
+                    : null;
+  if (!id) return;
+  try{
+    const payload = y ? { status:"moved", movedBy:(window.currentUser?.name || "—") }
+                      : { status:"open" };
+    await patchAudit(id, payload);
+    await refreshInvestigator();
+  }catch(err){
+    showAlerts(investAlerts,[{type:"warn",msg:`Update failed: <code>${escapeHTML(String(err?.message||err))}</code>`}]);
+  }
+});
+    // Hook the Refresh button on Investigator page
+document.getElementById("refreshInvestigations")?.addEventListener("click", ()=> {
+  refreshInvestigator();
+});
+
+
     tab3.addEventListener("click", ()=> { if (!tab3.disabled) { selectTab("page3"); refreshSupervisorViews(); }});
 
     // Restore session if exists
@@ -1315,9 +1338,16 @@ async function refreshInvestigator(){
             <td>${escapeHTML(it.scannedBin||"—")}</td>
             <td>${escapeHTML(it.trueLocation||"—")}</td>
             <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
-            <td class="mono">${escapeHTML(it.movedTo||"")}</td>
-            <td>${escapeHTML(it.movedBy||"")}</td>
-            <td></td>
+<td class="row-sm">
+  ${it.status==="moved"
+    ? "Yes"
+    : `<button class="btn primary sm" data-move="${escapeHTML(it.id)}">Yes</button>
+       <button class="btn ghost sm" data-notmove="${escapeHTML(it.id)}">No</button>`}
+</td>
+<td class="mono">${escapeHTML(it.movedTo||"")}</td>
+<td>${escapeHTML(it.movedBy||"")}</td>
+<td></td>
+
           </tr>
         `).join("");
 
@@ -1325,18 +1355,33 @@ async function refreshInvestigator(){
     const s = Array.isArray(shorts) ? shorts : [];
     const invNS = document.getElementById("invNotScannedBody");
     invNS.innerHTML = s.length
-      ? s.map(row => `
-          <tr>
-            <td>${escapeHTML(row.type || "serial")}</td>
-            <td class="mono">${escapeHTML(row.sku || "—")}</td>
-            <td>${escapeHTML(row.description || "—")}</td>
-            <td class="mono">${escapeHTML(row.systemImei || "")}</td>
-            <td>${Number(row.systemQty || (row.systemImei ? 1 : 0))}</td>
-            <td>${Number(row.qtyEntered || 0)}</td>
-            <td></td>
-          </tr>
-        `).join("")
-      : `<tr><td colspan="6" class="empty">No not-scanned items.</td></tr>`;
+  ? s.map(row => {
+      const isSerial = !!String(row.systemImei||"").trim();
+      const sys = Number(row.systemQty || (isSerial ? 1 : 0));
+      const ent = Number(row.qtyEntered || 0);
+      let cls = "";
+      if (!isSerial){
+        if (ent === sys) cls = "ok";      // green matched
+        else if (ent > sys) cls = "bad";  // red overcount
+        else cls = "warn";                // amber deficit
+      }
+      const invCell = isSerial
+        ? `<input class="field mono" placeholder="scan IMEI" data-invscan="${escapeHTML(row.systemImei)}" style="width:160px" />`
+        : ``;
+
+      return `
+        <tr class="${cls}">
+          <td>${escapeHTML(row.type || (isSerial ? "serial" : "nonserial"))}</td>
+          <td class="mono">${escapeHTML(row.sku || "—")}</td>
+          <td>${escapeHTML(row.description || "—")}</td>
+          <td class="mono">${escapeHTML(row.systemImei || "")}</td>
+          <td>${sys}</td>
+          <td>${ent}</td>
+          <td class="row-sm">${invCell}</td>
+        </tr>
+      `;
+    }).join("")
+  : `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`;
 
     showAlerts(investAlerts,[]);
   }catch(e){
