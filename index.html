@@ -543,7 +543,7 @@
     const renderTable = () => {
       if (!rows.length){ resultsCard.style.display="none"; emptyCard.style.display="block"; setKPIs(); submitBinBtn.disabled = true; return; }
       resultsCard.style.display="block"; emptyCard.style.display="none";
-      submitBinBtn.disabled = (currentUser?.role !== ROLES.COUNTER);
+      submitBinBtn.disabled = !/^(counter|investigator|supervisor)$/i.test(currentUser?.role || "");
       tbody.innerHTML = rows.map((r, i) => {
   const matched = !!(r.systemImei && r.scannedImei && String(r.scannedImei).trim() === String(r.systemImei).trim());
   const sysQty = Number(String(r.systemQty).replace(/,/g,"").trim()) || (r.systemImei ? 1 : 0);
@@ -581,16 +581,22 @@ tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
 setKPIs();
 
     };
+  // CSV field escaper
+const csvEscape = (v) => {
+  const s = (v == null ? "" : String(v));
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
 
-    const toCSV = (data) => {
+  const toCSV = (data) => {
   const header = ["Location","SKU","Description","System IMEI","Scanned IMEI","System Qty","Qty Entered"];
   const lines = [header.join(",")];
 
   for (const r of (Array.isArray(data) ? data : [])) {
     const sysQty = Number(String(r.systemQty).replace(/,/g,"").trim()) || (r.systemImei ? 1 : 0);
-    const qtyEnt = r.systemImeri // typo guard not needed if not present; keep correct line below
-      ? (String(r.scannedImei||"").trim() === String(r.systemImei||"").trim() ? 1 : 0)
-      : Math.max(0, Math.min(sysQty, Number(r.qtyEntered || 0)));
+    const qtyEnt = r.systemImei
+  ? (String(r.scannedImei||"").trim() === String(r.systemImei||"").trim() ? 1 : 0)
+  : Math.max(0, Math.min(sysQty, Number(r.qtyEntered || 0)));
+;
 
     lines.push(
       [r.location, r.sku || "", r.description || "", r.systemImei, r.scannedImei || "", String(sysQty), String(qtyEnt)]
@@ -604,7 +610,10 @@ setKPIs();
     const downloadCSV = (subset="all") => {
       if (!rows.length) return showAlerts(alerts,[{type:"warn",msg:"No rows to export."}]);
       let data = rows;
-      if (subset==="scanned") data = rows.filter(r => r.scannedImei===r.systemImei);
+      if (subset==="scanned") {
+  data = rows.filter(r => String(r.scannedImei||"").trim() === String(r.systemImei||"").trim());
+}
+
       if (subset==="missing") {
   data = rows.filter(r => {
     // serial missing
@@ -705,10 +714,20 @@ const res = await fetch(`${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${pa
 }
 
 
-    async function logWrongBin(_payload) {
-  // No-op: /api/inventory/imei already auto-logs wrong-bin audits on mismatch.
-  return;
+async function logWrongBin(payload) {
+  try {
+    if (CONFIG.FORCE_MOCK) return { ok:true };
+    const res = await fetch(CONFIG.AUDIT_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    return await res.json();
+  } catch {
+    return { ok:false };
+  }
 }
+
 
 
     async function fetchAuditList() {
@@ -944,11 +963,22 @@ renderTable(); scanInput.value=""; return;
       // Not in current bin -> ask inventory API for true location (it also auto-logs audit)
 const info = await locateImei(imei);
 if (info && info.location){
-  const msg = info.auditLogged
-    ? `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b> (auto-logged).`
-    : `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>.`;
+  // Fallback log if the IMEI endpoint couldn't persist
+  if (!info.auditLogged) {
+    await logWrongBin({
+      imei,
+      scannedBin: currentBin || "",
+      trueLocation: info.location,
+      status: "open",
+      scannedBy: currentUser?.name || "—"
+    });
+  }
+  const msg = (info.auditLogged ? 
+    `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b> (auto-logged).` :
+    `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>.`);
   showAlerts(alerts,[{type:"warn",msg}]);
 } else {
+
   showAlerts(alerts,[{type:"warn",msg:`IMEI <b>${escapeHTML(imei)}</b> not found in snapshot.`}]);
 }
 scanInput.value="";
@@ -956,9 +986,9 @@ scanInput.value="";
     });
 
     submitBinBtn.addEventListener("click", async ()=>{
-      if (currentUser?.role !== ROLES.COUNTER){
-        return showAlerts(alerts,[{type:"warn",msg:"Only Cycle Counters can submit bins."}]);
-      }
+      if (!/^(counter|investigator|supervisor)$/i.test(currentUser?.role || "")){
+  return showAlerts(alerts,[{type:"warn",msg:"You do not have permission to submit this bin."}]);
+}
       if (!currentBin || !rows.length){
         return showAlerts(alerts,[{type:"warn",msg:"No bin loaded to submit."}]);
       }
