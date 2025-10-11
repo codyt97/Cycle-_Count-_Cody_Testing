@@ -295,6 +295,7 @@
                     <th>Scanned Bin</th>
                     <th>True Location</th>
                     <th>Status</th>
+                    <th>Moved?</th>
                     <th>Moved To</th>
                     <th>Moved By</th>
                     <th></th>
@@ -812,7 +813,6 @@ async function fetchAuditList() {
     seen.set(k, pick);
   }
   return Array.from(seen.values());
-];
 }
 
 
@@ -1202,8 +1202,15 @@ scanInput.value="";
             <td class="mono">${escapeHTML(it.imei)}</td>
             <td>${escapeHTML(it.scannedBin)}</td>
             <td>${escapeHTML(it.trueLocation)}</td>
-            <td><span class="badge">${escapeHTML(it.status || 'open')}</span></td>
-            <td class="mono">${escapeHTML(it.movedTo||'')}</td>
+            <td><span class="badge">${escapeHTML(a.status || 'open')}</span></td>
+<td class="row-sm">
+  ${a.status==="moved"
+    ? "Yes"
+    : `<button class="btn primary sm" data-move="${escapeHTML(a.id)}">Yes</button>
+       <button class="btn ghost sm" data-notmove="${escapeHTML(a.id)}">No</button>`}
+</td>
+<td class="mono">${escapeHTML(a.movedTo||'')}</td>
+
             <td>${escapeHTML(it.movedBy||'')}</td>
             <td>${escapeHTML(it.decision||'')}</td>
             <td>${escapeHTML(it.decidedBy||'')}</td>
