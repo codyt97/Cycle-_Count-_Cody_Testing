@@ -118,26 +118,42 @@ async function escalateBin(bin, actor) {
 async function listAudits() { return getJSON(K_CC_AUDIT, []); }
 /** Append wrong-bin audit */
 async function appendAudit(audit) {
+  const now = nowISO();
   const a = {
     id: randomUUID(),
     imei: String(audit?.imei || ""),
     scannedBin: String(audit?.scannedBin || ""),
     trueLocation: String(audit?.trueLocation || ""),
     scannedBy: audit?.scannedBy || "—",
-    status: audit?.status || "open", // open|moved|closed|invalid
-    createdAt: nowISO(),
-    updatedAt: nowISO(),
+    status: (audit?.status || "open").toLowerCase(), // open|moved|closed|invalid
+    createdAt: now,
+    updatedAt: now,
     movedTo: audit?.movedTo,
     movedBy: audit?.movedBy,
     decision: audit?.decision,
     decidedBy: audit?.decidedBy,
   };
   if (!a.imei || !a.scannedBin) throw new Error("imei and scannedBin are required");
+
   const all = await listAudits();
+  // IDEMPOTENT: if an OPEN record for the same IMEI exists, update it instead of duplicating
+  const idx = all.findIndex(x => String(x.imei).trim() === a.imei && String(x.status||"open") === "open");
+  if (idx !== -1) {
+    all[idx] = { ...all[idx],
+      scannedBin: all[idx].scannedBin || a.scannedBin,
+      trueLocation: all[idx].trueLocation || a.trueLocation,
+      scannedBy: all[idx].scannedBy || a.scannedBy,
+      updatedAt: nowISO()
+    };
+    await setJSON(K_CC_AUDIT, all);
+    return all[idx];
+  }
+
   all.push(a);
   await setJSON(K_CC_AUDIT, all);
   return a;
 }
+
 async function patchAudit(id, patch) {
   const all = await listAudits();
   const idx = all.findIndex(x => x.id === id);
