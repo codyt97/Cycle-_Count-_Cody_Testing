@@ -230,7 +230,8 @@
                   <th>Description</th>
                   <th>System IMEI</th>
                   <th>Scanned IMEI</th>
-                  <th>Quantity</th>
+                  <th>System Qty</th>
+                  <th>Qty Entered</th>
                 </tr>
               </thead>
               <tbody id="tbody"></tbody>
@@ -505,13 +506,24 @@
       el.innerHTML = items.map(a=>`<div class="alert ${a.type==='warn'?'warn':'ok'}">${a.msg}</div>`).join("");
     };
     const setKPIs = () => {
-      const total = rows.length;
-      const scannedCount = rows.filter(r => r.scannedImei === r.systemImei).length;
-      const missing = total - scannedCount;
-      [kpi.total, kpi.total2].forEach(el => el.textContent = total);
-      [kpi.scanned, kpi.scanned2].forEach(el => el.textContent = scannedCount);
-      [kpi.missing, kpi.missing2].forEach(el => el.textContent = missing);
-    };
+  // expected = 1 per serial row + sum(systemQty for non-serial)
+  const serialExpected = rows.filter(r => !!r.systemImei).length;
+  const nonSerialExpected = rows.filter(r => !r.systemImei)
+    .reduce((a,b)=> a + (Number(b.systemQty||0)), 0);
+  const total = serialExpected + nonSerialExpected;
+
+  const scannedSerials = rows.filter(r => r.systemImei && r.scannedImei === r.systemImei).length;
+  const scannedNonSerial = rows.filter(r => !r.systemImei)
+    .reduce((a,b)=> a + Math.min(Number(b.qtyEntered||0), Number(b.systemQty||0)), 0);
+  const scannedCount = scannedSerials + scannedNonSerial;
+
+  const missing = Math.max(0, total - scannedCount);
+
+  [kpi.total, kpi.total2].forEach(el => el.textContent = total);
+  [kpi.scanned, kpi.scanned2].forEach(el => el.textContent = scannedCount);
+  [kpi.missing, kpi.missing2].forEach(el => el.textContent = missing);
+};
+
     const escapeHTML = (s="") =>
       s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
     const pad = n => String(n).padStart(2,"0");
@@ -521,28 +533,51 @@
       if (!rows.length){ resultsCard.style.display="none"; emptyCard.style.display="block"; setKPIs(); submitBinBtn.disabled = true; return; }
       resultsCard.style.display="block"; emptyCard.style.display="none";
       submitBinBtn.disabled = (currentUser?.role !== ROLES.COUNTER);
-      tbody.innerHTML = rows.map(r => {
-        const matched = r.scannedImei === r.systemImei;
-        const qty = matched ? 1 : 0;
-        return `<tr class="${matched?'ok':''}">
-          <td>${escapeHTML(r.location)}</td>
-          <td class="mono">${escapeHTML(r.sku)}</td>
-          <td>${escapeHTML(r.description||'—')}</td>
-          <td class="mono">${escapeHTML(r.systemImei)}</td>
-          <td class="mono">${escapeHTML(r.scannedImei||'—')}</td>
-          <td><span class="qty ${qty===1?'is1':''}">${qty}</span></td>
-        </tr>`;
-      }).join("");
-      setKPIs();
+      tbody.innerHTML = rows.map((r, i) => {
+  const matched = r.systemImei && r.scannedImei === r.systemImei;
+  const sysQty  = Number.isFinite(r.systemQty) ? r.systemQty : (r.systemImei ? 1 : 0);
+  const qtyVal  = r.hasSerial ? (matched ? 1 : 0) : Number(r.qtyEntered || 0);
+
+  return `<tr class="${matched?'ok':''}">
+    <td>${escapeHTML(r.location)}</td>
+    <td class="mono">${escapeHTML(r.sku)}</td>
+    <td>${escapeHTML(r.description||'—')}</td>
+    <td class="mono">${escapeHTML(r.systemImei||'—')}</td>
+    <td class="mono">${escapeHTML(r.scannedImei||'—')}</td>
+    <td>${sysQty}</td>
+    <td>
+      ${r.hasSerial
+        ? `<input type="number" class="qty-input" value="${qtyVal}" min="0" max="${sysQty}" step="1" disabled>`
+        : `<input type="number" class="qty-input" value="${qtyVal}" min="0" max="${sysQty}" step="1" data-idx="${i}">`
+      }
+    </td>
+  </tr>`;
+}).join("");
+
+// attach change handlers for non-serial qty inputs
+tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
+  inp.addEventListener('input', () => {
+    const idx = Number(inp.getAttribute('data-idx'));
+    const sysQty = Number(rows[idx].systemQty || 0);
+    const v = Math.max(0, Math.min(sysQty, Number(inp.value || 0)));
+    rows[idx].qtyEntered = v;
+    inp.value = v;
+    setKPIs();
+  });
+});
+
+setKPIs();
+
     };
 
     const csvEscape = (v="") => /[",\n]/.test(v) ? `"${v.replace(/"/g,'""')}"` : v;
     const toCSV = (data) => {
-      const header = ["Location","SKU","Description","System IMEI","Scanned IMEI","Quantity"];
-      const lines = [header.join(",")];
-      for (const r of data){
-        const qty = r.scannedImei===r.systemImei ? 1 : 0;
-        lines.push([r.location,r.sku||"",r.description||"",r.systemImei,r.scannedImei||"",String(qty)].map(csvEscape).join(","));
+      const header = ["Location","SKU","Description","System IMEI","Scanned IMEI","System Qty","Qty Entered"];
+// ...
+const sysQty = Number.isFinite(r.systemQty) ? r.systemQty : (r.systemImei ? 1 : 0);
+const qtyEnt = r.systemImei ? (r.scannedImei===r.systemImei ? 1 : 0) : Number(r.qtyEntered || 0);
+lines.push([r.location,r.sku||"",r.description||"",r.systemImei,r.scannedImei||"",String(sysQty),String(qtyEnt)].map(csvEscape).join(","));
+
       }
       return lines.join("\n");
     };
@@ -597,12 +632,22 @@
       }
       const data = await res.json();
       const list = Array.isArray(data.records) ? data.records : [];
-      return list.map(r => ({
-        location: r.location || bin,
-        sku: r.sku || r.itemCode || "—",
-        description: r.description || r.itemName || "—",
-        systemImei: String(r.systemImei || r.imei || r.serial || ""),
-      }));
+      return list.map(r => {
+  const sysImei = String(r.systemImei || r.imei || r.serial || "");
+  const hasSerial = !!sysImei;
+  const systemQty = Number.isFinite(r.systemQty) ? r.systemQty : (hasSerial ? 1 : 0);
+  return {
+    location: r.location || bin,
+    sku: r.sku || r.itemCode || "—",
+    description: r.description || r.itemName || "—",
+    systemImei: sysImei,
+    hasSerial,
+    systemQty,
+    qtyEntered: 0,
+    scannedImei: "",
+  };
+});
+
     }
 
     async function locateImei(imei){
@@ -667,20 +712,38 @@ const res = await fetch(`${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${pa
 
     async function submitBinToInvestigator(){
       if (!currentBin) return;
-      const scannedCount = rows.filter(r => r.scannedImei === r.systemImei).length;
-      const missingList = rows
-        .filter(r => r.scannedImei !== r.systemImei)
-        .map(r => ({ sku: r.sku, description: r.description, systemImei: r.systemImei }));
+      // robust totals (serials + non-serial qty)
+const serialExpected = rows.filter(r => !!r.systemImei).length;
+const nonSerialExpected = rows.filter(r => !r.systemImei)
+  .reduce((a,b)=> a + (Number(b.systemQty||0)), 0);
+const totalExpected = serialExpected + nonSerialExpected;
 
-      const payload = {
-        bin: currentBin,
-        counter: currentUser?.name || "—",
-        total: rows.length,
-        scanned: scannedCount,
-        missing: rows.length - scannedCount,
-        items: rows,               // line detail
-        missingImeis: missingList, // powers Not-Scanned
-      };
+const scannedSerials = rows.filter(r => r.systemImei && r.scannedImei === r.systemImei).length;
+const scannedNonSerial = rows.filter(r => !r.systemImei)
+  .reduce((a,b)=> a + Math.min(Number(b.qtyEntered||0), Number(b.systemQty||0)), 0);
+const scannedTotal = scannedSerials + scannedNonSerial;
+
+const missingList = rows
+  .filter(r => r.systemImei && r.scannedImei !== r.systemImei)
+  .map(r => ({ sku: r.sku, description: r.description, systemImei: r.systemImei }));
+
+const payload = {
+  bin: currentBin,
+  counter: currentUser?.name || "—",
+  total: totalExpected,
+  scanned: scannedTotal,
+  missing: Math.max(0, totalExpected - scannedTotal),
+  items: rows.map(r => ({
+    location: r.location,
+    sku: r.sku,
+    description: r.description,
+    systemImei: r.systemImei || "",
+    scannedImei: r.scannedImei || "",
+    ...(r.hasSerial ? {} : { qtyEntered: Number(r.qtyEntered || 0), systemQty: Number(r.systemQty || 0) })
+  })),
+  missingImeis: missingList,
+};
+
       try{
         if (!CONFIG.FORCE_MOCK){
           const res = await fetch(CONFIG.SUBMIT_BIN_ENDPOINT, {
@@ -832,9 +895,12 @@ const res = await fetch(`${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${pa
 
       const idx = rows.findIndex(r => r.systemImei===imei);
       if (idx>=0){
-        rows[idx] = {...rows[idx], scannedImei: imei}; scanned.add(imei);
-        showAlerts(alerts,[{type:"ok",msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.`}]);
-        renderTable(); scanInput.value=""; return;
+        rows[idx] = {...rows[idx], scannedImei: imei};
+if (rows[idx].hasSerial) { rows[idx].qtyEntered = 1; }
+scanned.add(imei);
+showAlerts(alerts,[{type:"ok",msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.`}]);
+renderTable(); scanInput.value=""; return;
+
       }
 
       // Not in current bin -> ask inventory API for true location (it also auto-logs audit)
