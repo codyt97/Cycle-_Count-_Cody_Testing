@@ -13,11 +13,9 @@
 //    wrongBin?: [{ imei, scannedBin, trueLocation, status:"open", scannedBy, ts }]
 //  }
 
-let Store = null;
-try { Store = require("../store"); } catch { /* fall back to in-memory */ }
+// Use the shared Store that Investigator pages read from
+const Store = require("../_lib/store");
 
-// in-memory fallback (dev only)
-const MEM = new Map();
 
 function norm(s){ return String(s ?? "").trim(); }
 function now(){ return new Date().toISOString(); }
@@ -50,16 +48,8 @@ function json(res, code, obj){
   res.end(JSON.stringify(obj));
 }
 
-async function kvGet(key){
-  if (Store?.get) return await Store.get(key);
-  if (Store?.read) return await Store.read(key);
-  return MEM.get(key);
-}
-async function kvSet(key, value){
-  if (Store?.set) return await Store.set(key, value);
-  if (Store?.write) return await Store.write(key, value);
-  MEM.set(key, value);
-}
+// No per-user KV; all persistence goes through the shared Store
+
 
 module.exports = async function handler(req, res){
   if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
@@ -85,52 +75,23 @@ module.exports = async function handler(req, res){
 
     if (!bin) return json(res, 400, { ok:false, error:"missing_bin" });
 
-    // ------ persist wrong-bin audits into per-user set ------
-    // audits live under key: wrong_bin_audits:<user>
-    const auditKey = `wrong_bin_audits:${user}`;
-    const existingAudits = (await kvGet(auditKey)) || [];
-    const openByImei = new Map(existingAudits.filter(a => (a.status||"").toLowerCase()==="open")
-                                                .map(a => [String(a.imei||"").trim(), a]));
-    let mutate = false;
-
-    for (const wb of wrongBin) {
-      const imei = norm(wb.imei);
-      if (!imei) continue;
-
-      const scannedBin = norm(wb.scannedBin);
-      const trueLoc    = norm(wb.trueLocation);
-      const scannedBy  = norm(wb.scannedBy || counter || "—");
-
-      if (openByImei.has(imei)) {
-        // merge light updates
-        const row = openByImei.get(imei);
-        row.scannedBin   ||= scannedBin;
-        row.trueLocation ||= trueLoc;
-        row.scannedBy    ||= scannedBy;
-        row.updatedAt = now();
-        mutate = true;
-      } else {
-        existingAudits.unshift({
-          id: (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID()
-               : String(Date.now()) + Math.random().toString(16).slice(2),
-          user,
+    // ------ persist wrong-bin audits into the shared audit log ------
+    if (Array.isArray(wrongBin) && wrongBin.length) {
+      for (const wb of wrongBin) {
+        const imei = norm(wb.imei);
+        if (!imei) continue;
+        await Store.appendAudit({
           imei,
-          scannedBin,
-          trueLocation: trueLoc,
-          scannedBy,
+          scannedBin:  norm(wb.scannedBin),
+          trueLocation:norm(wb.trueLocation),
+          scannedBy:   norm(wb.scannedBy || counter || "—"),
           status: "open",
-          movedTo: "",
-          movedBy: "",
-          createdAt: now(),
-          updatedAt: now()
         });
-        mutate = true;
       }
     }
-    if (mutate) await kvSet(auditKey, existingAudits);
 
-    // ------ persist the cycle count summary (user + bin scoped) ------
-    const recordKey = `cyclecount:${user}:${bin}`;
+
+    // ------ persist the cycle count into the shared Store (read by Investigator/Summary) ------
     const payload = {
       user, bin, counter,
       total, scanned, missing,
@@ -138,11 +99,13 @@ module.exports = async function handler(req, res){
       missingImeis,
       nonSerialShortages,
       state: missing > 0 ? "investigation" : "complete",
-      submittedAt: now()
+      started: body.started || undefined, // if provided, otherwise Store preserves original
+      submittedAt: now(),
     };
-    await kvSet(recordKey, payload);
+    await Store.upsertBin(payload);
 
     return json(res, 200, { ok:true, bin, state: payload.state, submittedAt: payload.submittedAt });
+
   } catch (err) {
     // never throw raw; return a stable error object
     return json(res, 500, { ok:false, error:"submit_failed", detail: String(err && err.message || err) });
