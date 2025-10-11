@@ -37,15 +37,43 @@ function normalizeWorkbook(wb) {
   return json.map(r => {
     const systemImei = pick(r, "systemimei","imei","serial","lotorserialno","serialno");
     const hasSerial = !!systemImei;
-    const qtyFromSheet = pickNum(
-  r,
-  // common forms
-  "systemqty","system qty","qty","quantity",
-  // on-hand variants
-  "onhand","on hand","on_hand","qtyonhand","qty on hand","qoh","soh","oh qty","ohqty",
-  // stock/available variants
-  "stock","inventory","available qty","availableqty","avail qty","availqty"
-);
+    // Robust quantity extractor: handles "4", " 4 ", "4 EA", and many header aliases
+const qtyFromSheet = (() => {
+  const numify = v => {
+    if (v === null || v === undefined) return undefined;
+    const s = String(v).trim();
+    // pull the first number (handles "4", "4 EA", "4,000")
+    const m = s.match(/-?\d[\d,]*/);
+    if (!m) return undefined;
+    const n = Number(m[0].replace(/,/g, ""));
+    return Number.isFinite(n) ? n : undefined;
+  };
+
+  // 1) Known-good aliases
+  const aliased =
+    pickNum(
+      r,
+      "systemqty","system qty","qty","quantity",
+      "onhand","on hand","on_hand","qtyonhand","qty on hand","qoh","soh",
+      "available qty","availableqty","avail qty","availqty",
+      "stock","inventory","bin qty","binqty","location qty","locationqty"
+    );
+  if (aliased !== undefined) return aliased;
+
+  // 2) Heuristic: any column containing qty/quantity/on hand/etc (but not UOM)
+  for (const [k, v] of Object.entries(r)) {
+    const key = String(k).toLowerCase().trim();
+    if (
+      /(qty|quantity|on\s*hand|qoh|soh|available)/.test(key) &&
+      !/uom|unit/.test(key)
+    ) {
+      const n = numify(v);
+      if (n !== undefined) return n;
+    }
+  }
+  return undefined;
+})();
+
 
 
     return {
