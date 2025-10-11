@@ -505,30 +505,34 @@
       el.style.display="";
       el.innerHTML = items.map(a=>`<div class="alert ${a.type==='warn'?'warn':'ok'}">${a.msg}</div>`).join("");
     };
-    const setKPIs = () => {
-  // expected = 1 per serial row + sum(systemQty for non-serial)
+   const setKPIs = () => {
+  // Total expected = 1 per serial row + sum(systemQty for non-serial rows)
   const serialExpected = rows.filter(r => !!r.systemImei).length;
-const nonSerialExpected = rows.filter(r => !r.systemImei)
-  .reduce((a,b)=> a + (Number(String(b.systemQty).replace(/,/g,"").trim()) || 0), 0);
-const scannedNonSerial = rows.filter(r => !r.systemImei)
-  .reduce((a,b)=> {
-    const sys = Number(String(b.systemQty).replace(/,/g,"").trim()) || 0;
-    const ent = Number(b.qtyEntered || 0);
-    return a + Math.min(ent, sys);
-  }, 0);
+  const nonSerialExpected = rows
+    .filter(r => !r.systemImei)
+    .reduce((a, b) => a + (Number(String(b.systemQty).replace(/,/g, "").trim()) || 0), 0);
+  const total = serialExpected + nonSerialExpected;
 
+  // Scanned = matched serials + min(qtyEntered, systemQty) summed for non-serials
+  const scannedSerials = rows.filter(r =>
+    r.systemImei && String(r.scannedImei||"").trim() === String(r.systemImei||"").trim()
+  ).length;
+  const scannedNonSerial = rows
+    .filter(r => !r.systemImei)
+    .reduce((a, b) => {
+      const sys = Number(String(b.systemQty).replace(/,/g, "").trim()) || 0;
+      const ent = Number(b.qtyEntered || 0);
+      return a + Math.min(ent, sys);
+    }, 0);
 
-  const scannedSerials = rows.filter(r => r.systemImei && r.scannedImei === r.systemImei).length;
-  const scannedNonSerial = rows.filter(r => !r.systemImei)
-    .reduce((a,b)=> a + Math.min(Number(b.qtyEntered||0), Number(b.systemQty||0)), 0);
   const scannedCount = scannedSerials + scannedNonSerial;
-
   const missing = Math.max(0, total - scannedCount);
 
   [kpi.total, kpi.total2].forEach(el => el.textContent = total);
   [kpi.scanned, kpi.scanned2].forEach(el => el.textContent = scannedCount);
   [kpi.missing, kpi.missing2].forEach(el => el.textContent = missing);
 };
+
 
     const escapeHTML = (s="") =>
       s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
@@ -582,10 +586,11 @@ setKPIs();
   const lines = [header.join(",")];
 
   for (const r of (Array.isArray(data) ? data : [])) {
-    const sysQty = Number.isFinite(r.systemQty) ? r.systemQty : (r.systemImei ? 1 : 0);
-    const qtyEnt = r.systemImei
-      ? (r.scannedImei === r.systemImei ? 1 : 0)
-      : Number(r.qtyEntered || 0);
+    const sysQty = Number(String(r.systemQty).replace(/,/g,"").trim()) || (r.systemImei ? 1 : 0);
+const qtyEnt = r.systemImei
+  ? (String(r.scannedImei||"").trim() === String(r.systemImei||"").trim() ? 1 : 0)
+  : Math.max(0, Math.min(sysQty, Number(r.qtyEntered || 0)));
+
 
     lines.push(
       [r.location, r.sku || "", r.description || "", r.systemImei, r.scannedImei || "", String(sysQty), String(qtyEnt)]
@@ -928,8 +933,8 @@ const payload = {
       if (idx>=0){
         rows[idx] = {...rows[idx], scannedImei: imei};
 if (rows[idx].hasSerial) rows[idx].qtyEntered = 1;
-if (rows[idx].hasSerial) { rows[idx].qtyEntered = 1; }
 scanned.add(imei);
+
 showAlerts(alerts,[{type:"ok",msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.`}]);
 renderTable(); scanInput.value=""; return;
 
