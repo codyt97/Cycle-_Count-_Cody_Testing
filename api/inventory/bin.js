@@ -12,12 +12,14 @@ module.exports = async (req, res) => {
 
   const all = await Store.getInventory();
   const records = all
-    .filter(r => ((r.location || "").trim().toLowerCase() === match))
+    .filter(r => ((String(r.location || "")).trim().toLowerCase() === match))
     .map(r => ({
-      location: r.location || "",
-      sku: r.sku || "",
+      location:    r.location || "",
+      sku:         r.sku || "",
       description: r.description || "",
-      systemImei: String(r.systemImei || "")
+      systemImei:  String(r.systemImei || ""),
+      hasSerial:   !!r.hasSerial,
+      systemQty:   Number.isFinite(r.systemQty) ? r.systemQty : (r.systemImei ? 1 : 0),
     }));
 
   return ok(res, { records });
