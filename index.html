@@ -756,10 +756,15 @@ return {
   try{
     if (CONFIG.FORCE_MOCK) return mockLocate(imei, currentBin || "K-01-01");
     const params = new URLSearchParams({
+  user: userId(),
   scannedBin: currentBin || "",
   scannedBy: currentUser?.name || "—",
 });
-const res = await fetch(`${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${params.toString()}`, { cache:"no-store" });
+const res = await fetch(
+  `${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${params.toString()}`,
+  { cache:"no-store" }
+);
+
 
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
@@ -808,12 +813,16 @@ async function logWrongBin(payload) {
 
 
     async function fetchSummary(){
-      if (CONFIG.FORCE_MOCK) return mockSummary();
-      const res = await fetch(CONFIG.SUMMARY_ENDPOINT, { cache:"no-store" });
-      if (!res.ok) throw new Error(await res.text());
-      const { records } = await res.json();
-      return Array.isArray(records) ? records : [];
-    }
+  if (CONFIG.FORCE_MOCK) return mockSummary();
+  const res = await fetch(
+    `${CONFIG.SUMMARY_ENDPOINT}?user=${encodeURIComponent(userId())}`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) throw new Error(await res.text());
+  const { records } = await res.json();
+  return Array.isArray(records) ? records : [];
+}
+
 
     async function fetchNotScanned(){
       if (CONFIG.FORCE_MOCK) return mockNotScanned();
@@ -880,20 +889,25 @@ showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitte
     }
 
     async function escalateBinToSupervisor(bin){
-      try{
-        if (!CONFIG.FORCE_MOCK){
-          const res = await fetch(CONFIG.ESCALATE_BIN_ENDPOINT, {
-            method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ bin, actor: currentUser?.name || "—" })
-          });
-          if (!res.ok) throw new Error(await res.text());
+  try{
+    if (!CONFIG.FORCE_MOCK){
+      const res = await fetch(
+        `${CONFIG.ESCALATE_BIN_ENDPOINT}?user=${encodeURIComponent(userId())}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user: userId(), bin, actor: currentUser?.name || "—" })
         }
-        showAlerts(investAlerts,[{type:"ok",msg:`Bin <b>${escapeHTML(bin)}</b> escalated to Supervisor.`}]);
-        await refreshInvestigator(); // reflect new state
-      }catch(e){
-        showAlerts(investAlerts,[{type:"warn",msg:`Escalation failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
-      }
+      );
+      if (!res.ok) throw new Error(await res.text());
     }
+    showAlerts(investAlerts,[{type:"ok",msg:`Bin <b>${escapeHTML(bin)}</b> escalated to Supervisor.`}]);
+    await refreshInvestigator(); // reflect new state
+  }catch(e){
+    showAlerts(investAlerts,[{type:"warn",msg:`Escalation failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
+  }
+}
+
 
     // --- Auth/UI helpers ------------------------------------------
     function applyRoleUI(){
