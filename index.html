@@ -791,16 +791,18 @@ async function logWrongBin(payload) {
   }
 }
 
-    async function fetchAuditList() {
+async function fetchAuditList() {
   if (CONFIG.FORCE_MOCK) { return mockAudits(); }
   const res = await fetch(`${CONFIG.AUDIT_ENDPOINT}?user=${encodeURIComponent(userId())}`);
   if (!res.ok) throw new Error(await res.text());
+  // server may return {audits} or {records}
   const j = await res.json();
   const audits = j.audits || j.records || [];
   return Array.isArray(audits) ? audits : [];
 }
 
-    async function patchAudit(id, payload){
+
+ async function patchAudit(id, payload){
   if (CONFIG.FORCE_MOCK) return { ok:true };
   const res = await fetch(`${CONFIG.AUDIT_ENDPOINT}?user=${encodeURIComponent(userId())}`, {
     method: "PATCH",
@@ -812,25 +814,35 @@ async function logWrongBin(payload) {
 }
 
 
-    async function fetchSummary(){
+
+async function fetchSummary(){
   if (CONFIG.FORCE_MOCK) return mockSummary();
   const res = await fetch(
     `${CONFIG.SUMMARY_ENDPOINT}?user=${encodeURIComponent(userId())}`,
-    { cache: "no-store" }
+    { cache:"no-store" }
   );
   if (!res.ok) throw new Error(await res.text());
-  const { records } = await res.json();
-  return Array.isArray(records) ? records : [];
+  // Be tolerant of shape: {records} or {bins}
+  const j = await res.json();
+  const rows = j.records || j.bins || [];
+  return Array.isArray(rows) ? rows : [];
 }
 
 
-    async function fetchNotScanned(){
-      if (CONFIG.FORCE_MOCK) return mockNotScanned();
-      const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}?user=${encodeURIComponent(userId())}`, { cache:"no-store" });
-      if (!res.ok) throw new Error(await res.text());
-      const { records } = await res.json();
-      return Array.isArray(records) ? records : [];
-    }
+
+async function fetchNotScanned() {
+  if (CONFIG.FORCE_MOCK) return [];
+  const res = await fetch(
+    `${CONFIG.NOT_SCANNED_ENDPOINT}?user=${encodeURIComponent(userId())}`,
+    { cache:"no-store" }
+  );
+  if (!res.ok) throw new Error(await res.text());
+  // server may return {items} or {records}
+  const j = await res.json();
+  const items = j.items || j.records || [];
+  return Array.isArray(items) ? items : [];
+}
+
 
     async function submitBinToInvestigator(){
       if (!currentBin) return;
@@ -888,25 +900,26 @@ showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitte
       }
     }
 
-    async function escalateBinToSupervisor(bin){
+async function escalateBinToSupervisor(bin){
   try{
     if (!CONFIG.FORCE_MOCK){
       const res = await fetch(
         `${CONFIG.ESCALATE_BIN_ENDPOINT}?user=${encodeURIComponent(userId())}`,
         {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
           body: JSON.stringify({ user: userId(), bin, actor: currentUser?.name || "—" })
         }
       );
       if (!res.ok) throw new Error(await res.text());
     }
     showAlerts(investAlerts,[{type:"ok",msg:`Bin <b>${escapeHTML(bin)}</b> escalated to Supervisor.`}]);
-    await refreshInvestigator(); // reflect new state
+    await refreshInvestigator();
   }catch(e){
     showAlerts(investAlerts,[{type:"warn",msg:`Escalation failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
   }
 }
+
 
 
     // --- Auth/UI helpers ------------------------------------------
