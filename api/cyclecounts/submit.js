@@ -20,11 +20,18 @@ module.exports = async (req, res) => {
     const expected = inv.filter(r => (String(r.location||"").trim().toLowerCase() === bin.toLowerCase()));
 
     // Scanned IMEIs set
-    const scannedSet = new Set(scannedItems.map(x => String(x.systemImei || x.imei || "").trim()).filter(Boolean));
-    const expectedSet = new Set(expected.map(x => String(x.systemImei || "").trim()).filter(Boolean));
+    const scannedSet = new Set(scannedItems
+      .map(x => String(x.systemImei || x.imei || "").trim())
+      .filter(Boolean));
 
-    // Missing = expected but not scanned
-    const missingImeis = [...expectedSet].filter(imei => !scannedSet.has(imei));
+    // Build missing as full objects for downstream UI/CSV
+    const missingImeis = expected
+      .filter(r => !scannedSet.has(String(r.systemImei||"").trim()))
+      .map(r => ({
+        sku: r.sku || "—",
+        description: r.description || "—",
+        systemImei: String(r.systemImei || ""),
+      }));
 
     const payload = {
       bin,
