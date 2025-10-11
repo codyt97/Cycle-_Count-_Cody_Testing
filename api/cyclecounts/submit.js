@@ -67,8 +67,20 @@ module.exports = async function handler(req, res){
     const missing  = Number.isFinite(+body.missing) ? +body.missing : Math.max(0, total - scanned);
 
     const items = Array.isArray(body.items) ? body.items : [];
-    const missingImeis       = Array.isArray(body.missingImeis)       ? body.missingImeis       : [];
-    const nonSerialShortages = Array.isArray(body.nonSerialShortages) ? body.nonSerialShortages : [];
+    const missingImeis = Array.isArray(body.missingImeis) ? body.missingImeis : [];
+
+    // Derive non-serial shortages if client didn't send them
+    const nonSerialShortages = Array.isArray(body.nonSerialShortages) ? body.nonSerialShortages :
+      items
+        .filter(it => !String(it.systemImei || "").trim()) // non-serial rows only
+        .map(it => ({
+          sku: it.sku || "—",
+          description: it.description || "—",
+          systemQty: Number(it.systemQty || 0),
+          qtyEntered: Number(it.qtyEntered || 0)
+        }))
+        .filter(s => s.qtyEntered < s.systemQty);
+
 
     // client-buffered wrong-bin list (to be persisted now)
     const wrongBin = Array.isArray(body.wrongBin) ? body.wrongBin : [];
@@ -92,16 +104,23 @@ module.exports = async function handler(req, res){
 
 
     // ------ persist the cycle count into the shared Store (read by Investigator/Summary) ------
+        // Recompute final missing: serial deficits + non-serial deficits
+    const serialMissing = missingImeis.length;
+    const nonSerialMissing = nonSerialShortages.reduce(
+      (a, s) => a + Math.max(Number(s.systemQty || 0) - Number(s.qtyEntered || 0), 0), 0);
+    const finalMissing = Number.isFinite(+body.missing) ? +body.missing : (serialMissing + nonSerialMissing);
+
     const payload = {
       user, bin, counter,
-      total, scanned, missing,
+      total, scanned, missing: finalMissing,
       items,
       missingImeis,
       nonSerialShortages,
-      state: missing > 0 ? "investigation" : "complete",
-      started: body.started || undefined, // if provided, otherwise Store preserves original
+      state: finalMissing > 0 ? "investigation" : "complete",
+      started: body.started || undefined,
       submittedAt: now(),
     };
+
     await Store.upsertBin(payload);
 
     return json(res, 200, { ok:true, bin, state: payload.state, submittedAt: payload.submittedAt });
