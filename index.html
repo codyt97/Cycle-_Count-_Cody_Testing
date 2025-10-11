@@ -609,11 +609,11 @@
   try{
     if (CONFIG.FORCE_MOCK) return mockLocate(imei, currentBin || "K-01-01");
     const params = new URLSearchParams({
-      imei,
-      scannedBin: currentBin || "",
-      scannedBy: currentUser?.name || "—",
-    });
-    const res = await fetch(`${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${params.toString()}`, { cache:"no-store" });
+  scannedBin: currentBin || "",
+  scannedBy: currentUser?.name || "—",
+});
+const res = await fetch(`${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${params.toString()}`, { cache:"no-store" });
+
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
     return data || null;
