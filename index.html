@@ -523,6 +523,7 @@
     const supNotScannedBody = document.getElementById("supNotScannedBody");
 
     // --- Utilities -------------------------------------------------
+    const userId = () => String(currentUser?.username || currentUser?.name || "anon").toLowerCase();
     const showAlerts = (el, items=[]) => {
       if (!items.length){ el.style.display="none"; el.innerHTML=""; return; }
       el.style.display="";
@@ -767,11 +768,13 @@ const res = await fetch(`${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${pa
 async function logWrongBin(payload) {
   try {
     if (CONFIG.FORCE_MOCK) return { ok:true };
-    const res = await fetch(CONFIG.AUDIT_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+    const body = { user: userId(), ...payload };
+    const res = await fetch(`${CONFIG.AUDIT_ENDPOINT}?user=${encodeURIComponent(userId())}`, {
+  method: "PATCH",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ id, ...payload, user: userId() })
+});
+
     return await res.json();
   } catch {
     return { ok:false };
@@ -780,13 +783,15 @@ async function logWrongBin(payload) {
 
 
 
+
     async function fetchAuditList() {
-      if (CONFIG.FORCE_MOCK) { return mockAudits(); }
-      const res = await fetch(CONFIG.AUDIT_ENDPOINT);
-      if (!res.ok) throw new Error(await res.text());
-      const { records } = await res.json();
-      return Array.isArray(records) ? records : [];
-    }
+  if (CONFIG.FORCE_MOCK) { return mockAudits(); }
+  const res = await fetch(`${CONFIG.AUDIT_ENDPOINT}?user=${encodeURIComponent(userId())}`);
+  if (!res.ok) throw new Error(await res.text());
+  const j = await res.json();
+  const audits = j.audits || j.records || [];
+  return Array.isArray(audits) ? audits : [];
+}
 
     async function patchAudit(id, payload){
       if (CONFIG.FORCE_MOCK) return { ok:true };
@@ -809,7 +814,7 @@ async function logWrongBin(payload) {
 
     async function fetchNotScanned(){
       if (CONFIG.FORCE_MOCK) return mockNotScanned();
-      const res = await fetch(CONFIG.NOT_SCANNED_ENDPOINT, { cache:"no-store" });
+      const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}?user=${encodeURIComponent(userId())}`, { cache:"no-store" });
       if (!res.ok) throw new Error(await res.text());
       const { records } = await res.json();
       return Array.isArray(records) ? records : [];
@@ -851,9 +856,12 @@ const payload = {
 
       try{
         if (!CONFIG.FORCE_MOCK){
-          const res = await fetch(CONFIG.SUBMIT_BIN_ENDPOINT, {
-            method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)
-          });
+          const res = await fetch(`${CONFIG.SUBMIT_BIN_ENDPOINT}?user=${encodeURIComponent(userId())}`, {
+  method:"POST",
+  headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({ user: userId(), ...payload })
+});
+
           if (!res.ok) throw new Error(await res.text());
         }
         showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
@@ -1013,19 +1021,18 @@ renderTable(); scanInput.value=""; return;
       // Not in current bin -> ask inventory API for true location (it also auto-logs audit)
 const info = await locateImei(imei);
 if (info && info.location){
-  // Fallback log if the IMEI endpoint couldn't persist
-  if (!info.auditLogged) {
-    await logWrongBin({
-      imei,
-      scannedBin: currentBin || "",
-      trueLocation: info.location,
-      status: "open",
-      scannedBy: currentUser?.name || "—"
-    });
-  }
-  const msg = (info.auditLogged ? 
-    `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b> (auto-logged).` :
-    `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>.`);
+  // Always log; backend can de-dup by (user, IMEI, status:'open')
+  await logWrongBin({
+    user: userId(),
+    imei,
+    scannedBin: currentBin || "",
+    trueLocation: info.location,
+    status: "open",
+    scannedBy: currentUser?.name || "—",
+    ts: new Date().toISOString()
+  });
+  const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>.`;
+
   showAlerts(alerts,[{type:"warn",msg}]);
 } else {
 
@@ -1211,8 +1218,10 @@ try {
         if (!movedTo) return;
         mv.disabled = true;
         try{
-          await patchAudit(id, { status:"moved", movedTo, movedBy: currentUser?.name || "—" });
+          await patchAudit(id, { user: userId(), status:"moved", movedTo, movedBy: currentUser?.name || "—" });
           await refreshInvestigator();
+          await refreshSupervisorViews();
+
         }catch{
           showAlerts(investAlerts,[{type:"warn",msg:"Failed to update moved status."}]);
         }finally{
@@ -1321,11 +1330,12 @@ document.addEventListener("click", async (e)=>{
     if (payload.type === "serial") payload.systemImei = imei || "";
     if (payload.type === "nonserial") payload.sku = sku || "";
 
-    const res = await fetch(CONFIG.NOT_SCANNED_ENDPOINT, {
-      method: "DELETE",
-      headers: { "Content-Type":"application/json" },
-      body: JSON.stringify(payload)
-    });
+    const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}?user=${encodeURIComponent(userId())}`, {
+  method:"DELETE",
+  headers:{"Content-Type":"application/json"},
+  body: JSON.stringify({ user: userId(), ...payload })
+});
+
     if (!res.ok) throw new Error(await res.text());
 
     await refreshSupervisorViews();
