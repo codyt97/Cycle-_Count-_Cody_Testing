@@ -11,8 +11,11 @@ module.exports = async (req, res) => {
   // DELETE -> remove a specific not-scanned entry from a bin
   // --------------------------
   if (req.method === "GET") {
-    const bins = await Store.listBins();
-    const records = [];
+  const user = String(req.query?.user || "").toLowerCase();
+  const binsAll = await Store.listBins();
+  const bins = user ? binsAll.filter(b => String(b.user||"").toLowerCase() === user) : binsAll;
+  const records = [];
+
 
     for (const b of bins) {
       // Serial shortages
@@ -56,8 +59,11 @@ module.exports = async (req, res) => {
       const type = String(body.type || "").trim().toLowerCase(); // "serial" | "nonserial"
       if (!binCode || !type) return bad(res, "bin and type are required", 400);
 
-      const bins = await Store.listBins();
-      const idx = bins.findIndex(x => String(x.bin || "").trim().toLowerCase() === binCode);
+      const user = String((typeof req.body === "string" ? JSON.parse(req.body||"{}") : req.body || {}).user || req.query?.user || "").toLowerCase();
+const binsAll = await Store.listBins();
+const bins = user ? binsAll.filter(b => String(b.user||"").toLowerCase() === user) : binsAll;
+const idx = bins.findIndex(x => String(x.bin || "").trim().toLowerCase() === binCode);
+
       if (idx === -1) return bad(res, "bin not found", 404);
 
       const bin = { ...bins[idx] };
