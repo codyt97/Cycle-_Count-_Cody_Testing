@@ -49,16 +49,23 @@ const qtyFromSheet = (() => {
     return Number.isFinite(n) ? n : undefined;
   };
 
-  // 1) Known-good aliases
-  const aliased =
-    pickNum(
-      r,
-      "systemqty","system qty","qty","quantity",
-      "onhand","on hand","on_hand","qtyonhand","qty on hand","qoh","soh",
-      "available qty","availableqty","avail qty","availqty",
-      "stock","inventory","bin qty","binqty","location qty","locationqty"
-    );
-  if (aliased !== undefined) return aliased;
+  // First try plain numeric columns (add plain "available")
+const aliased =
+  pickNum(
+    r,
+    "systemqty","system qty","qty","quantity",
+    "onhand","on hand","on_hand","qtyonhand","qty on hand","qoh","soh",
+    "available","available qty","availableqty","avail qty","availqty",
+    "stock","inventory","bin qty","binqty","location qty","locationqty"
+  );
+if (aliased !== undefined) return aliased;
+
+// If "available" contains units like "4 EA", parse its number explicitly
+if (r.hasOwnProperty("available")) {
+  const n = numify(r["available"]);
+  if (n !== undefined) return n;
+}
+
 
   // 2) Heuristic: any column containing qty/quantity/on hand/etc (but not UOM)
   for (const [k, v] of Object.entries(r)) {
