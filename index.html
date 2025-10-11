@@ -345,16 +345,19 @@
             <h4 style="margin:18px 0 10px 0;">Not-Scanned Items</h4>
             <div class="table-wrap">
               <table id="supNotScanned">
-                <thead>
-                  <tr>
-                    <th>Bin</th>
-                    <th>SKU</th>
-                    <th>Description</th>
-                    <th>System IMEI</th>
-                  </tr>
-                </thead>
-                <tbody id="supNotScannedBody"><tr><td colspan="4" class="empty">No not-scanned items.</td></tr></tbody>
-              </table>
+  <thead>
+    <tr>
+      <th>Bin</th>
+      <th>Counter</th>
+      <th>SKU</th>
+      <th>Description</th>
+      <th>System IMEI</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody id="supNotScannedBody"><tr><td colspan="6" class="empty">No not-scanned items.</td></tr></tbody>
+</table>
+
             </div>
           </div>
         </section>
@@ -1177,16 +1180,31 @@ scanInput.value="";
           </tr>
         `).join("") : `<tr><td colspan="9" class="empty">No wrong-bin logs.</td></tr>`);
 
-        // Not-scanned
-        const missing = await fetchNotScanned();
-        supNotScannedBody.innerHTML = (missing.length ? missing.map(it => `
-          <tr>
-            <td>${escapeHTML(it.bin||"—")}</td>
-            <td class="mono">${escapeHTML(it.sku||"—")}</td>
-            <td>${escapeHTML(it.description||"—")}</td>
-            <td class="mono">${escapeHTML(it.systemImei||"—")}</td>
-          </tr>
-        `).join("") : `<tr><td colspan="4" class="empty">No not-scanned items.</td></tr>`);
+// Not-scanned
+const missing = await fetchNotScanned();
+supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
+  const isSerial = !!(it.systemImei && String(it.systemImei).trim());
+  // we’ll send different payload for serial vs non-serial
+  return `
+    <tr>
+      <td>${escapeHTML(it.bin||"—")}</td>
+      <td>${escapeHTML(it.counter||"—")}</td>
+      <td class="mono">${escapeHTML(it.sku||"—")}</td>
+      <td>${escapeHTML(it.description||"—")}</td>
+      <td class="mono">${escapeHTML(it.systemImei||"—")}</td>
+      <td class="row-sm">
+        <button class="btn ghost sm"
+          data-sup-del
+          data-bin="${escapeHTML(it.bin||"")}"
+          data-type="${isSerial ? "serial" : "nonserial"}"
+          ${isSerial ? `data-systemImei="${escapeHTML(String(it.systemImei||""))}"` : ""}
+          ${!isSerial ? `data-sku="${escapeHTML(String(it.sku||""))}"` : ""}
+        >🗑️ Delete</button>
+      </td>
+    </tr>
+  `;
+}).join("") : `<tr><td colspan="6" class="empty">No not-scanned items.</td></tr>`);
+
 
         showAlerts(supAlerts,[]);
       }catch(e){
@@ -1215,6 +1233,41 @@ scanInput.value="";
         btn.disabled = false;
       }
     });
+    // Supervisor: delete a not-scanned entry
+document.addEventListener("click", async (e) => {
+  const del = e.target.closest("[data-sup-del]");
+  if (!del) return;
+
+  if (currentUser?.role !== ROLES.SUPERVISOR) {
+    return showAlerts(supAlerts,[{type:"warn",msg:"Only Supervisors can delete not-scanned entries."}]);
+  }
+
+  del.disabled = true;
+  try{
+    const payload = {
+      bin: del.getAttribute("data-bin") || "",
+      type: del.getAttribute("data-type") || ""
+    };
+    const imei = del.getAttribute("data-systemImei");
+    const sku  = del.getAttribute("data-sku");
+    if (payload.type === "serial") payload.systemImei = imei || "";
+    if (payload.type === "nonserial") payload.sku = sku || "";
+
+    const res = await fetch(CONFIG.NOT_SCANNED_ENDPOINT, {
+      method: "DELETE",
+      headers: { "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(await res.text());
+
+    await refreshSupervisorViews();
+  }catch(err){
+    showAlerts(supAlerts,[{type:"warn",msg:`Delete failed: <code>${escapeHTML(String(err.message||err))}</code>`}]);
+  }finally{
+    del.disabled = false;
+  }
+});
+
 
     // --- Init ------------------------------------------------------
     function init(){
