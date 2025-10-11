@@ -3,48 +3,36 @@ const { ok, bad, method, withCORS } = require("../_lib/respond");
 const Store = require("../_lib/store");
 
 module.exports = async (req, res) => {
-  if (req.method === "OPTIONS") return withCORS(res), res.status(204).end();
+  if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
+  withCORS(res);
 
   if (req.method === "GET") {
-    const records = await Store.listAudits();
-    return ok(res, { records });
+    const list = await Store.listAudits();
+    return ok(res, { audits: list });
   }
 
   if (req.method === "POST") {
     try {
-      const { imei, scannedBin, trueLocation, scannedBy } = req.body || {};
-      if (!imei || !scannedBin) return bad(res, "imei and scannedBin are required");
-      const rec = await Store.appendAudit({
-        imei: String(imei),
-        scannedBin: String(scannedBin),
-        trueLocation: trueLocation ? String(trueLocation) : "",
-        scannedBy: scannedBy || "—",
-        status: "open",
-      });
-      return ok(res, { ok: true, record: rec }, 201);
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+      const a = await Store.appendAudit(body);
+      return ok(res, { ok: true, audit: a });
     } catch (e) {
-      return bad(res, String(e.message || e));
+      return bad(res, "append failed: " + (e?.message || String(e)), 400);
     }
   }
 
   if (req.method === "PATCH") {
     try {
-      const { id, status, movedTo, movedBy, decision, decidedBy } = req.body || {};
-      if (!id) return bad(res, "id is required");
-      const patch = {};
-      if (status) patch.status = status;
-      if (movedTo) patch.movedTo = String(movedTo);
-      if (movedBy) patch.movedBy = String(movedBy);
-      if (decision) patch.decision = String(decision);
-      if (decidedBy) patch.decidedBy = String(decidedBy);
-
-      const out = await Store.patchAudit(id, patch);
-      if (!out) return bad(res, "audit item not found", 404);
-      return ok(res, { ok: true, record: out });
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+      const { id, ...patch } = body || {};
+      if (!id) return bad(res, "id required", 400);
+      const a = await Store.patchAudit(id, patch);
+      if (!a) return bad(res, "not found", 404);
+      return ok(res, { ok: true, audit: a });
     } catch (e) {
-      return bad(res, String(e.message || e));
+      return bad(res, "patch failed: " + (e?.message || String(e)), 400);
     }
   }
 
-  return method(res, ["GET", "POST", "PATCH", "OPTIONS"]);
+  return method(res, ["GET","POST","PATCH","OPTIONS"]);
 };
