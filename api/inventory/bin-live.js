@@ -49,12 +49,36 @@ async function loadRowsFromSheet(fileId) {
   const rows = json.map(r => {
     const systemImei = pick(r, "systemimei","imei","serial","lotorserialno","serialno");
     const hasSerial = !!systemImei;
-    const qtyFromSheet = pickNum(
-  r,
-  "systemqty","system qty","qty","quantity",
-  "onhand","on hand","on_hand","qtyonhand","qty on hand","qoh","soh","oh qty","ohqty",
-  "stock","inventory","available qty","availableqty","avail qty","availqty"
-);
+    const qtyFromSheet = (() => {
+  const numify = v => {
+    if (v === null || v === undefined) return undefined;
+    const s = String(v).trim();
+    const m = s.match(/-?\d[\d,]*/);
+    if (!m) return undefined;
+    const n = Number(m[0].replace(/,/g, ""));
+    return Number.isFinite(n) ? n : undefined;
+  };
+
+  const aliased =
+    pickNum(
+      r,
+      "systemqty","system qty","qty","quantity",
+      "onhand","on hand","on_hand","qtyonhand","qty on hand","qoh","soh",
+      "available qty","availableqty","avail qty","availqty",
+      "stock","inventory","bin qty","binqty","location qty","locationqty"
+    );
+  if (aliased !== undefined) return aliased;
+
+  for (const [k, v] of Object.entries(r)) {
+    const key = String(k).toLowerCase().trim();
+    if (/(qty|quantity|on\s*hand|qoh|soh|available)/.test(key) && !/uom|unit/.test(key)) {
+      const n = numify(v);
+      if (n !== undefined) return n;
+    }
+  }
+  return undefined;
+})();
+
 
     return {
       location:    pick(r, "bin","location","locationbin","locationbinref.name"),
