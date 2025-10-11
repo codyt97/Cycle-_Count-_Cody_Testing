@@ -301,6 +301,25 @@
                 <tbody id="investWrongBinBody"><tr><td colspan="7" class="empty">No wrong-bin items.</td></tr></tbody>
               </table>
             </div>
+            <h3 class="section-title">Not-Scanned Items</h3>
+<div class="table-wrap">
+  <table id="invNotScanned" class="grid">
+    <thead>
+      <tr>
+        <th>Type</th>
+        <th>SKU</th>
+        <th>Description</th>
+        <th>System IMEI</th>
+        <th>System Qty</th>
+        <th>Qty Entered</th>
+      </tr>
+    </thead>
+    <tbody id="invNotScannedBody">
+      <tr><td colspan="6" class="empty">No not-scanned items.</td></tr>
+    </tbody>
+  </table>
+</div>
+
           </div>
         </section>
       </div>
@@ -357,6 +376,7 @@
   </thead>
   <tbody id="supNotScannedBody"><tr><td colspan="6" class="empty">No not-scanned items.</td></tr></tbody>
 </table>
+
 
             </div>
           </div>
@@ -1099,22 +1119,41 @@ scanInput.value="";
         const audits = await fetchAuditList();
         const openish = audits.filter(a => a.status !== "resolved");
         investWrongBinBody.innerHTML = (!openish.length)
-          ? `<tr><td colspan="7" class="empty">No wrong-bin items.</td></tr>`
-          : openish.map(it => `
-              <tr>
-                <td class="mono">${escapeHTML(it.imei)}</td>
-                <td>${escapeHTML(it.scannedBin)}</td>
-                <td>${escapeHTML(it.trueLocation)}</td>
-                <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
-                <td class="mono">${escapeHTML(it.movedTo||'')}</td>
-                <td>${escapeHTML(it.movedBy||'')}</td>
-                <td class="row-sm">
-                  <button class="btn ghost sm" data-mark-moved="${escapeHTML(it.id)}">Mark Moved</button>
-                </td>
-              </tr>
-            `).join("");
+  ? `<tr><td colspan="7" class="empty">No wrong-bin items.</td></tr>`
+  : openish.map(it => `
+      <tr>
+        <td class="mono">${escapeHTML(it.imei)}</td>
+        <td>${escapeHTML(it.scannedBin)}</td>
+        <td>${escapeHTML(it.trueLocation)}</td>
+        <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
+        <td class="mono">${escapeHTML(it.movedTo||'')}</td>
+        <td>${escapeHTML(it.movedBy||'')}</td>
+        <td class="row-sm">
+          <button class="btn ghost sm" data-mark-moved="${escapeHTML(it.id)}">Mark Moved</button>
+        </td>
+      </tr>
+    `).join("");
+
+// ---- Investigator: render Not-Scanned (serial + non-serial) ----
+try {
+  const invMissing = await fetchNotScanned();
+  const invBody = document.getElementById("invNotScannedBody");
+  if (invBody) {
+    invBody.innerHTML = (invMissing.length ? invMissing.map(it => `
+      <tr>
+        <td>${it.systemImei && String(it.systemImei).trim() ? "Serial" : "Non-serial"}</td>
+        <td class="mono">${escapeHTML(it.sku||"—")}</td>
+        <td>${escapeHTML(it.description||"—")}</td>
+        <td class="mono">${escapeHTML(it.systemImei||"—")}</td>
+        <td class="mono">${it.systemImei ? "—" : (it.systemQty ?? "—")}</td>
+        <td class="mono">${it.systemImei ? "—" : (it.qtyEntered ?? "—")}</td>
+      </tr>
+    `).join("") : `<tr><td colspan="6" class="empty">No not-scanned items.</td></tr>`);
+  }
+} catch {}
 
         showAlerts(investAlerts,[]);
+
       }catch(e){
         showAlerts(investAlerts,[{type:"warn",msg:"Failed to load investigator data."}]);
       }
@@ -1181,10 +1220,10 @@ scanInput.value="";
         `).join("") : `<tr><td colspan="9" class="empty">No wrong-bin logs.</td></tr>`);
 
 // Not-scanned
+// Not-scanned
 const missing = await fetchNotScanned();
 supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
   const isSerial = !!(it.systemImei && String(it.systemImei).trim());
-  // we’ll send different payload for serial vs non-serial
   return `
     <tr>
       <td>${escapeHTML(it.bin||"—")}</td>
@@ -1204,6 +1243,7 @@ supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
     </tr>
   `;
 }).join("") : `<tr><td colspan="6" class="empty">No not-scanned items.</td></tr>`);
+
 
 
         showAlerts(supAlerts,[]);
@@ -1268,6 +1308,40 @@ document.addEventListener("click", async (e) => {
   }
 });
 
+// Supervisor: delete a not-scanned entry
+document.addEventListener("click", async (e)=>{
+  const del = e.target.closest("[data-sup-del]");
+  if (!del) return;
+
+  if (currentUser?.role !== ROLES.SUPERVISOR){
+    return showAlerts(supAlerts,[{type:"warn",msg:"Only Supervisors can delete not-scanned entries."}]);
+  }
+
+  del.disabled = true;
+  try{
+    const payload = {
+      bin: del.getAttribute("data-bin") || "",
+      type: del.getAttribute("data-type") || ""
+    };
+    const imei = del.getAttribute("data-systemImei");
+    const sku  = del.getAttribute("data-sku");
+    if (payload.type === "serial") payload.systemImei = imei || "";
+    if (payload.type === "nonserial") payload.sku = sku || "";
+
+    const res = await fetch(CONFIG.NOT_SCANNED_ENDPOINT, {
+      method: "DELETE",
+      headers: { "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(await res.text());
+
+    await refreshSupervisorViews();
+  }catch(err){
+    showAlerts(supAlerts,[{type:"warn",msg:`Delete failed: <code>${escapeHTML(String(err.message||err))}</code>`}]);
+  }finally{
+    del.disabled = false;
+  }
+});
 
     // --- Init ------------------------------------------------------
     function init(){
