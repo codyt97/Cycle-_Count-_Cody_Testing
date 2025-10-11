@@ -49,7 +49,13 @@ async function loadRowsFromSheet(fileId) {
   const rows = json.map(r => {
     const systemImei = pick(r, "systemimei","imei","serial","lotorserialno","serialno");
     const hasSerial = !!systemImei;
-    const qtyFromSheet = pickNum(r, "systemqty","qty","quantity","onhand","on hand","on_hand");
+    const qtyFromSheet = pickNum(
+  r,
+  "systemqty","system qty","qty","quantity",
+  "onhand","on hand","on_hand","qtyonhand","qty on hand","qoh","soh","oh qty","ohqty",
+  "stock","inventory","available qty","availableqty","avail qty","availqty"
+);
+
     return {
       location:    pick(r, "bin","location","locationbin","locationbinref.name"),
       sku:         pick(r, "sku","item","item ","itemcode","itemref.code"),
