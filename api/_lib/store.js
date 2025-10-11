@@ -86,9 +86,12 @@ async function upsertBin(payload) {
     total:    payload.total,
     scanned:  payload.scanned,
     missing:  payload.missing,
+    // keep items (will now allow qtyEntered for non-serials)
     items:    Array.isArray(payload.items) ? payload.items : undefined,
-    // ensure objects with sku/description/systemImei
-    missingImeis: Array.isArray(payload.missingImeis) ? payload.missingImeis : [],
+    // for serials
+    missingImeis: Array.isArray(payload.missingImeis) ? payload.missingImeis : undefined,
+    // for non-serials (optional)
+    nonSerialShortages: Array.isArray(payload.nonSerialShortages) ? payload.nonSerialShortages : undefined,
     state: payload.state || "investigation",
     started: payload.started || nowISO(),
     updatedAt: nowISO(),
@@ -122,12 +125,12 @@ async function appendAudit(audit) {
     trueLocation: String(audit?.trueLocation || ""),
     scannedBy: audit?.scannedBy || "—",
     status: audit?.status || "open", // open|moved|closed|invalid
-    movedTo: audit?.movedTo || undefined,
-    movedBy: audit?.movedBy || undefined,
-    decision: audit?.decision || undefined,
-    decidedBy: audit?.decidedBy || undefined,
     createdAt: nowISO(),
     updatedAt: nowISO(),
+    movedTo: audit?.movedTo,
+    movedBy: audit?.movedBy,
+    decision: audit?.decision,
+    decidedBy: audit?.decidedBy,
   };
   if (!a.imei || !a.scannedBin) throw new Error("imei and scannedBin are required");
   const all = await listAudits();
@@ -143,14 +146,6 @@ async function patchAudit(id, patch) {
   await setJSON(K_CC_AUDIT, all);
   return all[idx];
 }
-async function deleteAudit(id) {
-  const all = await listAudits();
-  const idx = all.findIndex(x => x.id === id);
-  if (idx === -1) return false;
-  all.splice(idx, 1);
-  await setJSON(K_CC_AUDIT, all);
-  return true;
-}
 
 module.exports = {
   // utils
@@ -160,5 +155,5 @@ module.exports = {
   // cycle counts
   listBins, upsertBin, escalateBin,
   // audits
-  listAudits, appendAudit, patchAudit, deleteAudit,
+  listAudits, appendAudit, patchAudit,
 };
