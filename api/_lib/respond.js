@@ -1,7 +1,7 @@
 // api/_lib/respond.js
 function withCORS(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS,PATCH");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Sync-Token");
 }
 function ok(res, body) {
