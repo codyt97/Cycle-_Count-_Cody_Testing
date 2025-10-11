@@ -1,151 +1,150 @@
 // api/cyclecounts/submit.js
-const { ok, bad, method, withCORS } = require("../_lib/respond");
-const Store = require("../_lib/store");
+// Accepts a bin submission from the counter and persists:
+// - the cycle count summary (user-scoped)
+// - wrong-bin audits (buffered client-side) into the per-user audit set
+//
+// POST /api/cyclecounts/submit?user=<id>
+// Body:
+//  {
+//    bin, counter, total, scanned, missing,
+//    items: [{ location, sku, description, systemImei, scannedImei, qtyEntered?, systemQty? }, ...],
+//    missingImeis: [ ... ],
+//    nonSerialShortages?: [ ... ],
+//    wrongBin?: [{ imei, scannedBin, trueLocation, status:"open", scannedBy, ts }]
+//  }
 
-module.exports = async (req, res) => {
-  if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
-  if (req.method !== "POST")    return method(res, ["POST","OPTIONS"]);
-  withCORS(res);
+let Store = null;
+try { Store = require("../store"); } catch { /* fall back to in-memory */ }
 
-  try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
-    const bin = String(body.bin || "").trim();
-    const counter = String(body.counter || "").trim() || "—";
-    const scannedItems = Array.isArray(body.items) ? body.items : [];
+// in-memory fallback (dev only)
+const MEM = new Map();
 
-    if (!bin) return bad(res, "bin is required", 400);
-
-    // Snapshot rows for this bin
-    const inv = await Store.getInventory();
-    const expected = inv.filter(r => (String(r.location||"").trim().toLowerCase() === bin.toLowerCase()));
-
-    // --- Split expected into serial and non-serial
-    const expSerial = expected.filter(r => !!r.systemImei);
-    const expNonSerial = expected.filter(r => !r.systemImei);
-
-// Serial "expected set" by IMEI + lookup map for details
-const expectedSerialSet = new Set(expSerial.map(x => String(x.systemImei || "").trim()).filter(Boolean));
-const byImei = new Map(
-  expSerial.map(r => [ String(r.systemImei || "").trim(), { sku: r.sku || "—", description: r.description || "—" } ])
-);
-
-
-   // Scanned serial IMEIs (MUST use scannedImei, not systemImei)
-const scannedSerialSet = new Set(
-  scannedItems
-    .map(x => String(x.scannedImei || x.imei || "").trim())
-    .filter(Boolean)
-);
-
-
-// Missing serial IMEIs (save with SKU/Description for UI & deletes)
-const missingImeis = [...expectedSerialSet]
-  .filter(imei => !scannedSerialSet.has(imei))
-  .map(imei => {
-    const meta = byImei.get(imei) || { sku: "—", description: "—" };
-    return { sku: meta.sku, description: meta.description, systemImei: imei };
-  });
-
-
-    // --- Non-serial quantities
-    // Build a map of systemQty per SKU (sum if multiple rows)
-    const sysQtyBySku = new Map();
-    for (const r of expNonSerial) {
-      const sku = String(r.sku || "").trim() || "—";
-      const q = Number.isFinite(r.systemQty) ? r.systemQty : 0;
-      sysQtyBySku.set(sku, (sysQtyBySku.get(sku) || 0) + q);
-    }
-
-    // Pull qtyEntered for non-serials from scannedItems rows: { sku, qtyEntered }
-    const enteredQtyBySku = new Map();
-    for (const it of scannedItems) {
-      if (!it || (it.systemImei || it.imei)) continue; // serial rows handled above
-      const sku = String(it.sku || "").trim() || "—";
-      const q = Number(it.qtyEntered || 0);
-      if (q > 0) enteredQtyBySku.set(sku, (enteredQtyBySku.get(sku) || 0) + q);
-    }
-
-    // Compute shortages for non-serials
-    const nonSerialShortages = [];
-    let scannedNonSerialTotal = 0;
-    for (const [sku, sysQty] of sysQtyBySku.entries()) {
-      const entered = enteredQtyBySku.get(sku) || 0;
-      scannedNonSerialTotal += Math.min(entered, sysQty);
-      const short = Math.max(sysQty - entered, 0);
-      if (short > 0) {
-        const any = expNonSerial.find(r => (String(r.sku||"").trim() || "—") === sku);
-        nonSerialShortages.push({
-          bin,
-          sku,
-          description: any?.description || "—",
-          systemQty: sysQty,
-          qtyEntered: entered
-        });
-      }
-    }
-
-    // Totals
-    const totalExpected = (
-      expSerial.length + // each serial row = 1
-      [...sysQtyBySku.values()].reduce((a,b)=>a+b,0)
-    );
-
-    const scannedTotal = (
-      scannedSerialSet.size +
-      scannedNonSerialTotal
-    );
-
-    const missingTotal = Math.max(totalExpected - scannedTotal, 0);
-
-    const user = String(body.user || req.query?.user || req.headers["x-user"] || "anon").toLowerCase();
-const payload = {
-  user,                   // <-- tag the record with the user
-  bin,
-  counter,
-  total: totalExpected,
-  scanned: scannedTotal,
-  missing: missingTotal,
-  items: scannedItems,
-  missingImeis,
-  nonSerialShortages,
-  state: missingTotal ? "investigation" : "complete",
-  submittedAt: new Date().toISOString(),
-};
-// --- NEW: persist wrong-bin audits on submit (per-user)
-const wrongBin = Array.isArray(body.wrongBin) ? body.wrongBin : [];
-if (wrongBin.length) {
-  const k = `wrong_bin_audits:${user}`;
-  const existing = (await Store.get?.(k)) || (await Store.read?.(k)) || [];
-  const byOpenImei = new Map(existing.filter(x => x.status === "open").map(x => [String(x.imei||"").trim(), x]));
-  for (const wb of wrongBin) {
-    const imei = String(wb.imei||"").trim();
-    if (!imei) continue;
-    if (byOpenImei.has(imei)) {
-      // merge minimal updates
-      const row = byOpenImei.get(imei);
-      row.scannedBin   ||= String(wb.scannedBin||"").trim();
-      row.trueLocation ||= String(wb.trueLocation||"").trim();
-      row.scannedBy    ||= String(wb.scannedBy||"").trim();
-      row.updatedAt = new Date().toISOString();
-    } else {
-      existing.unshift({
-        id: (typeof crypto!=="undefined" && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now())+Math.random().toString(16).slice(2),
-        user,
-        imei,
-        scannedBin:   String(wb.scannedBin||"").trim(),
-        trueLocation: String(wb.trueLocation||"").trim(),
-        scannedBy:    String(wb.scannedBy||counter||"—").trim(),
-        status: "open",
-        movedTo: "",
-        movedBy: "",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-    }
-  }
-  if (Store.set)  await Store.set(k, existing);
-  else if (Store.write) await Store.write(k, existing);
+function norm(s){ return String(s ?? "").trim(); }
+function now(){ return new Date().toISOString(); }
+function userFrom(req, body={}) {
+  return String(req.query?.user || body.user || req.headers["x-user"] || "anon").toLowerCase();
 }
 
-    
+async function readJSON(req){
+  // handle vercel/node body variations safely
+  if (req.body && typeof req.body === "object") return req.body;
+  if (typeof req.body === "string" && req.body) {
+    try { return JSON.parse(req.body); } catch {}
+  }
+  return new Promise(resolve => {
+    let data = "";
+    req.on("data", c => data += c);
+    req.on("end", () => {
+      try { resolve(data ? JSON.parse(data) : {}); }
+      catch { resolve({}); }
+    });
+  });
+}
 
+function json(res, code, obj){
+  res.statusCode = code;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-User");
+  res.end(JSON.stringify(obj));
+}
+
+async function kvGet(key){
+  if (Store?.get) return await Store.get(key);
+  if (Store?.read) return await Store.read(key);
+  return MEM.get(key);
+}
+async function kvSet(key, value){
+  if (Store?.set) return await Store.set(key, value);
+  if (Store?.write) return await Store.write(key, value);
+  MEM.set(key, value);
+}
+
+module.exports = async function handler(req, res){
+  if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
+  if (req.method !== "POST")    { res.setHeader("Allow","POST,OPTIONS"); return json(res,405,{ ok:false, error:"method_not_allowed" }); }
+
+  try {
+    const body = await readJSON(req);
+    const user = userFrom(req, body);
+
+    // ------ basic payload normalization ------
+    const bin      = norm(body.bin);
+    const counter  = norm(body.counter || "");
+    const total    = Number.isFinite(+body.total)   ? +body.total   : 0;
+    const scanned  = Number.isFinite(+body.scanned) ? +body.scanned : 0;
+    const missing  = Number.isFinite(+body.missing) ? +body.missing : Math.max(0, total - scanned);
+
+    const items = Array.isArray(body.items) ? body.items : [];
+    const missingImeis       = Array.isArray(body.missingImeis)       ? body.missingImeis       : [];
+    const nonSerialShortages = Array.isArray(body.nonSerialShortages) ? body.nonSerialShortages : [];
+
+    // client-buffered wrong-bin list (to be persisted now)
+    const wrongBin = Array.isArray(body.wrongBin) ? body.wrongBin : [];
+
+    if (!bin) return json(res, 400, { ok:false, error:"missing_bin" });
+
+    // ------ persist wrong-bin audits into per-user set ------
+    // audits live under key: wrong_bin_audits:<user>
+    const auditKey = `wrong_bin_audits:${user}`;
+    const existingAudits = (await kvGet(auditKey)) || [];
+    const openByImei = new Map(existingAudits.filter(a => (a.status||"").toLowerCase()==="open")
+                                                .map(a => [String(a.imei||"").trim(), a]));
+    let mutate = false;
+
+    for (const wb of wrongBin) {
+      const imei = norm(wb.imei);
+      if (!imei) continue;
+
+      const scannedBin = norm(wb.scannedBin);
+      const trueLoc    = norm(wb.trueLocation);
+      const scannedBy  = norm(wb.scannedBy || counter || "—");
+
+      if (openByImei.has(imei)) {
+        // merge light updates
+        const row = openByImei.get(imei);
+        row.scannedBin   ||= scannedBin;
+        row.trueLocation ||= trueLoc;
+        row.scannedBy    ||= scannedBy;
+        row.updatedAt = now();
+        mutate = true;
+      } else {
+        existingAudits.unshift({
+          id: (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID()
+               : String(Date.now()) + Math.random().toString(16).slice(2),
+          user,
+          imei,
+          scannedBin,
+          trueLocation: trueLoc,
+          scannedBy,
+          status: "open",
+          movedTo: "",
+          movedBy: "",
+          createdAt: now(),
+          updatedAt: now()
+        });
+        mutate = true;
+      }
+    }
+    if (mutate) await kvSet(auditKey, existingAudits);
+
+    // ------ persist the cycle count summary (user + bin scoped) ------
+    const recordKey = `cyclecount:${user}:${bin}`;
+    const payload = {
+      user, bin, counter,
+      total, scanned, missing,
+      items,
+      missingImeis,
+      nonSerialShortages,
+      state: missing > 0 ? "investigation" : "complete",
+      submittedAt: now()
+    };
+    await kvSet(recordKey, payload);
+
+    return json(res, 200, { ok:true, bin, state: payload.state, submittedAt: payload.submittedAt });
+  } catch (err) {
+    // never throw raw; return a stable error object
+    return json(res, 500, { ok:false, error:"submit_failed", detail: String(err && err.message || err) });
+  }
+};
