@@ -770,19 +770,15 @@ async function logWrongBin(payload) {
     if (CONFIG.FORCE_MOCK) return { ok:true };
     const body = { user: userId(), ...payload };
     const res = await fetch(`${CONFIG.AUDIT_ENDPOINT}?user=${encodeURIComponent(userId())}`, {
-  method: "PATCH",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ id, ...payload, user: userId() })
-});
-
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
     return await res.json();
   } catch {
     return { ok:false };
   }
 }
-
-
-
 
     async function fetchAuditList() {
   if (CONFIG.FORCE_MOCK) { return mockAudits(); }
@@ -794,15 +790,16 @@ async function logWrongBin(payload) {
 }
 
     async function patchAudit(id, payload){
-      if (CONFIG.FORCE_MOCK) return { ok:true };
-      const res = await fetch(CONFIG.AUDIT_ENDPOINT, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, ...payload })
-      });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
-    }
+  if (CONFIG.FORCE_MOCK) return { ok:true };
+  const res = await fetch(`${CONFIG.AUDIT_ENDPOINT}?user=${encodeURIComponent(userId())}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, ...payload, user: userId() })
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 
     async function fetchSummary(){
       if (CONFIG.FORCE_MOCK) return mockSummary();
