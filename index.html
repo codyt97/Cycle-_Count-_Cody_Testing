@@ -570,22 +570,40 @@ setKPIs();
 
     };
 
-    const csvEscape = (v="") => /[",\n]/.test(v) ? `"${v.replace(/"/g,'""')}"` : v;
     const toCSV = (data) => {
-      const header = ["Location","SKU","Description","System IMEI","Scanned IMEI","System Qty","Qty Entered"];
-// ...
-const sysQty = Number.isFinite(r.systemQty) ? r.systemQty : (r.systemImei ? 1 : 0);
-const qtyEnt = r.systemImei ? (r.scannedImei===r.systemImei ? 1 : 0) : Number(r.qtyEntered || 0);
-lines.push([r.location,r.sku||"",r.description||"",r.systemImei,r.scannedImei||"",String(sysQty),String(qtyEnt)].map(csvEscape).join(","));
+  const header = ["Location","SKU","Description","System IMEI","Scanned IMEI","System Qty","Qty Entered"];
+  const lines = [header.join(",")];
 
-      }
-      return lines.join("\n");
-    };
+  for (const r of (Array.isArray(data) ? data : [])) {
+    const sysQty = Number.isFinite(r.systemQty) ? r.systemQty : (r.systemImei ? 1 : 0);
+    const qtyEnt = r.systemImei
+      ? (r.scannedImei === r.systemImei ? 1 : 0)
+      : Number(r.qtyEntered || 0);
+
+    lines.push(
+      [r.location, r.sku || "", r.description || "", r.systemImei, r.scannedImei || "", String(sysQty), String(qtyEnt)]
+        .map(csvEscape)
+        .join(",")
+    );
+  }
+  return lines.join("\n");
+};
+
     const downloadCSV = (subset="all") => {
       if (!rows.length) return showAlerts(alerts,[{type:"warn",msg:"No rows to export."}]);
       let data = rows;
       if (subset==="scanned") data = rows.filter(r => r.scannedImei===r.systemImei);
-      if (subset==="missing") data = rows.filter(r => r.scannedImei!==r.systemImei);
+      if (subset==="missing") {
+  data = rows.filter(r => {
+    // serial missing
+    if (r.systemImei) return r.scannedImei !== r.systemImei;
+    // non-serial shortage: entered < system
+    const sys = Number(r.systemQty || 0);
+    const ent = Number(r.qtyEntered || 0);
+    return ent < sys;
+  });
+}
+
       const csv = toCSV(data);
       const blob = new Blob([csv],{type:"text/csv;charset=utf-8"});
       const url = URL.createObjectURL(blob);
