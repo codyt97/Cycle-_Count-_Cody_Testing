@@ -855,9 +855,10 @@ const payload = {
     ...(r.hasSerial ? {} : { qtyEntered: Number(r.qtyEntered || 0), systemQty: Number(r.systemQty || 0) })
   })),
   missingImeis: missingList,
-  // NEW: all wrong-bin audits buffered during this session
+  // NEW: send buffered wrong-bin audits with the submit
   wrongBin: pendingWrongBin.slice()
 };
+
 
 
       try{
