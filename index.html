@@ -637,16 +637,19 @@ const csvEscape = (v) => {
   data = rows.filter(r => String(r.scannedImei||"").trim() === String(r.systemImei||"").trim());
 }
 
-      if (subset==="missing") {
+if (subset==="missing") {
   data = rows.filter(r => {
-    // serial missing
-    if (r.systemImei) return r.scannedImei !== r.systemImei;
+    // serial missing (trim both sides)
+    if (r.systemImei) {
+      return String(r.scannedImei||"").trim() !== String(r.systemImei||"").trim();
+    }
     // non-serial shortage: entered < system
     const sys = Number(r.systemQty || 0);
     const ent = Number(r.qtyEntered || 0);
     return ent < sys;
   });
 }
+
 
       const csv = toCSV(data);
       const blob = new Blob([csv],{type:"text/csv;charset=utf-8"});
@@ -1273,40 +1276,6 @@ supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
         btn.disabled = false;
       }
     });
-    // Supervisor: delete a not-scanned entry
-document.addEventListener("click", async (e) => {
-  const del = e.target.closest("[data-sup-del]");
-  if (!del) return;
-
-  if (currentUser?.role !== ROLES.SUPERVISOR) {
-    return showAlerts(supAlerts,[{type:"warn",msg:"Only Supervisors can delete not-scanned entries."}]);
-  }
-
-  del.disabled = true;
-  try{
-    const payload = {
-      bin: del.getAttribute("data-bin") || "",
-      type: del.getAttribute("data-type") || ""
-    };
-    const imei = del.getAttribute("data-systemImei");
-    const sku  = del.getAttribute("data-sku");
-    if (payload.type === "serial") payload.systemImei = imei || "";
-    if (payload.type === "nonserial") payload.sku = sku || "";
-
-    const res = await fetch(CONFIG.NOT_SCANNED_ENDPOINT, {
-      method: "DELETE",
-      headers: { "Content-Type":"application/json" },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) throw new Error(await res.text());
-
-    await refreshSupervisorViews();
-  }catch(err){
-    showAlerts(supAlerts,[{type:"warn",msg:`Delete failed: <code>${escapeHTML(String(err.message||err))}</code>`}]);
-  }finally{
-    del.disabled = false;
-  }
-});
 
 // Supervisor: delete a not-scanned entry
 document.addEventListener("click", async (e)=>{
