@@ -79,23 +79,23 @@ async function upsertBin(payload) {
   const bins = await listBins();
   const idx = bins.findIndex(b => String(b.bin || "").toLowerCase() === bin.toLowerCase());
 
-  const merged = {
-    id: (idx !== -1 ? bins[idx].id : (payload.id || randomUUID())),
-    bin,
-    user: payload.user ?? bins[idx]?.user,
-    counter: payload.counter ?? bins[idx]?.counter ?? "—",
-    total: payload.total ?? bins[idx]?.total,
-    scanned: payload.scanned ?? bins[idx]?.scanned,
-    missing: payload.missing ?? bins[idx]?.missing,
-    items: Array.isArray(payload.items) ? payload.items : bins[idx]?.items,
-    missingImeis: Array.isArray(payload.missingImeis) ? payload.missingImeis : bins[idx]?.missingImeis,
-    nonSerialShortages: Array.isArray(payload.nonSerialShortages) ? payload.nonSerialShortages : bins[idx]?.nonSerialShortages,
-    state: payload.state || bins[idx]?.state || "investigation",
-    // preserve original start; only set if brand new
-    started: bins[idx]?.started || payload.started || nowISO(),
-    updatedAt: nowISO(),
-    submittedAt: payload.submittedAt || nowISO(),
-  };
+const merged = {
+  id: (idx !== -1 ? bins[idx].id : (payload.id || randomUUID())),
+  bin,
+  user: payload.user ?? bins[idx]?.user,
+  counter: payload.counter ?? bins[idx]?.counter ?? "—",
+  total: payload.total ?? bins[idx]?.total,
+  scanned: payload.scanned ?? bins[idx]?.scanned,
+  missing: payload.missing ?? bins[idx]?.missing,
+  items: Array.isArray(payload.items) ? payload.items : bins[idx]?.items,
+  missingImeis: Array.isArray(payload.missingImeis) ? payload.missingImeis : bins[idx]?.missingImeis,
+  nonSerialShortages: Array.isArray(payload.nonSerialShortages) ? payload.nonSerialShortages : bins[idx]?.nonSerialShortages,
+  state: payload.state || bins[idx]?.state || "investigation",
+  started: bins[idx]?.started || payload.started || nowISO(), // preserve original
+  updatedAt: nowISO(),
+  submittedAt: payload.submittedAt || nowISO(),
+};
+
 
 
   if (idx === -1) bins.push(merged);
