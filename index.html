@@ -397,7 +397,7 @@
     // --- Config ----------------------------------------------------
     const CONFIG = {
       BIN_ENDPOINT: "/api/inventory/bin?bin=",
-      IMEI_ENDPOINT: "/api/ordertime/imei?imei=",
+      IMEI_ENDPOINT: "/api/inventory/imei?imei=",
       AUDIT_ENDPOINT: "/api/audit/wrong-bin",              // GET(list) POST(log) PATCH(update)
       SUMMARY_ENDPOINT: "/api/cyclecounts/summary",        // GET bins & states
       NOT_SCANNED_ENDPOINT: "/api/cyclecounts/not-scanned",// GET missing
@@ -606,29 +606,29 @@
     }
 
     async function locateImei(imei){
-      try{
-        if (CONFIG.FORCE_MOCK) return mockLocate(imei, currentBin || "K-01-01");
-        const res = await fetch(CONFIG.IMEI_ENDPOINT + encodeURIComponent(imei), { cache:"no-store" });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        if (!data || !data.location) return null;
-        return data;
-      }catch(e){
-        showAlerts(alerts,[{type:"warn",msg:`OrderTime IMEI lookup failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
-        return null;
-      }
-    }
+  try{
+    if (CONFIG.FORCE_MOCK) return mockLocate(imei, currentBin || "K-01-01");
+    const params = new URLSearchParams({
+      imei,
+      scannedBin: currentBin || "",
+      scannedBy: currentUser?.name || "—",
+    });
+    const res = await fetch(`${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${params.toString()}`, { cache:"no-store" });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
+    return data || null;
+  }catch(e){
+    showAlerts(alerts,[{type:"warn",msg:`IMEI lookup failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
+    return null;
+  }
+}
 
-    async function logWrongBin({ imei, scannedBin, trueLocation }) {
-      try{
-        if (CONFIG.FORCE_MOCK) return;
-        await fetch(CONFIG.AUDIT_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ imei, scannedBin, trueLocation, scannedBy: currentUser?.name || "—" })
-        });
-      }catch(_e){ /* non-blocking */ }
-    }
+
+    async function logWrongBin(_payload) {
+  // No-op: /api/inventory/imei already auto-logs wrong-bin audits on mismatch.
+  return;
+}
+
 
     async function fetchAuditList() {
       if (CONFIG.FORCE_MOCK) { return mockAudits(); }
@@ -837,15 +837,18 @@
         renderTable(); scanInput.value=""; return;
       }
 
-      // Not in current bin -> find true location + log audit
-      const info = await locateImei(imei);
-      if (info && info.location){
-        showAlerts(alerts,[{type:"warn",msg:`Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>, not <b>${escapeHTML(currentBin||'—')}</b>.`}]);
-        logWrongBin({ imei, scannedBin: currentBin || "-", trueLocation: info.location });
-      }else{
-        showAlerts(alerts,[{type:"warn",msg:`IMEI <b>${escapeHTML(imei)}</b> not found in ERP.`}]);
-      }
-      scanInput.value="";
+      // Not in current bin -> ask inventory API for true location (it also auto-logs audit)
+const info = await locateImei(imei);
+if (info && info.location){
+  const msg = info.auditLogged
+    ? `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b> (auto-logged).`
+    : `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>.`;
+  showAlerts(alerts,[{type:"warn",msg}]);
+} else {
+  showAlerts(alerts,[{type:"warn",msg:`IMEI <b>${escapeHTML(imei)}</b> not found in snapshot.`}]);
+}
+scanInput.value="";
+
     });
 
     submitBinBtn.addEventListener("click", async ()=>{
