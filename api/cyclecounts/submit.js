@@ -23,8 +23,12 @@ module.exports = async (req, res) => {
     const expSerial = expected.filter(r => !!r.systemImei);
     const expNonSerial = expected.filter(r => !r.systemImei);
 
-    // Serial "expected set" by IMEI
-    const expectedSerialSet = new Set(expSerial.map(x => String(x.systemImei || "").trim()).filter(Boolean));
+// Serial "expected set" by IMEI + lookup map for details
+const expectedSerialSet = new Set(expSerial.map(x => String(x.systemImei || "").trim()).filter(Boolean));
+const byImei = new Map(
+  expSerial.map(r => [ String(r.systemImei || "").trim(), { sku: r.sku || "—", description: r.description || "—" } ])
+);
+
 
    // Scanned serial IMEIs (MUST use scannedImei, not systemImei)
 const scannedSerialSet = new Set(
@@ -34,8 +38,14 @@ const scannedSerialSet = new Set(
 );
 
 
-    // Missing serial IMEIs
-    const missingImeis = [...expectedSerialSet].filter(imei => !scannedSerialSet.has(imei));
+// Missing serial IMEIs (save with SKU/Description for UI & deletes)
+const missingImeis = [...expectedSerialSet]
+  .filter(imei => !scannedSerialSet.has(imei))
+  .map(imei => {
+    const meta = byImei.get(imei) || { sku: "—", description: "—" };
+    return { sku: meta.sku, description: meta.description, systemImei: imei };
+  });
+
 
     // --- Non-serial quantities
     // Build a map of systemQty per SKU (sum if multiple rows)
