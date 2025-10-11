@@ -65,6 +65,8 @@
     th,td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left}
     th{font-size:12px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.04em}
     tr.ok{background:var(--cu-green-50)}
+    tr.warn{background:#fff7ed}  /* amber for deficits (entered < system) */
+    tr.bad{ background:#fee2e2}  /* red for overcounts (entered > system) */
     .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
     .qty{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;font-weight:800;background:#eef3ea;color:#1f3a1a}
     .qty.is1{background:var(--cu-green);color:#0a0a0a}
@@ -795,9 +797,22 @@ async function fetchAuditList() {
   if (CONFIG.FORCE_MOCK) { return mockAudits(); }
   const res = await fetch(`${CONFIG.AUDIT_ENDPOINT}?user=${encodeURIComponent(userId())}`);
   if (!res.ok) throw new Error(await res.text());
-  const j = await res.json();
+    const j = await res.json();
   const audits = j.audits || j.records || [];
-  return Array.isArray(audits) ? audits : [];
+  const list = Array.isArray(audits) ? audits : [];
+
+  // De-dupe by IMEI: keep the most recently updated OPEN record per IMEI
+  const seen = new Map();
+  for (const a of list) {
+    const k = String(a.imei || "").trim();
+    if (!k) continue;
+    if (!seen.has(k)) { seen.set(k, a); continue; }
+    const prev = seen.get(k);
+    const pick = (String(a.status||"open")==="open" && new Date(a.updatedAt||0) >= new Date(prev.updatedAt||0)) ? a : prev;
+    seen.set(k, pick);
+  }
+  return Array.from(seen.values());
+];
 }
 
 
@@ -843,6 +858,64 @@ async function fetchNotScanned() {
   return Array.isArray(items) ? items : [];
 }
 
+// --- Investigator: render Not-Scanned ---
+async function renderInvestigatorNotScanned(){
+  const tbody = document.getElementById("invNotScannedBody");
+  try{
+    const items = await fetchNotScanned();
+    if (!items.length){
+      tbody.innerHTML = `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items.map(row => {
+      const isSerial = !!String(row.systemImei||"").trim();
+      const sys = Number(row.systemQty || (isSerial ? 1 : 0));
+      const ent = Number(row.qtyEntered || 0);
+      let cls = "";
+      if (!isSerial){
+        if (ent === sys) cls = "ok";      // green: matched
+        else if (ent > sys) cls = "bad";  // red: overcount
+        else cls = "warn";                // amber: deficit (missing qty = sys-ent)
+      }
+      const invCell = isSerial
+        ? `<input class="field mono" placeholder="scan IMEI" data-invscan="${row.systemImei}" style="width:160px" />`
+        : ``;
+
+      return `
+        <tr class="${cls}">
+          <td>${isSerial ? "serial" : "nonserial"}</td>
+          <td class="mono">${row.sku || "—"}</td>
+          <td>${row.description || "—"}</td>
+          <td class="mono">${row.systemImei || ""}</td>
+          <td>${sys}</td>
+          <td>${ent}</td>
+          <td class="row-sm">${invCell}</td>
+        </tr>
+      `;
+    }).join("");
+  }catch(e){
+    tbody.innerHTML = `<tr><td colspan="7" class="empty">Failed to load not-scanned.</td></tr>`;
+  }
+}
+
+// Investigator “scan” of a missing serial IMEI → clear from list
+document.addEventListener("keydown", async (e)=>{
+  const el = e.target.closest("[data-invscan]");
+  if (!el || e.key !== "Enter") return;
+  const sys = el.getAttribute("data-invscan");
+  const body = { user: userId(), bin: (currentBin || ""), type:"serial", systemImei: sys };
+  try{
+    const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}`, {
+      method:"DELETE",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error(await res.text());
+    await renderInvestigatorNotScanned();
+  }catch(err){
+    showAlerts(investAlerts,[{type:"warn",msg:`Could not clear ${sys}: <code>${escapeHTML(String(err.message||err))}</code>`}]);
+  }
+});
 
 
     async function submitBinToInvestigator(){
