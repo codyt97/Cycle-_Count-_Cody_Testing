@@ -87,7 +87,8 @@ async function upsertBin(payload) {
     scanned:  payload.scanned,
     missing:  payload.missing,
     items:    Array.isArray(payload.items) ? payload.items : undefined,
-    missingImeis: Array.isArray(payload.missingImeis) ? payload.missingImeis : undefined,
+    // ensure objects with sku/description/systemImei
+    missingImeis: Array.isArray(payload.missingImeis) ? payload.missingImeis : [],
     state: payload.state || "investigation",
     started: payload.started || nowISO(),
     updatedAt: nowISO(),
@@ -121,6 +122,10 @@ async function appendAudit(audit) {
     trueLocation: String(audit?.trueLocation || ""),
     scannedBy: audit?.scannedBy || "—",
     status: audit?.status || "open", // open|moved|closed|invalid
+    movedTo: audit?.movedTo || undefined,
+    movedBy: audit?.movedBy || undefined,
+    decision: audit?.decision || undefined,
+    decidedBy: audit?.decidedBy || undefined,
     createdAt: nowISO(),
     updatedAt: nowISO(),
   };
@@ -138,6 +143,14 @@ async function patchAudit(id, patch) {
   await setJSON(K_CC_AUDIT, all);
   return all[idx];
 }
+async function deleteAudit(id) {
+  const all = await listAudits();
+  const idx = all.findIndex(x => x.id === id);
+  if (idx === -1) return false;
+  all.splice(idx, 1);
+  await setJSON(K_CC_AUDIT, all);
+  return true;
+}
 
 module.exports = {
   // utils
@@ -147,5 +160,5 @@ module.exports = {
   // cycle counts
   listBins, upsertBin, escalateBin,
   // audits
-  listAudits, appendAudit, patchAudit,
+  listAudits, appendAudit, patchAudit, deleteAudit,
 };
