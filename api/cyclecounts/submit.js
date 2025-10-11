@@ -26,12 +26,13 @@ module.exports = async (req, res) => {
     // Serial "expected set" by IMEI
     const expectedSerialSet = new Set(expSerial.map(x => String(x.systemImei || "").trim()).filter(Boolean));
 
-    // Scanned serial IMEIs (from items[{systemImei|imei}])
-    const scannedSerialSet = new Set(
-      scannedItems
-        .map(x => String(x.systemImei || x.imei || "").trim())
-        .filter(Boolean)
-    );
+   // Scanned serial IMEIs (MUST use scannedImei, not systemImei)
+const scannedSerialSet = new Set(
+  scannedItems
+    .map(x => String(x.scannedImei || x.imei || "").trim())
+    .filter(Boolean)
+);
+
 
     // Missing serial IMEIs
     const missingImeis = [...expectedSerialSet].filter(imei => !scannedSerialSet.has(imei));
