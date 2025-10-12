@@ -5,7 +5,6 @@
   "type": "commonjs",
   "dependencies": {
     "googleapis": "^128.0.0",
-    "ioredis": "^5.4.1",
     "xlsx": "^0.18.5"
   }
 }
