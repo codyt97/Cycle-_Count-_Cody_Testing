@@ -91,6 +91,7 @@ for (const rec of sheetRecords) {
   merged.set(String(rec.bin || "").trim().toUpperCase(), { ...rec });
 }
 // overwrite/insert from Store
+// overwrite/insert from Store
 for (const [k, b] of latestByBin.entries()) {
   const items = Array.isArray(b.items) ? b.items : [];
   const total =
@@ -102,27 +103,27 @@ for (const [k, b] of latestByBin.entries()) {
   const missing = Math.max(0, serialMissing + nonSerialMissing);
   const scanned = Math.max(0, total - missing);
 
-  const started = b.started || b.submittedAt || b.updatedAt;
-  const updated = b.submittedAt || b.updatedAt || b.started;
+  const startedRaw = b.started || b.submittedAt || b.updatedAt;
+  const updatedRaw = b.submittedAt || b.updatedAt || b.started;
 
   merged.set(k, {
     bin: b.bin,
     counter: String(b.counter || "—"),
-    started: toEST(started),
-    updated: toEST(updated),
-    total,
-    scanned,
-    missing,
+    started: toEST(startedRaw),
+    updated: toEST(updatedRaw),
+    updatedTs: Date.parse(updatedRaw) || 0,  // <— numeric sort key
+    total, scanned, missing,
     state: String(b.state || "investigation"),
   });
 }
 
-
-// 3) Sort by updated desc (use numeric ts) and return
+// 3) Sort by updated desc (numeric) and return
 const out = Array.from(merged.values())
-  .map(r => ({ ...r, _updatedTs: Date.parse(r.updated) || 0 })) // safe numeric
-  .sort((a,b) => b._updatedTs - a._updatedTs)
-  .map(({ _updatedTs, ...r }) => r); // strip helper
+  .sort((a,b) => (b.updatedTs||0) - (a.updatedTs||0))
+  .map(({ updatedTs, ...r }) => r);
+
+return ok(res, { records: out });
+
 
 return ok(res, { records: out });
 
