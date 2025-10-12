@@ -320,8 +320,9 @@
       </tr>
     </thead>
     <tbody id="invNotScannedBody">
-      <tr><td colspan="6" class="empty">No not-scanned items.</td></tr>
-    </tbody>
+  <tr><td colspan="7" class="empty">No not-scanned items.</td></tr>
+</tbody>
+
   </table>
 </div>
 
@@ -886,15 +887,27 @@ async function renderInvestigatorNotScanned(){
           <td>${isSerial ? "serial" : "nonserial"}</td>
           <td class="mono">${row.sku || "—"}</td>
           <td>${row.description || "—"}</td>
-          <td class="mono">${row.systemImei || ""}</td>
-          // input for non-serial; serial uses scan input
+const isSerial = !!String(row.systemImei||"").trim();
+const sys = Number(row.systemQty || (isSerial ? 1 : 0));
+const ent = Number(row.qtyEntered || 0);
+
+let cls = "";
+if (!isSerial){
+  if (ent === sys) cls = "ok";      // matched
+  else if (ent > sys) cls = "bad";  // overcount
+  else cls = "warn";                // deficit
+}
+
+const invCell = isSerial
+  ? `<input class="field mono" placeholder="scan IMEI" data-invscan="${row.systemImei}" style="width:160px" />`
+  : "";
+
 const qtyCell = isSerial
   ? ""
   : `<input class="field mono" placeholder="enter qty"
-            data-nonserial data-sku="${row.sku || ""}"
-            value="${ent}" style="width:120px" />`;
+       data-nonserial data-sku="${row.sku || ""}"
+       value="${ent}" style="width:120px" />`;
 
-// show remaining for non-serial (System − Entered); for serial show 0/1 entered
 const remaining = isSerial ? ent : Math.max(0, sys - ent);
 
 return `
@@ -908,6 +921,7 @@ return `
     <td class="row-sm">${invCell || qtyCell}</td>
   </tr>
 `;
+
 
         </tr>
       `;
