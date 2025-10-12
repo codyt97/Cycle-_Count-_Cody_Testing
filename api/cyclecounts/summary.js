@@ -125,8 +125,6 @@ const out = Array.from(merged.values())
 return ok(res, { records: out });
 
 
-return ok(res, { records: out });
-
   } catch (e) {
     console.error("[summary] sheets read fail:", e);
     res.statusCode = 500;
