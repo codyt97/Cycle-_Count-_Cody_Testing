@@ -33,76 +33,99 @@ async function readTabObjects(spreadsheetId, tabName) {
   });
 }
 
-// -------- DELETE: investigator clears a serial IMEI --------
+// --- REPLACE your existing handleDelete with this version ---
 async function handleDelete(req, res){
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-    const bin  = norm(body.bin);
-    const imei = norm(body.systemImei || body.imei);
-    const user = norm(body.user || body.counter || "");
+    let bin  = norm(body.bin || req.query?.bin || "");
+    const imei = norm(body.systemImei || body.imei || req.query?.imei || "");
+    const user = norm(body.user || body.counter || req.query?.user || "");
 
-    if (!bin)  return bad(res, "bin is required", 400);
     if (!imei) return bad(res, "systemImei is required", 400);
 
-    // latest record for this bin
+    // If bin missing, derive it from the most-recent Store record that references this IMEI
+    if (!bin) {
+      const all = await Store.listBins();
+      let best = null, bestT = -1;
+
+      for (const r of all) {
+        const t = Date.parse(r.submittedAt || r.updatedAt || r.started || 0) || 0;
+        const items = Array.isArray(r.items) ? r.items : [];
+        const missingImeis = Array.isArray(r.missingImeis) ? r.missingImeis : [];
+
+        const inMissing = missingImeis.some(x => norm(x) === imei);
+        const inItemsWithDeficit = items.some(it => norm(it.systemImei) === imei && Number(it.qtyEntered||0) < (Number(it.systemQty||0) || 1));
+
+        if (inMissing || inItemsWithDeficit) {
+          if (t > bestT) { best = r; bestT = t; }
+        }
+      }
+
+      if (!best) return bad(res, "bin not found for provided IMEI", 404);
+      bin = norm(best.bin);
+    }
+
+    // Fetch latest record for the resolved bin
     const all = await Store.listBins();
-    let latest = null, bestT = -1;
+    let rec = null, recTime = -1;
     for (const r of all) {
       if (norm(r.bin).toUpperCase() !== bin.toUpperCase()) continue;
       const t = Date.parse(r.submittedAt || r.updatedAt || r.started || 0) || 0;
-      if (t > bestT) { bestT = t; latest = r; }
+      if (t > recTime) { rec = r; recTime = t; }
     }
-    if (!latest) return bad(res, "bin not found", 404);
+    if (!rec) return bad(res, "bin not found", 404);
 
-    latest.items = Array.isArray(latest.items) ? [...latest.items] : [];
-    latest.missingImeis = Array.isArray(latest.missingImeis) ? [...latest.missingImeis] : [];
+    rec.items = Array.isArray(rec.items) ? [...rec.items] : [];
+    rec.missingImeis = Array.isArray(rec.missingImeis) ? [...rec.missingImeis] : [];
 
+    // 1) mark serial item entered if present
     let changed = false;
-
-    // 1) mark the serial row as entered
-    const j = latest.items.findIndex(it => norm(it.systemImei) === imei);
-    if (j !== -1) {
-      latest.items[j] = { ...latest.items[j], systemImei: imei, systemQty: 1, qtyEntered: 1 };
-      changed = true;
+    for (const it of rec.items) {
+      if (norm(it.systemImei) === imei) {
+        const target = Math.max(1, Number(it.systemQty || 1));
+        if (Number(it.qtyEntered || 0) < target) {
+          it.qtyEntered = target;
+          changed = true;
+        }
+      }
     }
 
     // 2) remove from missingImeis
-    const beforeLen = latest.missingImeis.length;
-    latest.missingImeis = latest.missingImeis.filter(x => norm(x) !== imei);
-    if (latest.missingImeis.length !== beforeLen) changed = true;
+    const beforeLen = rec.missingImeis.length;
+    rec.missingImeis = rec.missingImeis.filter(x => norm(x) !== imei);
+    if (rec.missingImeis.length !== beforeLen) changed = true;
 
     // 3) recompute scanned/missing
     if (changed) {
-      const serialMissing = latest.missingImeis.length;
-      const nonSerialMissing = latest.items
+      const serialMissing = rec.missingImeis.length;
+      const nonSerialMissing = rec.items
         .filter(it => !norm(it.systemImei))
         .reduce((a, it) => a + Math.max(Number(it.systemQty||0) - Number(it.qtyEntered||0), 0), 0);
-      const missing = serialMissing + nonSerialMissing;
 
-      const total = Number(latest.total || (
-        latest.items.reduce((a,it)=>a + (norm(it.systemImei) ? 1 : Number(it.systemQty||0)), 0)
+      const missing = serialMissing + nonSerialMissing;
+      const total = Number(rec.total || (
+        rec.items.reduce((a,it)=>a + (norm(it.systemImei) ? 1 : Number(it.systemQty||0)), 0)
       ));
       const scanned = Math.max(0, total - missing);
 
-      latest = await Store.upsertBin({
-        ...latest,
+      rec = await Store.upsertBin({
+        ...rec,
         scanned,
         missing,
-        submittedAt: nowISO()
+        updatedAt: new Date().toISOString(),
       });
 
-      // Optional audit trail
-      try {
-        await appendRow("FoundImeis", [bin, imei, user || "—", latest.counter || "—", nowISO()]);
-      } catch {}
+      // Optional audit
+      try { await appendRow("FoundImeis", [bin, imei, user || "—", rec.counter || "—", new Date().toISOString()]); } catch {}
     }
 
-    return ok(res, { ok:true, updated:changed, record: latest });
+    return ok(res, { ok:true, bin, imei, updated: changed, record: rec });
   } catch (e) {
     console.error("[not-scanned][DELETE] fail:", e);
     return bad(res, String(e.message || e), 500);
   }
 }
+
 
 // -------- GET: list not-scanned (existing behavior, unchanged except small helpers) --------
 function looseUserMatch(counter, want) {
