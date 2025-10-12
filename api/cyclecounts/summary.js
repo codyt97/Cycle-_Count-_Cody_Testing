@@ -72,6 +72,19 @@ module.exports = async (req, res) => {
         state: String(r.State ?? r.state ?? "investigation"),
       };
     });
+    // Dedupe: keep only the latest row per bin (by SubmittedAt/updated)
+const byBin = new Map();
+for (const rec of records) {
+  const k = String(rec.bin || "").trim().toUpperCase();
+  const t = Date.parse(rec.updated) || 0;
+  const prev = byBin.get(k);
+  const prevT = prev ? (Date.parse(prev.updated) || 0) : -1;
+  if (!prev || t > prevT) byBin.set(k, rec);
+}
+const deduped = Array.from(byBin.values())
+  .sort((a, b) => (Date.parse(b.updated) || 0) - (Date.parse(a.updated) || 0));
+return ok(res, { records: deduped });
+
 
     return ok(res, { records });
   } catch (e) {
