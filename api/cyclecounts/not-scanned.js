@@ -32,6 +32,16 @@ async function readTabObjects(spreadsheetId, tabName) {
 }
 
 function norm(s){ return String(s ?? "").trim(); }
+function looseUserMatch(counter, want) {
+  const c = norm(counter).toLowerCase();
+  const w = norm(want).toLowerCase();
+  if (!c || !w) return false;
+  if (c === w) return true;
+  if (c.includes(w)) return true;            // substring match (“matt”, “max”)
+  const [first, ...rest] = c.split(/\s+/);
+  const last = rest.length ? rest[rest.length-1] : "";
+  return first === w || last === w;
+}
 
 module.exports = async (req, res) => {
   if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
@@ -98,7 +108,6 @@ module.exports = async (req, res) => {
         for (const raw of b.missingImeis) {
           const mi = String(raw || "").trim();
           if (!mi) continue;
-          // Skip if items[] already produced a serial-shortage row for this IMEI
           if (knownImeis.has(mi)) continue;
 
           // Try to enrich SKU/Description from the inventory snapshot
@@ -129,11 +138,11 @@ module.exports = async (req, res) => {
     all = (all || []).concat(fromStore);
 
     // Optional filters
-    const wantUser = norm(req.query.user || "").toLowerCase();
+    const wantUser = norm(req.query.user || "");
     const wantBin  = norm(req.query.bin || "").toUpperCase();
 
     if (wantUser) {
-      all = all.filter(r => norm(r.Counter || r.counter).toLowerCase() === wantUser);
+      all = all.filter(r => looseUserMatch(r.Counter || r.counter, wantUser));
     }
     if (wantBin) {
       all = all.filter(r => norm(r.Bin || r.bin).toUpperCase() === wantBin);
@@ -144,7 +153,7 @@ module.exports = async (req, res) => {
       norm(r.Bin || r.bin),
       norm(r.SKU || r.sku),
       norm(r.Description || r.description),
-      norm(r.SystemImei || r.systemImei) // keep serial rows distinct
+      norm(r.SystemImei || r.systemImei)
     ].join("|");
 
     const map = new Map();
@@ -156,7 +165,7 @@ module.exports = async (req, res) => {
       counter: norm(r.Counter ?? r.counter) || "—",
       sku: norm(r.SKU ?? r.sku) || "—",
       description: norm(r.Description ?? r.description) || "—",
-      systemImei: norm(r.SystemImei ?? r.systemImei), // show IMEI when present
+      systemImei: norm(r.SystemImei ?? r.systemImei),
       systemQty: Number(r.QtySystem ?? r.systemQty ?? 0),
       qtyEntered: Number(r.QtyEntered ?? r.qtyEntered ?? 0),
       type: norm(r.Type ?? r.type) || (norm(r.SystemImei ?? r.systemImei) ? "serial" : "nonserial"),
