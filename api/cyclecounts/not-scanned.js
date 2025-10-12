@@ -25,12 +25,12 @@ async function readTabObjects(spreadsheetId, tabName) {
 
   return rows.map(r => {
     const obj = {};
-    for (let i = 0; i < headers.length; i++) {
-      obj[headers[i] || `col${i}`] = r[i] ?? "";
-    }
+    for (let i = 0; i < headers.length; i++) obj[headers[i] || `col${i}`] = r[i] ?? "";
     return obj;
   });
 }
+
+function norm(s){ return String(s ?? "").trim(); }
 
 module.exports = async (req, res) => {
   if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
@@ -41,24 +41,36 @@ module.exports = async (req, res) => {
     const sheetId = process.env.LOGS_SHEET_ID || "";
     if (!sheetId) return bad(res, "Missing LOGS_SHEET_ID", 500);
 
-    // Expected headers in NotScanned tab:
+    // Expected headers in NotScanned:
     // Bin, Counter, SKU, Description, Type, QtySystem, QtyEntered
-    const all = await readTabObjects(sheetId, "NotScanned");
+    let all = await readTabObjects(sheetId, "NotScanned");
 
-    const wantUser = String(req.query?.user || "").trim().toLowerCase();
-    const rows = wantUser
-      ? all.filter(r => String(r.Counter || r.counter || "").trim().toLowerCase() === wantUser)
-      : all;
+    // Optional filters
+    const wantUser = norm(req.query.user || "").toLowerCase();
+    const wantBin  = norm(req.query.bin || "").toUpperCase();
+
+    if (wantUser) {
+      all = all.filter(r => norm(r.Counter || r.counter).toLowerCase() === wantUser);
+    }
+    if (wantBin) {
+      all = all.filter(r => norm(r.Bin || r.bin).toUpperCase() === wantBin);
+    }
+
+    // Normalize + dedupe by Bin+SKU+Description, keep latest row (last write wins)
+    const keyOf = (r) => [norm(r.Bin || r.bin), norm(r.SKU || r.sku), norm(r.Description || r.description)].join("|");
+    const map = new Map();
+    for (const r of all) map.set(keyOf(r), r);
+    const rows = Array.from(map.values());
 
     const records = rows.map(r => ({
-      bin: String(r.Bin ?? r.bin ?? ""),
-      counter: String(r.Counter ?? r.counter ?? "—"),
-      sku: String(r.SKU ?? r.sku ?? "—"),
-      description: String(r.Description ?? r.description ?? "—"),
-      systemImei: "", // not applicable on NotScanned (non-serial)
+      bin: norm(r.Bin ?? r.bin),
+      counter: norm(r.Counter ?? r.counter) || "—",
+      sku: norm(r.SKU ?? r.sku) || "—",
+      description: norm(r.Description ?? r.description) || "—",
+      systemImei: "", // non-serial view
       systemQty: Number(r.QtySystem ?? r.systemQty ?? 0),
       qtyEntered: Number(r.QtyEntered ?? r.qtyEntered ?? 0),
-      type: String(r.Type ?? r.type ?? "nonserial"),
+      type: norm(r.Type ?? r.type) || "nonserial",
     }));
 
     return ok(res, { records });
