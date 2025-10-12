@@ -29,7 +29,7 @@ async function readTabObjects(spreadsheetId, tabName) {
   });
 }
 
-function norm(s){ return String(s ?? "").trim(); }
+const norm = (s) => String(s ?? "").trim();
 function looseUserMatch(counter, want) {
   const c = norm(counter).toLowerCase();
   const w = norm(want).toLowerCase();
@@ -37,7 +37,7 @@ function looseUserMatch(counter, want) {
   if (c === w) return true;
   if (c.includes(w)) return true;                 // “max” matches “Max Mann”
   const [first, ...rest] = c.split(/\s+/);
-  const last = rest.length ? rest[rest.length-1] : "";
+  const last = rest.length ? rest[rest.length - 1] : "";
   return first === w || last === w;               // “matt” / “westerfer”
 }
 
@@ -50,17 +50,17 @@ module.exports = async (req, res) => {
     const sheetId = process.env.LOGS_SHEET_ID || "";
     if (!sheetId) return bad(res, "Missing LOGS_SHEET_ID", 500);
 
-    // Sheet columns: Bin, Counter, SKU, Description, Type, QtySystem, QtyEntered, (optional) SystemImei
+    // 1) Read sheet rows (Bin, Counter, SKU, Description, Type, QtySystem, QtyEntered, optional SystemImei)
     let all = await readTabObjects(sheetId, "NotScanned");
 
-    // Also synthesize from the latest Store record per bin (serial + non-serial deficits)
+    // 2) Synthesize from latest Store record per bin (serial + non-serial deficits)
     const latestByBin = new Map();
     for (const b of await Store.listBins()) {
-      const k = String(b.bin || "").trim().toUpperCase();
+      const k = norm(b.bin).toUpperCase();
       const t = Date.parse(b.submittedAt || b.updatedAt || b.started || 0) || 0;
-      const cur = latestByBin.get(k);
-      const ct  = cur ? (Date.parse(cur.submittedAt || cur.updatedAt || cur.started || 0) || 0) : -1;
-      if (!cur || t > ct) latestByBin.set(k, b);
+      const prev = latestByBin.get(k);
+      const prevT = prev ? (Date.parse(prev.submittedAt || prev.updatedAt || prev.started || 0) || 0) : -1;
+      if (!prev || t > prevT) latestByBin.set(k, b);
     }
 
     const fromStore = [];
@@ -68,7 +68,7 @@ module.exports = async (req, res) => {
       const counter = norm(b.counter || "—");
       const items = Array.isArray(b.items) ? b.items : [];
 
-      // 1) deficits from items (serial + non-serial)
+      // deficits from items
       for (const it of items) {
         const sku = norm(it.sku || "—");
         const description = norm(it.description || "—");
@@ -78,19 +78,14 @@ module.exports = async (req, res) => {
         const qtyEntered  = Number(it.qtyEntered || 0);
         if (qtyEntered < systemQty) {
           fromStore.push({
-            Bin: b.bin,
-            Counter: counter,
-            SKU: sku,
-            Description: description,
+            Bin: b.bin, Counter: counter, SKU: sku, Description: description,
             Type: hasSerial ? "serial" : "nonserial",
-            QtySystem: systemQty,
-            QtyEntered: qtyEntered,
-            SystemImei: systemImei,
+            QtySystem: systemQty, QtyEntered: qtyEntered, SystemImei: systemImei,
           });
         }
       }
 
-      // 2) deficits from missingImeis even if items[] was not sent
+      // deficits from missingImeis (even if items[] wasn’t sent)
       const knownImeis = new Set(items.map(x => norm(x.systemImei)).filter(Boolean));
       if (Array.isArray(b.missingImeis) && b.missingImeis.length) {
         for (const raw of b.missingImeis) {
@@ -102,14 +97,8 @@ module.exports = async (req, res) => {
             if (ref) { sku = norm(ref.sku); description = norm(ref.description); }
           } catch {}
           fromStore.push({
-            Bin: b.bin,
-            Counter: counter,
-            SKU: sku,
-            Description: description,
-            Type: "serial",
-            QtySystem: 1,
-            QtyEntered: 0,
-            SystemImei: mi,
+            Bin: b.bin, Counter: counter, SKU: sku, Description: description,
+            Type: "serial", QtySystem: 1, QtyEntered: 0, SystemImei: mi,
           });
         }
       }
@@ -117,23 +106,31 @@ module.exports = async (req, res) => {
 
     all = (all || []).concat(fromStore);
 
-    // Optional filters
+    // 3) Filters
     const wantUser = norm(req.query.user || "");
     const wantBin  = norm(req.query.bin  || "");
 
-    if (wantUser) all = all.filter(r => looseUserMatch(r.Counter || r.counter, wantUser));
-    if (wantBin)  all = all.filter(r => norm(r.Bin || r.bin).toUpperCase() === wantBin.toUpperCase());
+    let filtered = all;
 
-    // Dedupe by Bin+SKU+Description+SystemImei (last write wins)
+    // If a bin is specified, **only filter by bin** (ignore user so supervisors see the counter’s rows)
+    if (wantBin) {
+      const BIN = wantBin.toUpperCase();
+      filtered = filtered.filter(r => norm(r.Bin || r.bin).toUpperCase() === BIN);
+    } else if (wantUser) {
+      const byUser = filtered.filter(r => looseUserMatch(r.Counter || r.counter, wantUser));
+      filtered = byUser.length ? byUser : filtered; // fallback if user filter wipes everything
+    }
+
+    // 4) Dedupe by Bin+SKU+Description+SystemImei (last write wins)
     const keyOf = (r) => [
       norm(r.Bin || r.bin),
       norm(r.SKU || r.sku),
       norm(r.Description || r.description),
-      norm(r.SystemImei || r.systemImei)
+      norm(r.SystemImei || r.systemImei),
     ].join("|");
 
     const map = new Map();
-    for (const r of all) map.set(keyOf(r), r);
+    for (const r of filtered) map.set(keyOf(r), r);
     const rows = Array.from(map.values());
 
     const records = rows.map(r => ({
