@@ -1,218 +1,95 @@
-// api/cyclecounts/not-scanned.js
+// api/cyclecounts/mark-scanned.js
 /* eslint-disable no-console */
-const { ok, bad, method, withCORS } = require("../_lib/respond");
-const { google } = require("googleapis");
+const { withCORS, ok, bad, method } = require("../_lib/respond");
 const Store = require("../_lib/store");
 const { appendRow } = require("../_lib/sheets");
 
-const norm = (s) => String(s ?? "").trim();
-const nowISO = () => new Date().toISOString();
+function norm(s){ return String(s ?? "").trim(); }
+function nowISO(){ return new Date().toISOString(); }
 
-function getSheets() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
-  const key = (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
-  if (!email || !key) throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_EMAIL/GOOGLE_PRIVATE_KEY");
-  const auth = new google.auth.JWT(email, null, key, [
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
-  ]);
-  return google.sheets({ version: "v4", auth });
-}
-
-async function readTabObjects(spreadsheetId, tabName) {
-  const sheets = getSheets();
-  const range = `${tabName}!A1:Z100000`;
-  const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  const values = resp.data.values || [];
-  if (!values.length) return [];
-  const headers = values[0].map(h => String(h || "").trim());
-  const rows = values.slice(1);
-  return rows.map(r => {
-    const obj = {};
-    for (let i = 0; i < headers.length; i++) obj[headers[i] || `col${i}`] = r[i] ?? "";
-    return obj;
+async function readJSON(req){
+  if (req.body && typeof req.body === "object") return req.body;
+  if (typeof req.body === "string" && req.body) {
+    try { return JSON.parse(req.body); } catch {}
+  }
+  return new Promise(resolve => {
+    let data = "";
+    req.on("data", c => data += c);
+    req.on("end", () => { try { resolve(data ? JSON.parse(data) : {}); } catch { resolve({}); } });
   });
 }
 
-// -------- DELETE: investigator clears a serial IMEI --------
-async function handleDelete(req, res){
+module.exports = async (req, res) => {
+  // CORS & method handling: allow GET (tolerant), POST (preferred), and OPTIONS
+  if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
+  if (!["GET","POST"].includes(req.method)) return method(res, ["GET","POST","OPTIONS"]);
+  withCORS(res);
+
   try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-    const bin  = norm(body.bin);
-    const imei = norm(body.systemImei || body.imei);
-    const user = norm(body.user || body.counter || "");
+    const body = req.method === "POST" ? await readJSON(req) : {};
+    const bin  = norm(req.query.bin || body.bin);
+    const imei = norm(req.query.imei || body.imei);
+    const user = norm(req.query.user || body.user || body.scannedBy || "");
 
     if (!bin)  return bad(res, "bin is required", 400);
-    if (!imei) return bad(res, "systemImei is required", 400);
+    if (!imei) return bad(res, "imei is required", 400);
 
-    // latest record for this bin
+    // Find the latest record for this bin
     const all = await Store.listBins();
-    let latest = null, bestT = -1;
+    let rec = null, recTime = -1;
     for (const r of all) {
       if (norm(r.bin).toUpperCase() !== bin.toUpperCase()) continue;
       const t = Date.parse(r.submittedAt || r.updatedAt || r.started || 0) || 0;
-      if (t > bestT) { bestT = t; latest = r; }
+      if (t > recTime) { rec = r; recTime = t; }
     }
-    if (!latest) return bad(res, "bin not found", 404);
-
-    latest.items = Array.isArray(latest.items) ? [...latest.items] : [];
-    latest.missingImeis = Array.isArray(latest.missingImeis) ? [...latest.missingImeis] : [];
-
-    let changed = false;
-
-    // 1) mark the serial row as entered
-    const j = latest.items.findIndex(it => norm(it.systemImei) === imei);
-    if (j !== -1) {
-      latest.items[j] = { ...latest.items[j], systemImei: imei, systemQty: 1, qtyEntered: 1 };
-      changed = true;
+    if (!rec) {
+      // create a minimal record so we can still clear
+      rec = { bin, counter: "—", total: 0, scanned: 0, missing: 0, items: [], missingImeis: [], state: "investigation", started: nowISO(), submittedAt: nowISO() };
     }
 
-    // 2) remove from missingImeis
-    const beforeLen = latest.missingImeis.length;
-    latest.missingImeis = latest.missingImeis.filter(x => norm(x) !== imei);
-    if (latest.missingImeis.length !== beforeLen) changed = true;
+    // Ensure shapes
+    rec.items = Array.isArray(rec.items) ? rec.items : [];
+    rec.missingImeis = Array.isArray(rec.missingImeis) ? rec.missingImeis : [];
 
-    // 3) recompute scanned/missing
-    if (changed) {
-      const serialMissing = latest.missingImeis.length;
-      const nonSerialMissing = latest.items
-        .filter(it => !norm(it.systemImei))
-        .reduce((a, it) => a + Math.max(Number(it.systemQty||0) - Number(it.qtyEntered||0), 0), 0);
-      const missing = serialMissing + nonSerialMissing;
+    // 1) Remove IMEI from missingImeis (if present)
+    const beforeMissingLen = rec.missingImeis.length;
+    rec.missingImeis = rec.missingImeis.filter(x => norm(x) !== imei);
+    const missingRemoved = rec.missingImeis.length !== beforeMissingLen;
 
-      const total = Number(latest.total || (
-        latest.items.reduce((a,it)=>a + (norm(it.systemImei) ? 1 : Number(it.systemQty||0)), 0)
-      ));
-      const scanned = Math.max(0, total - missing);
-
-      latest = await Store.upsertBin({
-        ...latest,
-        scanned,
-        missing,
-        submittedAt: nowISO()
-      });
-
-      // Optional audit trail
-      try {
-        await appendRow("FoundImeis", [bin, imei, user || "—", latest.counter || "—", nowISO()]);
-      } catch {}
+    // 2) If there's an item row with this IMEI, mark it entered
+    let itemTouched = false;
+    for (const it of rec.items) {
+      const sys = norm(it.systemImei || "");
+      if (sys && sys === imei) {
+        const hasSerial = true;
+        const systemQty = Number(it.systemQty != null ? it.systemQty : (hasSerial ? 1 : 0)) || 0;
+        const prevEntered = Number(it.qtyEntered || 0);
+        if (prevEntered < systemQty) { it.qtyEntered = systemQty; itemTouched = true; }
+      }
     }
 
-    return ok(res, { ok:true, updated:changed, record: latest });
+    // 3) Adjust scanned / missing heuristically if we actually cleared something
+    if (missingRemoved || itemTouched) {
+      rec.scanned = Math.max(0, Number(rec.scanned || 0) + 1);
+      rec.missing = Math.max(0, Number(rec.missing || 0) - 1);
+    }
+
+    rec.updatedAt = nowISO();
+
+    // Persist
+    const saved = await Store.upsertBin(rec);
+
+    // (Optional) Write an audit row so we can exclude later if needed
+    try {
+      await appendRow("FoundImeis", [
+        bin, imei, user || "—", saved.counter || "—",
+        nowISO()
+      ]);
+    } catch (e) { /* non-fatal */ }
+
+    return ok(res, { ok:true, bin, imei, adjusted: !!(missingRemoved || itemTouched), record: saved });
   } catch (e) {
-    console.error("[not-scanned][DELETE] fail:", e);
+    console.error("[mark-scanned] fail:", e);
     return bad(res, String(e.message || e), 500);
   }
-}
-
-// -------- GET: list not-scanned (existing behavior, unchanged except small helpers) --------
-function looseUserMatch(counter, want) {
-  const c = norm(counter).toLowerCase();
-  const w = norm(want).toLowerCase();
-  if (!c || !w) return false;
-  if (c === w) return true;
-  if (c.includes(w)) return true;
-  const [first, ...rest] = c.split(/\s+/);
-  const last = rest.length ? rest[rest.length-1] : "";
-  return first === w || last === w;
-}
-
-async function handleGet(req, res){
-  const sheetId = process.env.LOGS_SHEET_ID || "";
-  if (!sheetId) return bad(res, "Missing LOGS_SHEET_ID", 500);
-
-  // read sheet rows
-  let all = await readTabObjects(sheetId, "NotScanned");
-
-  // synthesize from latest Store records
-  const latestByBin = new Map();
-  for (const b of await Store.listBins()) {
-    const k = norm(b.bin).toUpperCase();
-    const t = Date.parse(b.submittedAt || b.updatedAt || b.started || 0) || 0;
-    const cur = latestByBin.get(k);
-    const ct  = cur ? (Date.parse(cur.submittedAt || cur.updatedAt || cur.started || 0) || 0) : -1;
-    if (!cur || t > ct) latestByBin.set(k, b);
-  }
-
-  const fromStore = [];
-  for (const b of latestByBin.values()) {
-    const counter = norm(b.counter || "—");
-    const items = Array.isArray(b.items) ? b.items : [];
-    for (const it of items) {
-      const sku         = norm(it.sku || "—");
-      const description = norm(it.description || "—");
-      const systemImei  = norm(it.systemImei || "");
-      const hasSerial   = !!systemImei;
-      const systemQty   = Number(it.systemQty != null ? it.systemQty : (hasSerial ? 1 : 0)) || 0;
-      const qtyEntered  = Number(it.qtyEntered || 0);
-      if (qtyEntered < systemQty) {
-        fromStore.push({
-          Bin: b.bin, Counter: counter, SKU: sku, Description: description,
-          Type: hasSerial ? "serial" : "nonserial",
-          QtySystem: systemQty, QtyEntered: qtyEntered, SystemImei: systemImei,
-        });
-      }
-    }
-
-    // also include b.missingImeis that didn't have an item row
-    const known = new Set(items.map(x => norm(x.systemImei)).filter(Boolean));
-    if (Array.isArray(b.missingImeis)) {
-      for (const raw of b.missingImeis) {
-        const mi = norm(raw);
-        if (!mi || known.has(mi)) continue;
-        let sku = "—", description = "—";
-        try {
-          const ref = await Store.findByIMEI(mi);
-          if (ref) { sku = norm(ref.sku); description = norm(ref.description); }
-        } catch {}
-        fromStore.push({
-          Bin: b.bin, Counter: counter, SKU: sku, Description: description,
-          Type: "serial", QtySystem: 1, QtyEntered: 0, SystemImei: mi,
-        });
-      }
-    }
-  }
-  all = (all || []).concat(fromStore);
-
-  const wantUser = norm(req.query.user || "");
-  const wantBin  = norm(req.query.bin  || "");
-
-  let filtered = all;
-  if (wantBin) {
-    const BIN = wantBin.toUpperCase();
-    filtered = filtered.filter(r => norm(r.Bin || r.bin).toUpperCase() === BIN);
-  } else if (wantUser) {
-    const byUser = filtered.filter(r => looseUserMatch(r.Counter || r.counter, wantUser));
-    filtered = byUser.length ? byUser : filtered;
-  }
-
-  const keyOf = (r) => [
-    norm(r.Bin || r.bin),
-    norm(r.SKU || r.sku),
-    norm(r.Description || r.description),
-    norm(r.SystemImei || r.systemImei),
-  ].join("|");
-
-  const map = new Map();
-  for (const r of filtered) map.set(keyOf(r), r);
-  const rows = Array.from(map.values());
-
-  const records = rows.map(r => ({
-    bin:        norm(r.Bin ?? r.bin),
-    counter:    norm(r.Counter ?? r.counter) || "—",
-    sku:        norm(r.SKU ?? r.sku) || "—",
-    description:norm(r.Description ?? r.description) || "—",
-    systemImei: norm(r.SystemImei ?? r.systemImei),
-    systemQty:  Number(r.QtySystem ?? r.systemQty ?? 0),
-    qtyEntered: Number(r.QtyEntered ?? r.qtyEntered ?? 0),
-    type:       norm(r.Type ?? r.type) || (norm(r.SystemImei ?? r.systemImei) ? "serial" : "nonserial"),
-  }));
-
-  return ok(res, { records });
-}
-
-module.exports = async (req, res) => {
-  if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
-  if (req.method === "DELETE")  { withCORS(res); return handleDelete(req, res); }
-  if (req.method === "GET")     { withCORS(res); return handleGet(req, res); }
-  return method(res, ["GET","DELETE","OPTIONS"]);
 };
