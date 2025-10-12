@@ -957,6 +957,35 @@ document.addEventListener("keydown", async (e)=>{
   }
 });
 
+  // Non-serial qty entry → DELETE { sku, qtyEntered } and refresh both tables
+document.addEventListener("keydown", async (e) => {
+  const el = e.target.closest('input[data-nonserial]');
+  if (!el || e.key !== 'Enter') return;
+
+  const sku = el.getAttribute('data-sku') || '';
+  const qtyEntered = Number(el.value || 0);
+
+  try {
+    const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: userId(), sku, qtyEntered })
+    });
+    if (!res.ok) throw new Error(await res.text());
+
+    await Promise.all([
+      renderInvestigatorNotScanned(),
+      refreshInvestigator()
+    ]);
+  } catch (err) {
+    showAlerts(investAlerts, [{
+      type: 'warn',
+      msg: `Could not update ${escapeHTML(sku)}: <code>${escapeHTML(String(err.message || err))}</code>`
+    }]);
+  }
+});
+
+
 
     async function submitBinToInvestigator(){
       if (!currentBin) return;
