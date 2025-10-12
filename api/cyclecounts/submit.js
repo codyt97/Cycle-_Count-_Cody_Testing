@@ -1,30 +1,22 @@
 // api/cyclecounts/submit.js
-// Accepts a bin submission from the counter and persists:
-// - the cycle count summary (user-scoped)
-// - wrong-bin audits (buffered client-side) into the per-user audit set
-//
-// POST /api/cyclecounts/submit?user=<id>
-// Body:
-//  {
-//    bin, counter, total, scanned, missing,
-//    items: [{ location, sku, description, systemImei, scannedImei, qtyEntered?, systemQty? }, ...],
-//    missingImeis: [ ... ],
-//    nonSerialShortages?: [ ... ],
-//    wrongBin?: [{ imei, scannedBin, trueLocation, status:"open", scannedBy, ts }]
-//  }
+// Accept a bin submission, persist to shared Store, and append logs to Google Sheets.
+// - Bins tab: Bin, Counter, Total, Scanned, Missing, StartedAt, SubmittedAt, State
+// - NotScanned tab: Bin, Counter, SKU, Description, Type, QtySystem, QtyEntered
+// - WrongBinAudits tab: IMEI, ScannedBin, TrueLocation, ScannedBy, Status, CreatedAt, UpdatedAt
 
-// Use the shared Store that Investigator pages read from
+/* eslint-disable no-console */
+const { withCORS } = require("../_lib/respond");
+const { ok, bad, method } = require("../_lib/respond");
 const Store = require("../_lib/store");
-
+const { appendRow } = require("../_lib/sheets");
 
 function norm(s){ return String(s ?? "").trim(); }
-function now(){ return new Date().toISOString(); }
-function userFrom(req, body={}) {
+function nowISO(){ return new Date().toISOString(); }
+function userFrom(req, body = {}) {
   return String(req.query?.user || body.user || req.headers["x-user"] || "anon").toLowerCase();
 }
 
 async function readJSON(req){
-  // handle vercel/node body variations safely
   if (req.body && typeof req.body === "object") return req.body;
   if (typeof req.body === "string" && req.body) {
     try { return JSON.parse(req.body); } catch {}
@@ -33,46 +25,35 @@ async function readJSON(req){
     let data = "";
     req.on("data", c => data += c);
     req.on("end", () => {
-      try { resolve(data ? JSON.parse(data) : {}); }
-      catch { resolve({}); }
+      try { resolve(data ? JSON.parse(data) : {}); } catch { resolve({}); }
     });
   });
 }
 
-function json(res, code, obj){
-  res.statusCode = code;
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-User");
-  res.end(JSON.stringify(obj));
-}
-
-// No per-user KV; all persistence goes through the shared Store
-
-
 module.exports = async function handler(req, res){
-  if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
-  if (req.method !== "POST")    { res.setHeader("Allow","POST,OPTIONS"); return json(res,405,{ ok:false, error:"method_not_allowed" }); }
+  if (req.method === "OPTIONS") { withCORS(res); res.statusCode = 204; return res.end(); }
+  if (req.method !== "POST")    { return method(res, ["POST","OPTIONS"]); }
+  withCORS(res);
 
   try {
     const body = await readJSON(req);
     const user = userFrom(req, body);
 
-    // ------ basic payload normalization ------
-    const bin      = norm(body.bin);
-    const counter  = norm(body.counter || "");
-    const total    = Number.isFinite(+body.total)   ? +body.total   : 0;
-    const scanned  = Number.isFinite(+body.scanned) ? +body.scanned : 0;
-    const missing  = Number.isFinite(+body.missing) ? +body.missing : Math.max(0, total - scanned);
+    // ------ normalize core fields ------
+    const bin     = norm(body.bin);
+    const counter = norm(body.counter || "");
+    const total   = Number.isFinite(+body.total)   ? +body.total   : 0;
+    const scanned = Number.isFinite(+body.scanned) ? +body.scanned : 0;
 
-    const items = Array.isArray(body.items) ? body.items : [];
+    if (!bin) return bad(res, "missing_bin", 400);
+
+    const items        = Array.isArray(body.items) ? body.items : [];
     const missingImeis = Array.isArray(body.missingImeis) ? body.missingImeis : [];
 
     // Derive non-serial shortages if client didn't send them
     const nonSerialShortages = Array.isArray(body.nonSerialShortages) ? body.nonSerialShortages :
       items
-        .filter(it => !String(it.systemImei || "").trim()) // non-serial rows only
+        .filter(it => !String(it.systemImei || "").trim()) // non-serial only
         .map(it => ({
           sku: it.sku || "—",
           description: it.description || "—",
@@ -81,52 +62,98 @@ module.exports = async function handler(req, res){
         }))
         .filter(s => s.qtyEntered < s.systemQty);
 
-
-    // client-buffered wrong-bin list (to be persisted now)
+    // client-buffered wrong-bin list (to be persisted and logged)
     const wrongBin = Array.isArray(body.wrongBin) ? body.wrongBin : [];
 
-    if (!bin) return json(res, 400, { ok:false, error:"missing_bin" });
+    // ------ serial + non-serial missing math ------
+    const serialMissing     = missingImeis.length;
+    const nonSerialMissing  = nonSerialShortages.reduce((a, s) => a + Math.max(Number(s.systemQty || 0) - Number(s.qtyEntered || 0), 0), 0);
+    const finalMissing      = Number.isFinite(+body.missing) ? +body.missing : (serialMissing + nonSerialMissing);
 
-    // ------ persist wrong-bin audits into the shared audit log ------
-    if (Array.isArray(wrongBin) && wrongBin.length) {
-      for (const wb of wrongBin) {
-        const imei = norm(wb.imei);
-        if (!imei) continue;
-        await Store.appendAudit({
-          imei,
-          scannedBin:  norm(wb.scannedBin),
-          trueLocation:norm(wb.trueLocation),
-          scannedBy:   norm(wb.scannedBy || counter || "—"),
-          status: "open",
-        });
-      }
+    // ------ persist wrong-bin audits (shared Store) ------
+    for (const wb of wrongBin) {
+      const imei = norm(wb.imei);
+      if (!imei) continue;
+      await Store.appendAudit({
+        imei,
+        scannedBin:  norm(wb.scannedBin),
+        trueLocation:norm(wb.trueLocation),
+        scannedBy:   norm(wb.scannedBy || counter || "—"),
+        status: "open",
+      });
     }
 
+    // ------ persist the cycle count (shared Store, read by Investigator/Summary) ------
+    const submittedAt = nowISO();
+    const startedAt   = body.startedAt ? String(body.startedAt) : submittedAt;
 
-    // ------ persist the cycle count into the shared Store (read by Investigator/Summary) ------
-        // Recompute final missing: serial deficits + non-serial deficits
-    const serialMissing = missingImeis.length;
-    const nonSerialMissing = nonSerialShortages.reduce(
-      (a, s) => a + Math.max(Number(s.systemQty || 0) - Number(s.qtyEntered || 0), 0), 0);
-    const finalMissing = Number.isFinite(+body.missing) ? +body.missing : (serialMissing + nonSerialMissing);
-
-    const payload = {
-      user, bin, counter,
-      total, scanned, missing: finalMissing,
+    const record = await Store.upsertBin({
+      bin,
+      user,
+      counter: counter || "—",
+      total,
+      scanned,
+      missing: finalMissing,
       items,
       missingImeis,
       nonSerialShortages,
-      state: finalMissing > 0 ? "investigation" : "complete",
-      started: body.started || undefined,
-      submittedAt: now(),
-    };
+      state: "investigation",
+      submittedAt,
+      started: startedAt,
+    });
 
-    await Store.upsertBin(payload);
+    // ------ fire-and-forget logging to Google Sheets ------
+    (async () => {
+      try {
+        // Bins row
+        await appendRow("Bins", [
+          bin, counter || "—",
+          Number(total || 0), Number(scanned || 0), Number(finalMissing || 0),
+          startedAt, submittedAt, "investigation"
+        ]);
 
-    return json(res, 200, { ok:true, bin, state: payload.state, submittedAt: payload.submittedAt });
+        // NotScanned rows
+        if (Array.isArray(nonSerialShortages) && nonSerialShortages.length) {
+          for (const s of nonSerialShortages) {
+            await appendRow("NotScanned", [
+              bin, counter || "—",
+              s.sku || "—", s.description || "—",
+              "nonserial",
+              Number(s.systemQty || 0), Number(s.qtyEntered || 0)
+            ]);
+          }
+        }
 
-  } catch (err) {
-    // never throw raw; return a stable error object
-    return json(res, 500, { ok:false, error:"submit_failed", detail: String(err && err.message || err) });
+        // WrongBinAudits rows (opened)
+        if (Array.isArray(wrongBin) && wrongBin.length) {
+          const ts = nowISO();
+          for (const wb of wrongBin) {
+            if (!wb || !wb.imei) continue;
+            await appendRow("WrongBinAudits", [
+              String(wb.imei || ""),
+              String(wb.scannedBin || ""),
+              String(wb.trueLocation || ""),
+              String(wb.scannedBy || counter || "—"),
+              "open",
+              ts, ts
+            ]);
+          }
+        }
+      } catch (e) {
+        console.error("[submit] sheets append failed:", e?.message || e);
+      }
+    })();
+
+    return ok(res, {
+      ok: true,
+      bin: record?.bin || bin,
+      missing: finalMissing,
+      serialMissing,
+      nonSerialMissing,
+      submittedAt,
+    });
+  } catch (e) {
+    console.error("[submit] error:", e);
+    return bad(res, String(e.message || e), 500);
   }
 };
