@@ -2,6 +2,7 @@
 /* eslint-disable no-console */
 const { ok, bad, method, withCORS } = require("../_lib/respond");
 const { google } = require("googleapis");
+const Store = require("../_lib/store");
 
 function getSheets() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
@@ -42,55 +43,90 @@ module.exports = async (req, res) => {
     if (!sheetId) return bad(res, "Missing LOGS_SHEET_ID", 500);
 
     // Expected headers in NotScanned:
-    // Bin, Counter, SKU, Description, Type, QtySystem, QtyEntered
+    // Bin, Counter, SKU, Description, Type, QtySystem, QtyEntered, (optional) SystemImei
     let all = await readTabObjects(sheetId, "NotScanned");
-// Always synthesize from Store (latest per bin) and merge with sheet rows
-try {
-  const Store = require("../_lib/store");
-  const bins = await Store.listBins();
 
-  // latest per bin
-  const latest = new Map();
-  for (const b of bins) {
-    const k = String(b.bin || "").trim().toUpperCase();
-    const t = Date.parse(b.submittedAt || b.updatedAt || b.started || 0) || 0;
-    const prev = latest.get(k);
-    const prevT = prev ? (Date.parse(prev.submittedAt || prev.updatedAt || prev.started || 0) || 0) : -1;
-    if (!prev || t > prevT) latest.set(k, b);
-  }
+    // --- Always synthesize from Store (latest per bin) and merge with sheet rows ---
+    const bins = await Store.listBins();
 
-  // Build rows where QtyEntered < QtySystem for ALL items (serial + non-serial)
-  const fromStore = [];
-  for (const b of latest.values()) {
-    const counter = String(b.counter || "—").trim();
-    const items = Array.isArray(b.items) ? b.items : [];
-    for (const it of items) {
-      const sku         = String(it.sku || "—").trim();
-      const description = String(it.description || "—").trim();
-      const systemImei  = String(it.systemImei || "").trim();
-      const hasSerial   = !!systemImei;
-      const systemQty   = Number(it.systemQty != null ? it.systemQty : (hasSerial ? 1 : 0)) || 0;
-      const qtyEntered  = Number(it.qtyEntered || 0);
-      if (qtyEntered < systemQty) {
-        fromStore.push({
-          Bin: b.bin,
-          Counter: counter,
-          SKU: sku,
-          Description: description,
-          Type: hasSerial ? "serial" : "nonserial",
-          QtySystem: systemQty,
-          QtyEntered: qtyEntered,
-          SystemImei: systemImei,
-        });
+    // latest per bin
+    const latestByBin = new Map();
+    for (const b of bins) {
+      const k = String(b.bin || "").trim().toUpperCase();
+      const t = Date.parse(b.submittedAt || b.updatedAt || b.started || 0) || 0;
+      const prev = latestByBin.get(k);
+      const prevT = prev ? (Date.parse(prev.submittedAt || prev.updatedAt || prev.started || 0) || 0) : -1;
+      if (!prev || t > prevT) latestByBin.set(k, b);
+    }
+
+    // Build rows where QtyEntered < QtySystem for ALL items (serial + non-serial)
+    const fromStore = [];
+    for (const b of latestByBin.values()) {
+      const counter = String(b.counter || "—").trim();
+      const items = Array.isArray(b.items) ? b.items : [];
+      for (const it of items) {
+        const sku         = String(it.sku || "—").trim();
+        const description = String(it.description || "—").trim();
+        const systemImei  = String(it.systemImei || "").trim();
+        const hasSerial   = !!systemImei;
+        const systemQty   = Number(it.systemQty != null ? it.systemQty : (hasSerial ? 1 : 0)) || 0;
+        const qtyEntered  = Number(it.qtyEntered || 0);
+        if (qtyEntered < systemQty) {
+          fromStore.push({
+            Bin: b.bin,
+            Counter: counter,
+            SKU: sku,
+            Description: description,
+            Type: hasSerial ? "serial" : "nonserial",
+            QtySystem: systemQty,
+            QtyEntered: qtyEntered,
+            SystemImei: systemImei,
+          });
+        }
       }
     }
-  }
 
-  // Merge Store rows with whatever we read from the sheet (sheet may be empty or non-serial only)
-  all = (all || []).concat(fromStore);
-} catch (_) {}
+    // Also surface SERIAL deficits from missingImeis even if items[] wasn't sent
+    for (const b of latestByBin.values()) {
+      const counter = String(b.counter || "—").trim();
+      const items = Array.isArray(b.items) ? b.items : [];
+      const knownImeis = new Set(
+        items.map(it => String(it.systemImei || "").trim()).filter(Boolean)
+      );
 
+      if (Array.isArray(b.missingImeis) && b.missingImeis.length) {
+        for (const raw of b.missingImeis) {
+          const mi = String(raw || "").trim();
+          if (!mi) continue;
+          // Skip if items[] already produced a serial-shortage row for this IMEI
+          if (knownImeis.has(mi)) continue;
 
+          // Try to enrich SKU/Description from the inventory snapshot
+          let sku = "—", description = "—";
+          try {
+            const found = await Store.findByIMEI(mi);
+            if (found) {
+              sku = String(found.sku || "—").trim();
+              description = String(found.description || "—").trim();
+            }
+          } catch (_) {}
+
+          fromStore.push({
+            Bin: b.bin,
+            Counter: counter,
+            SKU: sku,
+            Description: description,
+            Type: "serial",
+            QtySystem: 1,
+            QtyEntered: 0,
+            SystemImei: mi,
+          });
+        }
+      }
+    }
+
+    // Merge Store rows with whatever we read from the sheet (sheet may be empty or non-serial only)
+    all = (all || []).concat(fromStore);
 
     // Optional filters
     const wantUser = norm(req.query.user || "").toLowerCase();
@@ -103,33 +139,32 @@ try {
       all = all.filter(r => norm(r.Bin || r.bin).toUpperCase() === wantBin);
     }
 
-    // Normalize + dedupe by Bin+SKU+Description, keep latest row (last write wins)
+    // Normalize + dedupe by Bin+SKU+Description+SystemImei (last write wins)
     const keyOf = (r) => [
-  norm(r.Bin || r.bin),
-  norm(r.SKU || r.sku),
-  norm(r.Description || r.description),
-  norm(r.SystemImei || r.systemImei) // keep serial rows distinct
-].join("|");
+      norm(r.Bin || r.bin),
+      norm(r.SKU || r.sku),
+      norm(r.Description || r.description),
+      norm(r.SystemImei || r.systemImei) // keep serial rows distinct
+    ].join("|");
 
     const map = new Map();
     for (const r of all) map.set(keyOf(r), r);
     const rows = Array.from(map.values());
 
     const records = rows.map(r => ({
-  bin: norm(r.Bin ?? r.bin),
-  counter: norm(r.Counter ?? r.counter) || "—",
-  sku: norm(r.SKU ?? r.sku) || "—",
-  description: norm(r.Description ?? r.description) || "—",
-  systemImei: norm(r.SystemImei ?? r.systemImei), // show IMEI when present
-  systemQty: Number(r.QtySystem ?? r.systemQty ?? 0),
-  qtyEntered: Number(r.QtyEntered ?? r.qtyEntered ?? 0),
-  type: norm(r.Type ?? r.type) || (norm(r.SystemImei ?? r.systemImei) ? "serial" : "nonserial"),
-}));
-
+      bin: norm(r.Bin ?? r.bin),
+      counter: norm(r.Counter ?? r.counter) || "—",
+      sku: norm(r.SKU ?? r.sku) || "—",
+      description: norm(r.Description ?? r.description) || "—",
+      systemImei: norm(r.SystemImei ?? r.systemImei), // show IMEI when present
+      systemQty: Number(r.QtySystem ?? r.systemQty ?? 0),
+      qtyEntered: Number(r.QtyEntered ?? r.qtyEntered ?? 0),
+      type: norm(r.Type ?? r.type) || (norm(r.SystemImei ?? r.systemImei) ? "serial" : "nonserial"),
+    }));
 
     return ok(res, { records });
   } catch (e) {
-    console.error("[not-scanned] sheets read fail:", e);
+    console.error("[not-scanned] fail:", e);
     res.statusCode = 500;
     res.setHeader("content-type","application/json; charset=utf-8");
     return res.end(JSON.stringify({ ok:false, error:String(e.message || e) }));
