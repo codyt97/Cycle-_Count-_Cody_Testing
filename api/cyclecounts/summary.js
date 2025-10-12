@@ -117,15 +117,15 @@ for (const [k, b] of latestByBin.entries()) {
   });
 }
 
-// 3) Sort by updated desc and return
+
+// 3) Sort by updated desc (use numeric ts) and return
 const out = Array.from(merged.values())
-  .sort((a,b) => (Date.parse(b.updated)||0) - (Date.parse(a.updated)||0));
+  .map(r => ({ ...r, _updatedTs: Date.parse(r.updated) || 0 })) // safe numeric
+  .sort((a,b) => b._updatedTs - a._updatedTs)
+  .map(({ _updatedTs, ...r }) => r); // strip helper
 
 return ok(res, { records: out });
 
-
-
-    return ok(res, { records });
   } catch (e) {
     console.error("[summary] sheets read fail:", e);
     res.statusCode = 500;
