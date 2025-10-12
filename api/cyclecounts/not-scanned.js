@@ -1,104 +1,71 @@
 // api/cyclecounts/not-scanned.js
+/* eslint-disable no-console */
 const { ok, bad, method, withCORS } = require("../_lib/respond");
-const Store = require("../_lib/store");
+const { google } = require("googleapis");
+
+function getSheets() {
+  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
+  const key = (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+  if (!email || !key) throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_EMAIL/GOOGLE_PRIVATE_KEY");
+  const auth = new google.auth.JWT(email, null, key, [
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
+  ]);
+  return google.sheets({ version: "v4", auth });
+}
+
+async function readTabObjects(spreadsheetId, tabName) {
+  const sheets = getSheets();
+  const range = `${tabName}!A1:Z100000`;
+  const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const values = resp.data.values || [];
+  if (!values.length) return [];
+
+  const headers = values[0].map(h => String(h || "").trim());
+  const rows = values.slice(1);
+
+  return rows.map(r => {
+    const obj = {};
+    for (let i = 0; i < headers.length; i++) {
+      obj[headers[i] || `col${i}`] = r[i] ?? "";
+    }
+    return obj;
+  });
+}
 
 module.exports = async (req, res) => {
   if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
+  if (req.method !== "GET")     return method(res, ["GET","OPTIONS"]);
   withCORS(res);
 
-  // --------------------------
-  // GET  -> list all not-scanned (serial + non-serial), include counter
-  // DELETE -> remove a specific not-scanned entry from a bin
-  // --------------------------
-  if (req.method === "GET") {
-    const wantUser = String(req.query?.user || "").toLowerCase();
-    const binsAll = await Store.listBins();
-    // Investigator default: show ALL bins unless explicitly filtered
-    const bins = wantUser ? binsAll.filter(b => String(b.user||"").toLowerCase() === wantUser) : binsAll;
-    const records = [];
+  try {
+    const sheetId = process.env.LOGS_SHEET_ID || "";
+    if (!sheetId) return bad(res, "Missing LOGS_SHEET_ID", 500);
 
+    // Expected headers in NotScanned tab:
+    // Bin, Counter, SKU, Description, Type, QtySystem, QtyEntered
+    const all = await readTabObjects(sheetId, "NotScanned");
 
+    const wantUser = String(req.query?.user || "").trim().toLowerCase();
+    const rows = wantUser
+      ? all.filter(r => String(r.Counter || r.counter || "").trim().toLowerCase() === wantUser)
+      : all;
 
-    for (const b of bins) {
-      // Serial shortages
-      if (Array.isArray(b.missingImeis)) {
-        for (const m of b.missingImeis) {
-          records.push({
-            bin: b.bin,
-            counter: b.counter || "—",   // <-- include who did the cycle count
-            sku: m.sku || "—",
-            description: m.description || "—",
-            systemImei: String(m.systemImei || m.imei || ""),
-            type: "serial"
-          });
-        }
-      }
-
-      // Non-serial shortages
-      if (Array.isArray(b.nonSerialShortages)) {
-        for (const s of b.nonSerialShortages) {
-          records.push({
-            bin: b.bin,
-            counter: b.counter || "—",   // <-- include who did the cycle count
-            sku: s.sku || "—",
-            description: s.description || "—",
-            systemImei: "",
-            systemQty: s.systemQty,
-            qtyEntered: s.qtyEntered,
-            type: "nonserial"
-          });
-        }
-      }
-    }
+    const records = rows.map(r => ({
+      bin: String(r.Bin ?? r.bin ?? ""),
+      counter: String(r.Counter ?? r.counter ?? "—"),
+      sku: String(r.SKU ?? r.sku ?? "—"),
+      description: String(r.Description ?? r.description ?? "—"),
+      systemImei: "", // not applicable on NotScanned (non-serial)
+      systemQty: Number(r.QtySystem ?? r.systemQty ?? 0),
+      qtyEntered: Number(r.QtyEntered ?? r.qtyEntered ?? 0),
+      type: String(r.Type ?? r.type ?? "nonserial"),
+    }));
 
     return ok(res, { records });
+  } catch (e) {
+    console.error("[not-scanned] sheets read fail:", e);
+    res.statusCode = 500;
+    res.setHeader("content-type","application/json; charset=utf-8");
+    return res.end(JSON.stringify({ ok:false, error:String(e.message || e) }));
   }
-
-  if (req.method === "DELETE") {
-    try {
-      const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
-      const binCode = String(body.bin || "").trim().toLowerCase();
-      const type = String(body.type || "").trim().toLowerCase(); // "serial" | "nonserial"
-      if (!binCode || !type) return bad(res, "bin and type are required", 400);
-
-      const user = String((typeof req.body === "string" ? JSON.parse(req.body||"{}") : req.body || {}).user || req.query?.user || "").toLowerCase();
-const binsAll = await Store.listBins();
-const bins = user ? binsAll.filter(b => String(b.user||"").toLowerCase() === user) : binsAll;
-const idx = bins.findIndex(x => String(x.bin || "").trim().toLowerCase() === binCode);
-
-      if (idx === -1) return bad(res, "bin not found", 404);
-
-      const bin = { ...bins[idx] };
-
-      if (type === "serial") {
-        const imei = String(body.systemImei || body.imei || "").trim();
-        if (!imei) return bad(res, "systemImei is required for serial delete", 400);
-        bin.missingImeis = (bin.missingImeis || []).filter(x =>
-          String(x.systemImei || x.imei || "").trim() !== imei
-        );
-      } else if (type === "nonserial") {
-        const sku = String(body.sku || "").trim();
-        if (!sku) return bad(res, "sku is required for nonserial delete", 400);
-        bin.nonSerialShortages = (bin.nonSerialShortages || []).filter(x =>
-          String(x.sku || "").trim() !== sku
-        );
-      } else {
-        return bad(res, "invalid type", 400);
-      }
-
-      // Recompute missing count for display (not strictly necessary)
-      const serialMissing = (bin.missingImeis || []).length;
-      const nonSerialMissing = (bin.nonSerialShortages || [])
-        .reduce((a, s) => a + Math.max(Number(s.systemQty || 0) - Number(s.qtyEntered || 0), 0), 0);
-      bin.missing = serialMissing + nonSerialMissing;
-
-      // Persist
-      await Store.upsertBin(bin);
-      return ok(res, { ok: true });
-    } catch (e) {
-      return bad(res, "delete failed: " + (e?.message || String(e)), 500);
-    }
-  }
-
-  return method(res, ["GET", "DELETE", "OPTIONS"]);
 };
