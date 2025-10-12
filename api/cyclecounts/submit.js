@@ -4,8 +4,8 @@
 // - the cycle count summary (shared Store)
 // - wrong-bin audits (shared Store)
 // - non-serial shortages (derived)
-// And now appends rows into Google Sheets tabs:
-//   Bins, WrongBinAudits, NotScanned
+// And appends rows into Google Sheets tabs:
+//   Bins, WrongBinAudits, NotScanned (now includes SERIAL and NON-SERIAL gaps)
 
 const { withCORS } = require("../_lib/respond");
 const Store = require("../_lib/store");
@@ -15,7 +15,6 @@ function norm(s){ return String(s ?? "").trim(); }
 function now(){ return new Date().toISOString(); }
 
 async function readJSON(req){
-  // handle vercel/node body variations safely
   if (req.body && typeof req.body === "object") return req.body;
   if (typeof req.body === "string" && req.body) {
     try { return JSON.parse(req.body); } catch {}
@@ -112,72 +111,104 @@ module.exports = async function handler(req, res){
       missingImeis,
       nonSerialShortages,
       state: "investigation",
-      started: startedAt || now(),
+      started: startedAt || submittedAt,
       submittedAt,
     });
 
-    // ---------- Sheets logging (fire-and-forget) ----------
     // ---------- Sheets logging (await + report) ----------
-const sheetsResult = { bins:false, notScanned:0, audits:0, errors:[] };
+    const sheetsResult = { bins:false, notScanned:0, audits:0, errors:[] };
 
-try {
-  await appendRow("Bins", [
-    bin,
-    counter || "—",
-    Number(total || 0),
-    Number(scanned || 0),
-    Number(finalMissing || 0),
-    startedAt || record.started || submittedAt,
-    submittedAt,
-    "investigation",
-  ]);
-  sheetsResult.bins = true;
-} catch (e) {
-  sheetsResult.errors.push({ tab:"Bins", error: String(e?.message || e) });
-}
-
-if (Array.isArray(nonSerialShortages) && nonSerialShortages.length) {
-  for (const s of nonSerialShortages) {
+    // Bins row
     try {
-      await appendRow("NotScanned", [
+      await appendRow("Bins", [
         bin,
         counter || "—",
-        s.sku || "—",
-        s.description || "—",
-        "nonserial",
-        Number(s.systemQty || 0),
-        Number(s.qtyEntered || 0),
-      ]);
-      sheetsResult.notScanned++;
-    } catch (e) {
-      sheetsResult.errors.push({ tab:"NotScanned", error: String(e?.message || e) });
-    }
-  }
-}
-
-if (Array.isArray(wrongBin) && wrongBin.length) {
-  for (const wb of wrongBin) {
-    try {
-      await appendRow("WrongBinAudits", [
-        String(wb.imei || ""),
-        String(wb.scannedBin || ""),
-        String(wb.trueLocation || ""),
-        String(wb.scannedBy || counter || "—"),
-        "open",
+        Number(total || 0),
+        Number(scanned || 0),
+        Number(finalMissing || 0),
+        startedAt || record.started || submittedAt,
         submittedAt,
-        submittedAt,
+        "investigation",
       ]);
-      sheetsResult.audits++;
+      sheetsResult.bins = true;
     } catch (e) {
-      sheetsResult.errors.push({ tab:"WrongBinAudits", error: String(e?.message || e) });
+      sheetsResult.errors.push({ tab:"Bins", error: String(e?.message || e) });
     }
-  }
-}
 
-return res.end(JSON.stringify({ ok:true, record, missing: finalMissing, sheetsResult }));
+    // NotScanned: NON-SERIAL
+    if (Array.isArray(nonSerialShortages) && nonSerialShortages.length) {
+      for (const s of nonSerialShortages) {
+        try {
+          await appendRow("NotScanned", [
+            bin,
+            counter || "—",
+            s.sku || "—",
+            s.description || "—",
+            "nonserial",
+            Number(s.systemQty || 0),
+            Number(s.qtyEntered || 0),
+          ]);
+          sheetsResult.notScanned++;
+        } catch (e) {
+          sheetsResult.errors.push({ tab:"NotScanned", error: String(e?.message || e) });
+        }
+      }
+    }
 
+    // NotScanned: SERIAL (from missingImeis)
+    if (Array.isArray(missingImeis) && missingImeis.length) {
+      for (const miRaw of missingImeis) {
+        const mi = String(miRaw || "").trim();
+        if (!mi) continue;
 
-    return res.end(JSON.stringify({ ok:true, record, missing: finalMissing }));
+        // Try to enrich from snapshot (best-effort)
+        let sku = "—", description = "—";
+        try {
+          const invRec = await Store.findByIMEI(mi);
+          if (invRec) {
+            sku = invRec.sku || "—";
+            description = invRec.description || "—";
+          }
+        } catch (_) {}
+
+        try {
+          await appendRow("NotScanned", [
+            bin,
+            counter || "—",
+            sku,
+            description,
+            "serial",
+            1,   // QtySystem
+            0,   // QtyEntered
+          ]);
+          sheetsResult.notScanned++;
+        } catch (e) {
+          sheetsResult.errors.push({ tab:"NotScanned", error: String(e?.message || e) });
+        }
+      }
+    }
+
+    // WrongBinAudits (if provided)
+    if (Array.isArray(wrongBin) && wrongBin.length) {
+      for (const wb of wrongBin) {
+        try {
+          await appendRow("WrongBinAudits", [
+            String(wb.imei || ""),
+            String(wb.scannedBin || ""),
+            String(wb.trueLocation || ""),
+            String(wb.scannedBy || counter || "—"),
+            "open",
+            submittedAt,
+            submittedAt,
+          ]);
+          sheetsResult.audits++;
+        } catch (e) {
+          sheetsResult.errors.push({ tab:"WrongBinAudits", error: String(e?.message || e) });
+        }
+      }
+    }
+
+    return res.end(JSON.stringify({ ok:true, record, missing: finalMissing, sheetsResult }));
   } catch (e) {
     console.error("[cyclecounts/submit] fail:", e);
     res.statusCode = 500;
