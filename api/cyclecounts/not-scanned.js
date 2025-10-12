@@ -33,39 +33,39 @@ async function readTabObjects(spreadsheetId, tabName) {
   });
 }
 
-// --- REPLACE your existing handleDelete with this version ---
 async function handleDelete(req, res){
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-    let bin  = norm(body.bin || req.query?.bin || "");
-    const imei = norm(body.systemImei || body.imei || req.query?.imei || "");
-    const user = norm(body.user || body.counter || req.query?.user || "");
+    let bin       = norm(body.bin || req.query?.bin || "");
+    const imei    = norm(body.systemImei || body.imei || req.query?.imei || "");
+    const sku     = norm(body.sku || req.query?.sku || "");
+    const entered = Number(body.qtyEntered != null ? body.qtyEntered : req.query?.qtyEntered) || 0;
+    const user    = norm(body.user || body.counter || req.query?.user || "");
 
-    if (!imei) return bad(res, "systemImei is required", 400);
+    if (!imei && !sku) return bad(res, "systemImei or sku is required", 400);
 
-    // If bin missing, derive it from the most-recent Store record that references this IMEI
+    // Derive bin if missing (by IMEI or by SKU with deficit)
     if (!bin) {
       const all = await Store.listBins();
       let best = null, bestT = -1;
-
       for (const r of all) {
         const t = Date.parse(r.submittedAt || r.updatedAt || r.started || 0) || 0;
         const items = Array.isArray(r.items) ? r.items : [];
         const missingImeis = Array.isArray(r.missingImeis) ? r.missingImeis : [];
-
-        const inMissing = missingImeis.some(x => norm(x) === imei);
-        const inItemsWithDeficit = items.some(it => norm(it.systemImei) === imei && Number(it.qtyEntered||0) < (Number(it.systemQty||0) || 1));
-
-        if (inMissing || inItemsWithDeficit) {
-          if (t > bestT) { best = r; bestT = t; }
-        }
+        const hitByImei = imei && (
+          missingImeis.some(x => norm(x) === imei) ||
+          items.some(it => norm(it.systemImei) === imei && Number(it.qtyEntered||0) < (Number(it.systemQty||0) || 1))
+        );
+        const hitBySku  = sku && items.some(it =>
+          !norm(it.systemImei) && norm(it.sku) === sku && Number(it.qtyEntered||0) < Number(it.systemQty||0)
+        );
+        if (hitByImei || hitBySku) { if (t > bestT) { best = r; bestT = t; } }
       }
-
-      if (!best) return bad(res, "bin not found for provided IMEI", 404);
+      if (!best) return bad(res, "bin not found for provided identifier", 404);
       bin = norm(best.bin);
     }
 
-    // Fetch latest record for the resolved bin
+    // Load latest record for bin
     const all = await Store.listBins();
     let rec = null, recTime = -1;
     for (const r of all) {
@@ -78,53 +78,58 @@ async function handleDelete(req, res){
     rec.items = Array.isArray(rec.items) ? [...rec.items] : [];
     rec.missingImeis = Array.isArray(rec.missingImeis) ? [...rec.missingImeis] : [];
 
-    // 1) mark serial item entered if present
     let changed = false;
-    for (const it of rec.items) {
-      if (norm(it.systemImei) === imei) {
-        const target = Math.max(1, Number(it.systemQty || 1));
-        if (Number(it.qtyEntered || 0) < target) {
-          it.qtyEntered = target;
-          changed = true;
+
+    if (imei) {
+      // SERIAL clear
+      for (const it of rec.items) {
+        if (norm(it.systemImei) === imei) {
+          const target = Math.max(1, Number(it.systemQty || 1));
+          if (Number(it.qtyEntered || 0) < target) { it.qtyEntered = target; changed = true; }
         }
       }
+      const before = rec.missingImeis.length;
+      rec.missingImeis = rec.missingImeis.filter(x => norm(x) !== imei);
+      if (rec.missingImeis.length !== before) changed = true;
+    } else {
+      // NON-SERIAL update by SKU
+      const it = rec.items.find(x => !norm(x.systemImei) && norm(x.sku) === sku);
+      if (!it) return bad(res, "sku not found in bin", 404);
+      const sys = Number(it.systemQty || 0);
+      const newEntered = Math.min(sys, Math.max(0, Number(entered || 0)));
+      if (Number(it.qtyEntered || 0) !== newEntered) { it.qtyEntered = newEntered; changed = true; }
     }
 
-    // 2) remove from missingImeis
-    const beforeLen = rec.missingImeis.length;
-    rec.missingImeis = rec.missingImeis.filter(x => norm(x) !== imei);
-    if (rec.missingImeis.length !== beforeLen) changed = true;
-
-    // 3) recompute scanned/missing
     if (changed) {
+      const items = rec.items;
+      const total = items.reduce((a, it) => a + (norm(it.systemImei) ? 1 : Number(it.systemQty || 0)), 0);
       const serialMissing = rec.missingImeis.length;
-      const nonSerialMissing = rec.items
+      const nonSerialMissing = items
         .filter(it => !norm(it.systemImei))
         .reduce((a, it) => a + Math.max(Number(it.systemQty||0) - Number(it.qtyEntered||0), 0), 0);
-
-      const missing = serialMissing + nonSerialMissing;
-      const total = Number(rec.total || (
-        rec.items.reduce((a,it)=>a + (norm(it.systemImei) ? 1 : Number(it.systemQty||0)), 0)
-      ));
+      const missing = Math.max(0, serialMissing + nonSerialMissing);
       const scanned = Math.max(0, total - missing);
 
-      rec = await Store.upsertBin({
-        ...rec,
-        scanned,
-        missing,
-        updatedAt: new Date().toISOString(),
-      });
+      rec = await Store.upsertBin({ ...rec, scanned, missing, updatedAt: nowISO() });
 
-      // Optional audit
-      try { await appendRow("FoundImeis", [bin, imei, user || "—", rec.counter || "—", new Date().toISOString()]); } catch {}
+      // optional audit for serial clears
+      try { if (imei) await appendRow("FoundImeis", [bin, imei, user || "—", rec.counter || "—", nowISO()]); } catch {}
     }
 
-    return ok(res, { ok:true, bin, imei, updated: changed, record: rec });
+    // remaining (for non-serial UX)
+    let remaining = 0;
+    if (!imei) {
+      const it2 = rec.items.find(x => !norm(x.systemImei) && norm(x.sku) === sku);
+      if (it2) remaining = Math.max(0, Number(it2.systemQty||0) - Number(it2.qtyEntered||0));
+    }
+
+    return ok(res, { ok:true, bin, imei, sku, updated: changed, remaining, record: rec });
   } catch (e) {
     console.error("[not-scanned][DELETE] fail:", e);
     return bad(res, String(e.message || e), 500);
   }
 }
+
 
 
 // -------- GET: list not-scanned (existing behavior, unchanged except small helpers) --------
