@@ -945,11 +945,11 @@ document.addEventListener("keydown", async (e) => {
 
   try {
     const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user: userId(), bin: (currentBin || ''), sku, qtyEntered }) // <— add bin
-      body: JSON.stringify({ user: userId(), sku, qtyEntered })
-    });
+  method: 'DELETE',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ user: userId(), bin: (currentBin || ''), sku, qtyEntered })
+});
+
     if (!res.ok) throw new Error(await res.text());
 
     await Promise.all([
