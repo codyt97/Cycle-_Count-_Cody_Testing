@@ -1433,13 +1433,43 @@ async function refreshInvestigator(){
         <tr class="${cls}">
           <td>${escapeHTML(row.type || (isSerial ? "serial" : "nonserial"))}</td>
           <td class="mono">${escapeHTML(row.sku || "—")}</td>
-          <td>${escapeHTML(row.description || "—")}</td>
-          <td class="mono">${escapeHTML(row.systemImei || "")}</td>
-          <td>${sys}</td>
-          <td>${ent}</td>
-          <td class="row-sm">${invCell}</td>
-        </tr>
-      `;
+          tbody.innerHTML = items.map(row => {
+  const isSerial = !!String(row.systemImei||"").trim();
+  const sys = Number(row.systemQty || (isSerial ? 1 : 0));
+  const ent = Number(row.qtyEntered || 0);
+
+  let cls = "";
+  if (!isSerial){
+    if (ent === sys) cls = "ok";
+    else if (ent > sys) cls = "bad";
+    else cls = "warn";
+  }
+
+  const invCell = isSerial
+    ? `<input class="field mono" placeholder="scan IMEI" data-invscan="${escapeHTML(row.systemImei)}" style="width:160px" />`
+    : "";
+
+  const qtyCell = isSerial ? "" : `
+    <input class="field mono" placeholder="enter qty"
+           data-nonserial data-sku="${escapeHTML(row.sku || "")}"
+           value="${ent}" style="width:120px" />
+  `;
+
+  const remaining = isSerial ? ent : Math.max(0, sys - ent);
+
+  return `
+    <tr class="${cls}">
+      <td>${isSerial ? "serial" : "nonserial"}</td>
+      <td class="mono">${escapeHTML(row.sku || "—")}</td>
+      <td>${escapeHTML(row.description || "—")}</td>
+      <td class="mono">${escapeHTML(row.systemImei || "")}</td>
+      <td>${sys}</td>
+      <td>${remaining}</td>
+      <td class="row-sm">${invCell || qtyCell}</td>
+    </tr>
+  `;
+}).join("");
+
     }).join("")
   : `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`;
 
