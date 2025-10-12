@@ -911,7 +911,11 @@ document.addEventListener("keydown", async (e)=>{
       body: JSON.stringify(body)
     });
     if (!res.ok) throw new Error(await res.text());
-    await renderInvestigatorNotScanned();
+    await Promise.all([
+  renderInvestigatorNotScanned(),
+  refreshInvestigator()
+]);
+
   }catch(err){
     showAlerts(investAlerts,[{type:"warn",msg:`Could not clear ${sys}: <code>${escapeHTML(String(err.message||err))}</code>`}]);
   }
