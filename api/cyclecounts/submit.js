@@ -117,55 +117,65 @@ module.exports = async function handler(req, res){
     });
 
     // ---------- Sheets logging (fire-and-forget) ----------
-    (async () => {
-      try {
-        // Bins row
-        await appendRow("Bins", [
-          bin,
-          counter || "—",
-          Number(total || 0),
-          Number(scanned || 0),
-          Number(finalMissing || 0),
-          startedAt || record.started || submittedAt,
-          submittedAt,
-          "investigation",
-        ]);
-      } catch (e) { console.error("[Sheets][Bins] append fail:", e?.message || e); }
+    // ---------- Sheets logging (await + report) ----------
+const sheetsResult = { bins:false, notScanned:0, audits:0, errors:[] };
 
-      // NotScanned rows
-      if (Array.isArray(nonSerialShortages) && nonSerialShortages.length) {
-        for (const s of nonSerialShortages) {
-          try {
-            await appendRow("NotScanned", [
-              bin,
-              counter || "—",
-              s.sku || "—",
-              s.description || "—",
-              "nonserial",
-              Number(s.systemQty || 0),
-              Number(s.qtyEntered || 0),
-            ]);
-          } catch (e) { console.error("[Sheets][NotScanned] append fail:", e?.message || e); }
-        }
-      }
+try {
+  await appendRow("Bins", [
+    bin,
+    counter || "—",
+    Number(total || 0),
+    Number(scanned || 0),
+    Number(finalMissing || 0),
+    startedAt || record.started || submittedAt,
+    submittedAt,
+    "investigation",
+  ]);
+  sheetsResult.bins = true;
+} catch (e) {
+  sheetsResult.errors.push({ tab:"Bins", error: String(e?.message || e) });
+}
 
-      // WrongBinAudits rows
-      if (Array.isArray(wrongBin) && wrongBin.length) {
-        for (const wb of wrongBin) {
-          try {
-            await appendRow("WrongBinAudits", [
-              String(wb.imei || ""),
-              String(wb.scannedBin || ""),
-              String(wb.trueLocation || ""),
-              String(wb.scannedBy || counter || "—"),
-              "open",
-              submittedAt,
-              submittedAt,
-            ]);
-          } catch (e) { console.error("[Sheets][Audits] append fail:", e?.message || e); }
-        }
-      }
-    })();
+if (Array.isArray(nonSerialShortages) && nonSerialShortages.length) {
+  for (const s of nonSerialShortages) {
+    try {
+      await appendRow("NotScanned", [
+        bin,
+        counter || "—",
+        s.sku || "—",
+        s.description || "—",
+        "nonserial",
+        Number(s.systemQty || 0),
+        Number(s.qtyEntered || 0),
+      ]);
+      sheetsResult.notScanned++;
+    } catch (e) {
+      sheetsResult.errors.push({ tab:"NotScanned", error: String(e?.message || e) });
+    }
+  }
+}
+
+if (Array.isArray(wrongBin) && wrongBin.length) {
+  for (const wb of wrongBin) {
+    try {
+      await appendRow("WrongBinAudits", [
+        String(wb.imei || ""),
+        String(wb.scannedBin || ""),
+        String(wb.trueLocation || ""),
+        String(wb.scannedBy || counter || "—"),
+        "open",
+        submittedAt,
+        submittedAt,
+      ]);
+      sheetsResult.audits++;
+    } catch (e) {
+      sheetsResult.errors.push({ tab:"WrongBinAudits", error: String(e?.message || e) });
+    }
+  }
+}
+
+return res.end(JSON.stringify({ ok:true, record, missing: finalMissing, sheetsResult }));
+
 
     return res.end(JSON.stringify({ ok:true, record, missing: finalMissing }));
   } catch (e) {
