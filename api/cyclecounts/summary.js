@@ -53,37 +53,76 @@ module.exports = async (req, res) => {
     const sheetId = process.env.LOGS_SHEET_ID || "";
     if (!sheetId) throw new Error("Missing LOGS_SHEET_ID");
 
-    // Expected headers in Bins tab:
-    // Bin, Counter, Total, Scanned, Missing, StartedAt, SubmittedAt, State
-    const rows = await readTabObjects(sheetId, "Bins");
+// Expected headers in Bins tab:
+// Bin, Counter, Total, Scanned, Missing, StartedAt, SubmittedAt, State
+const rows = await readTabObjects(sheetId, "Bins");
 
-    const records = rows.map(r => {
-      const total   = Number(r.Total ?? r.total ?? 0);
-      const scanned = Number(r.Scanned ?? r.scanned ?? 0);
-      const missing = Number(r.Missing ?? r.missing ?? Math.max(0, total - scanned));
-      return {
-        bin: String(r.Bin ?? r.bin ?? ""),
-        counter: String(r.Counter ?? r.counter ?? "—"),
-        started: toEST(r.StartedAt ?? r.startedAt ?? r.started ?? ""),
-        updated: toEST(r.SubmittedAt ?? r.submittedAt ?? r.updatedAt ?? r.updated ?? ""),
-        total: Number.isFinite(total) ? total : null,
-        scanned: Number.isFinite(scanned) ? scanned : null,
-        missing: Number.isFinite(missing) ? missing : null,
-        state: String(r.State ?? r.state ?? "investigation"),
-      };
-    });
-    // Dedupe: keep only the latest row per bin (by SubmittedAt/updated)
-const byBin = new Map();
-for (const rec of records) {
-  const k = String(rec.bin || "").trim().toUpperCase();
-  const t = Date.parse(rec.updated) || 0;
-  const prev = byBin.get(k);
-  const prevT = prev ? (Date.parse(prev.updated) || 0) : -1;
-  if (!prev || t > prevT) byBin.set(k, rec);
+// 1) Build records from the sheet (append-only audit)
+const sheetRecords = rows.map(r => {
+  const total   = Number(r.Total ?? r.total ?? 0);
+  const scanned = Number(r.Scanned ?? r.scanned ?? 0);
+  const missing = Number(r.Missing ?? r.missing ?? Math.max(0, total - scanned));
+  return {
+    bin: String(r.Bin ?? r.bin ?? ""),
+    counter: String(r.Counter ?? r.counter ?? "—"),
+    started: toEST(r.StartedAt ?? r.startedAt ?? r.started ?? ""),
+    updated: toEST(r.SubmittedAt ?? r.submittedAt ?? r.updatedAt ?? r.updated ?? ""),
+    total: Number.isFinite(total) ? total : null,
+    scanned: Number.isFinite(scanned) ? scanned : null,
+    missing: Number.isFinite(missing) ? missing : null,
+    state: String(r.State ?? r.state ?? "investigation"),
+  };
+});
+
+// 2) Pull the latest Store record per bin and OVERWRITE totals with live values
+const Store = require("../_lib/store");
+const latestByBin = new Map();
+for (const b of await Store.listBins()) {
+  const k = String(b.bin || "").trim().toUpperCase();
+  const t = Date.parse(b.submittedAt || b.updatedAt || b.started || 0) || 0;
+  const cur = latestByBin.get(k);
+  const ct  = cur ? (Date.parse(cur.submittedAt || cur.updatedAt || cur.started || 0) || 0) : -1;
+  if (!cur || t > ct) latestByBin.set(k, b);
 }
-const deduped = Array.from(byBin.values())
-  .sort((a, b) => (Date.parse(b.updated) || 0) - (Date.parse(a.updated) || 0));
-return ok(res, { records: deduped });
+
+const merged = new Map();
+// seed from sheet
+for (const rec of sheetRecords) {
+  merged.set(String(rec.bin || "").trim().toUpperCase(), { ...rec });
+}
+// overwrite/insert from Store
+for (const [k, b] of latestByBin.entries()) {
+  const items = Array.isArray(b.items) ? b.items : [];
+  const total =
+    items.reduce((a, it) => a + (String(it.systemImei||"").trim() ? 1 : Number(it.systemQty||0)), 0);
+  const serialMissing = Array.isArray(b.missingImeis) ? b.missingImeis.length : 0;
+  const nonSerialMissing = items
+    .filter(it => !String(it.systemImei||"").trim())
+    .reduce((a,it)=> a + Math.max(Number(it.systemQty||0) - Number(it.qtyEntered||0), 0), 0);
+  const missing = Math.max(0, serialMissing + nonSerialMissing);
+  const scanned = Math.max(0, total - missing);
+
+  const started = b.started || b.submittedAt || b.updatedAt;
+  const updated = b.submittedAt || b.updatedAt || b.started;
+
+  merged.set(k, {
+    bin: b.bin,
+    counter: String(b.counter || "—"),
+    started: toEST(started),
+    updated: toEST(updated),
+    total,
+    scanned,
+    missing,
+    state: String(b.state || "investigation"),
+  });
+}
+
+// 3) Sort by updated desc and return
+const out = Array.from(merged.values())
+  .sort((a,b) => (Date.parse(b.updated)||0) - (Date.parse(a.updated)||0));
+
+return ok(res, { records: out });
+
 
 
     return ok(res, { records });
