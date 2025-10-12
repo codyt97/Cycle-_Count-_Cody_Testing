@@ -230,18 +230,29 @@ if (qtyEntered >= systemQty) {
   for (const r of filtered) map.set(keyOf(r), r);
   const rows = Array.from(map.values());
 
-  const records = rows.map(r => ({
-    bin:        norm(r.Bin ?? r.bin),
-    counter:    norm(r.Counter ?? r.counter) || "—",
-    sku:        norm(r.SKU ?? r.sku) || "—",
-    description:norm(r.Description ?? r.description) || "—",
-    systemImei: norm(r.SystemImei ?? r.systemImei),
-    systemQty:  Number(r.QtySystem ?? r.systemQty ?? 0),
-    qtyEntered: Number(r.QtyEntered ?? r.qtyEntered ?? 0),
-    type:       norm(r.Type ?? r.type) || (norm(r.SystemImei ?? r.systemImei) ? "serial" : "nonserial"),
-  }));
+  let records = rows.map(r => ({
+  bin:        norm(r.Bin ?? r.bin),
+  counter:    norm(r.Counter ?? r.counter) || "—",
+  sku:        norm(r.SKU ?? r.sku) || "—",
+  description:norm(r.Description ?? r.description) || "—",
+  systemImei: norm(r.SystemImei ?? r.systemImei),
+  systemQty:  Number(r.QtySystem ?? r.systemQty ?? 0),
+  qtyEntered: Number(r.QtyEntered ?? r.qtyEntered ?? 0),
+  type:       norm(r.Type ?? r.type) || (norm(r.SystemImei ?? r.systemImei) ? "serial" : "nonserial"),
+}));
 
-  return ok(res, { records });
+// Hide sheet rows that are already satisfied or blank non-serials
+records = records.filter(r => {
+  if (r.type === "nonserial") {
+    if (r.qtyEntered >= r.systemQty) return false;                       // fully matched
+    const isBlank = (!r.sku || r.sku === "—") && (!r.description || r.description === "—");
+    if (isBlank) return false;                                           // blank meta
+  }
+  return true;
+});
+
+return ok(res, { records });
+
 }
 
 module.exports = async (req, res) => {
