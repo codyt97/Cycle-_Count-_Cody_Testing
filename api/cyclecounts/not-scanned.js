@@ -172,13 +172,19 @@ async function handleGet(req, res){
       const hasSerial   = !!systemImei;
       const systemQty   = Number(it.systemQty != null ? it.systemQty : (hasSerial ? 1 : 0)) || 0;
       const qtyEntered  = Number(it.qtyEntered || 0);
-      if (qtyEntered < systemQty) {
-        fromStore.push({
-          Bin: b.bin, Counter: counter, SKU: sku, Description: description,
-          Type: hasSerial ? "serial" : "nonserial",
-          QtySystem: systemQty, QtyEntered: qtyEntered, SystemImei: systemImei,
-        });
-      }
+      // skip fully satisfied or blank non-serials
+if (qtyEntered >= systemQty) {
+  // already matched; do not show
+} else if (!hasSerial && (!sku || sku === "—") && (!description || description === "—")) {
+  // blank non-serial meta; hide
+} else {
+  fromStore.push({
+    Bin: b.bin, Counter: counter, SKU: sku, Description: description,
+    Type: hasSerial ? "serial" : "nonserial",
+    QtySystem: systemQty, QtyEntered: qtyEntered, SystemImei: systemImei,
+  });
+}
+
     }
 
     // also include b.missingImeis that didn't have an item row
