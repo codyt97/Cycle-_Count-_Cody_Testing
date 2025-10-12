@@ -887,9 +887,28 @@ async function renderInvestigatorNotScanned(){
           <td class="mono">${row.sku || "—"}</td>
           <td>${row.description || "—"}</td>
           <td class="mono">${row.systemImei || ""}</td>
-          <td>${sys}</td>
-          <td>${ent}</td>
-          <td class="row-sm">${invCell}</td>
+          // input for non-serial; serial uses scan input
+const qtyCell = isSerial
+  ? ""
+  : `<input class="field mono" placeholder="enter qty"
+            data-nonserial data-sku="${row.sku || ""}"
+            value="${ent}" style="width:120px" />`;
+
+// show remaining for non-serial (System − Entered); for serial show 0/1 entered
+const remaining = isSerial ? ent : Math.max(0, sys - ent);
+
+return `
+  <tr class="${cls}">
+    <td>${isSerial ? "serial" : "nonserial"}</td>
+    <td class="mono">${row.sku || "—"}</td>
+    <td>${row.description || "—"}</td>
+    <td class="mono">${row.systemImei || ""}</td>
+    <td>${sys}</td>
+    <td>${remaining}</td>
+    <td class="row-sm">${invCell || qtyCell}</td>
+  </tr>
+`;
+
         </tr>
       `;
     }).join("");
@@ -918,6 +937,28 @@ document.addEventListener("keydown", async (e)=>{
 
   }catch(err){
     showAlerts(investAlerts,[{type:"warn",msg:`Could not clear ${sys}: <code>${escapeHTML(String(err.message||err))}</code>`}]);
+  }
+});
+
+    // Non-serial qty entry → DELETE { sku, qtyEntered }
+document.addEventListener("keydown", async (e)=>{
+  const el = e.target.closest("input[data-nonserial]");
+  if (!el || e.key !== "Enter") return;
+  const sku = el.getAttribute("data-sku") || "";
+  const qtyEntered = Number(el.value || 0);
+  try{
+    const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}`, {
+      method:"DELETE",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ user: userId(), sku, qtyEntered })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    await Promise.all([
+      renderInvestigatorNotScanned(),
+      refreshInvestigator()   // re-pull /api/cyclecounts/summary
+    ]);
+  }catch(err){
+    showAlerts(investAlerts,[{type:"warn",msg:`Could not update ${sku}: <code>${escapeHTML(String(err.message||err))}</code>`}]);
   }
 });
 
