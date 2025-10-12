@@ -1,7 +1,4 @@
 // api/inventory/imei.js
-// Lookup IMEI in the inventory snapshot. On bin mismatch, create an audit (Store)
-// and append a row to WrongBinAudits sheet.
-
 /* eslint-disable no-console */
 const { ok, bad, method, withCORS } = require("../_lib/respond");
 const Store = require("../_lib/store");
@@ -18,22 +15,21 @@ module.exports = async (req, res) => {
 
   if (!imei) return bad(res, "imei is required", 400);
 
-  try {
-    const rec = await Store.findByIMEI(imei);
-    if (!rec) return ok(res, { found: false, reason: "not_in_snapshot" });
+  const rec = await Store.findByIMEI(imei);
+  if (!rec) return ok(res, { found: false, reason: "not_in_snapshot" });
 
-    const trueLocation = String(rec.location || "").trim();
+  const trueLocation = String(rec.location || "").trim();
+  const resp = {
+    found: true,
+    imei,
+    location: trueLocation,
+    sku: rec.sku || "",
+    description: rec.description || "",
+  };
 
-    const resp = {
-      found: true,
-      imei,
-      location: trueLocation,
-      sku: rec.sku || "",
-      description: rec.description || "",
-    };
-
-    // If the scanned bin mismatches the truth, log an audit and append to Sheets
-    if (scannedBin && trueLocation && trueLocation.toLowerCase() !== scannedBin.toLowerCase()) {
+  // Mismatch: log to Store and append to Sheets (fire-and-forget)
+  if (scannedBin && trueLocation && trueLocation.toLowerCase() !== scannedBin.toLowerCase()) {
+    try {
       await Store.appendAudit({
         imei,
         scannedBin,
@@ -41,31 +37,29 @@ module.exports = async (req, res) => {
         scannedBy: scannedBy || "—",
         status: "open",
       });
-
-      // Fire-and-forget Sheets append
-      (async () => {
-        try {
-          const ts = new Date().toISOString();
-          await appendRow("WrongBinAudits", [
-            imei,
-            scannedBin,
-            trueLocation,
-            scannedBy || "—",
-            "open",
-            ts, ts,
-          ]);
-        } catch (e) {
-          console.error("[inventory/imei] sheets append failed:", e?.message || e);
-        }
-      })();
-
       resp.auditLogged = true;
       resp.mismatch = { scannedBin, trueLocation };
+    } catch (e) {
+      console.error("[inventory/imei] store audit fail:", e?.message || e);
     }
 
-    return ok(res, resp);
-  } catch (e) {
-    console.error("[inventory/imei] error:", e);
-    return bad(res, String(e.message || e), 500);
+    (async () => {
+      try {
+        const ts = new Date().toISOString();
+        await appendRow("WrongBinAudits", [
+          imei,
+          scannedBin,
+          trueLocation,
+          scannedBy || "—",
+          "open",
+          ts,
+          ts,
+        ]);
+      } catch (e) {
+        console.error("[Sheets][Audits] append fail:", e?.message || e);
+      }
+    })();
   }
+
+  return ok(res, resp);
 };
