@@ -861,6 +861,8 @@ async function fetchNotScanned() {
 
 // --- Investigator: render Not-Scanned ---
 async function renderInvestigatorNotScanned(){
+// --- Investigator: render Not-Scanned ---
+async function renderInvestigatorNotScanned(){
   const tbody = document.getElementById("invNotScannedBody");
   try{
     const items = await fetchNotScanned();
@@ -872,57 +874,35 @@ async function renderInvestigatorNotScanned(){
       const isSerial = !!String(row.systemImei||"").trim();
       const sys = Number(row.systemQty || (isSerial ? 1 : 0));
       const ent = Number(row.qtyEntered || 0);
+
       let cls = "";
       if (!isSerial){
-        if (ent === sys) cls = "ok";      // green: matched
-        else if (ent > sys) cls = "bad";  // red: overcount
-        else cls = "warn";                // amber: deficit (missing qty = sys-ent)
+        if (ent === sys) cls = "ok";      // matched
+        else if (ent > sys) cls = "bad";  // overcount
+        else cls = "warn";                // deficit
       }
+
       const invCell = isSerial
-        ? `<input class="field mono" placeholder="scan IMEI" data-invscan="${row.systemImei}" style="width:160px" />`
+        ? `<input class="field mono" placeholder="scan IMEI" data-invscan="${escapeHTML(row.systemImei)}" style="width:160px" />`
         : ``;
+
+      const qtyCell = isSerial ? `` : `
+        <input class="field mono" placeholder="enter qty"
+               data-nonserial data-sku="${escapeHTML(row.sku || "")}"
+               value="${ent}" style="width:120px" />
+      `;
+
+      const remaining = isSerial ? ent : Math.max(0, sys - ent);
 
       return `
         <tr class="${cls}">
           <td>${isSerial ? "serial" : "nonserial"}</td>
-          <td class="mono">${row.sku || "—"}</td>
-          <td>${row.description || "—"}</td>
-const isSerial = !!String(row.systemImei||"").trim();
-const sys = Number(row.systemQty || (isSerial ? 1 : 0));
-const ent = Number(row.qtyEntered || 0);
-
-let cls = "";
-if (!isSerial){
-  if (ent === sys) cls = "ok";      // matched
-  else if (ent > sys) cls = "bad";  // overcount
-  else cls = "warn";                // deficit
-}
-
-const invCell = isSerial
-  ? `<input class="field mono" placeholder="scan IMEI" data-invscan="${row.systemImei}" style="width:160px" />`
-  : "";
-
-const qtyCell = isSerial
-  ? ""
-  : `<input class="field mono" placeholder="enter qty"
-       data-nonserial data-sku="${row.sku || ""}"
-       value="${ent}" style="width:120px" />`;
-
-const remaining = isSerial ? ent : Math.max(0, sys - ent);
-
-return `
-  <tr class="${cls}">
-    <td>${isSerial ? "serial" : "nonserial"}</td>
-    <td class="mono">${row.sku || "—"}</td>
-    <td>${row.description || "—"}</td>
-    <td class="mono">${row.systemImei || ""}</td>
-    <td>${sys}</td>
-    <td>${remaining}</td>
-    <td class="row-sm">${invCell || qtyCell}</td>
-  </tr>
-`;
-
-
+          <td class="mono">${escapeHTML(row.sku || "—")}</td>
+          <td>${escapeHTML(row.description || "—")}</td>
+          <td class="mono">${escapeHTML(row.systemImei || "")}</td>
+          <td>${sys}</td>
+          <td>${remaining}</td>
+          <td class="row-sm">${invCell || qtyCell}</td>
         </tr>
       `;
     }).join("");
@@ -930,6 +910,7 @@ return `
     tbody.innerHTML = `<tr><td colspan="7" class="empty">Failed to load not-scanned.</td></tr>`;
   }
 }
+
 
 // Investigator “scan” of a missing serial IMEI → clear from list
 document.addEventListener("keydown", async (e)=>{
@@ -1412,66 +1393,9 @@ async function refreshInvestigator(){
         `).join("");
 
     // 4) Not-scanned (serial + non-serial)
-    const s = Array.isArray(shorts) ? shorts : [];
-    const invNS = document.getElementById("invNotScannedBody");
-    invNS.innerHTML = s.length
-  ? s.map(row => {
-      const isSerial = !!String(row.systemImei||"").trim();
-      const sys = Number(row.systemQty || (isSerial ? 1 : 0));
-      const ent = Number(row.qtyEntered || 0);
-      let cls = "";
-      if (!isSerial){
-        if (ent === sys) cls = "ok";      // green matched
-        else if (ent > sys) cls = "bad";  // red overcount
-        else cls = "warn";                // amber deficit
-      }
-      const invCell = isSerial
-        ? `<input class="field mono" placeholder="scan IMEI" data-invscan="${escapeHTML(row.systemImei)}" style="width:160px" />`
-        : ``;
+    // 4) Not-scanned (serial + non-serial)
+await renderInvestigatorNotScanned();
 
-      return `
-        <tr class="${cls}">
-          <td>${escapeHTML(row.type || (isSerial ? "serial" : "nonserial"))}</td>
-          <td class="mono">${escapeHTML(row.sku || "—")}</td>
-          tbody.innerHTML = items.map(row => {
-  const isSerial = !!String(row.systemImei||"").trim();
-  const sys = Number(row.systemQty || (isSerial ? 1 : 0));
-  const ent = Number(row.qtyEntered || 0);
-
-  let cls = "";
-  if (!isSerial){
-    if (ent === sys) cls = "ok";
-    else if (ent > sys) cls = "bad";
-    else cls = "warn";
-  }
-
-  const invCell = isSerial
-    ? `<input class="field mono" placeholder="scan IMEI" data-invscan="${escapeHTML(row.systemImei)}" style="width:160px" />`
-    : "";
-
-  const qtyCell = isSerial ? "" : `
-    <input class="field mono" placeholder="enter qty"
-           data-nonserial data-sku="${escapeHTML(row.sku || "")}"
-           value="${ent}" style="width:120px" />
-  `;
-
-  const remaining = isSerial ? ent : Math.max(0, sys - ent);
-
-  return `
-    <tr class="${cls}">
-      <td>${isSerial ? "serial" : "nonserial"}</td>
-      <td class="mono">${escapeHTML(row.sku || "—")}</td>
-      <td>${escapeHTML(row.description || "—")}</td>
-      <td class="mono">${escapeHTML(row.systemImei || "")}</td>
-      <td>${sys}</td>
-      <td>${remaining}</td>
-      <td class="row-sm">${invCell || qtyCell}</td>
-    </tr>
-  `;
-}).join("");
-
-    }).join("")
-  : `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`;
 
     showAlerts(investAlerts,[]);
   }catch(e){
