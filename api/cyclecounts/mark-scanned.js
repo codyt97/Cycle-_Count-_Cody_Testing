@@ -7,12 +7,12 @@ function norm(s){ return String(s ?? "").trim(); }
 const nowISO = () => new Date().toISOString();
 
 module.exports = async (req, res) => {
-  if (req.method === "OPTIONS") return withCORS(res), res.status(204).end();
-  if (req.method !== "POST")     return method(res, ["POST","OPTIONS"]);
+  if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
+  if (req.method !== "POST")    return method(res, ["POST","OPTIONS"]);
   withCORS(res);
 
   try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body||"{}") : (req.body || {});
+    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
     const bin   = norm(body.bin);
     const user  = norm(body.user || body.counter || "");
     const imei  = norm(body.systemImei || body.imei); // optional
@@ -23,38 +23,34 @@ module.exports = async (req, res) => {
     if (!bin) return bad(res, "bin is required", 400);
 
     // Get latest record for this bin
-    const all = await Store.listBins();                                         // :contentReference[oaicite:2]{index=2}
-    let idx = -1, bestT = -1;
+    const all = await Store.listBins();
+    let latest = null, bestT = -1, latestIdx = -1;
     for (let i = 0; i < all.length; i++) {
       if (String(all[i].bin||"").toLowerCase() !== bin.toLowerCase()) continue;
       const t = Date.parse(all[i].submittedAt || all[i].updatedAt || all[i].started || 0) || 0;
-      if (t > bestT) { bestT = t; idx = i; }
+      if (t > bestT) { bestT = t; latest = all[i]; latestIdx = i; }
     }
-    if (idx === -1) return bad(res, "bin not found", 404);
-    const rec = all[idx];
+    if (!latest) return bad(res, "bin not found", 404);
 
-    const items = Array.isArray(rec.items) ? [...rec.items] : [];
+    const items = Array.isArray(latest.items) ? [...latest.items] : [];
     let changed = false;
 
     if (imei) {
-      // SERIAL: find item by IMEI; set qtyEntered = 1
+      // SERIAL: find exact IMEI line, set qtyEntered = 1
       const j = items.findIndex(it => String(it.systemImei||"").trim() === imei);
       if (j !== -1) {
-        const hasSerial = true;
-        const systemQty = 1;
-        const qtyEntered = 1; // scanned now
-        items[j] = { ...items[j], systemImei: imei, systemQty, qtyEntered };
+        items[j] = { ...items[j], systemImei: imei, systemQty: 1, qtyEntered: 1 };
         changed = true;
       }
       // also drop from missingImeis if present
-      if (Array.isArray(rec.missingImeis) && rec.missingImeis.includes(imei)) {
-        rec.missingImeis = rec.missingImeis.filter(x => String(x).trim() !== imei);
+      if (Array.isArray(latest.missingImeis) && latest.missingImeis.includes(imei)) {
+        latest.missingImeis = latest.missingImeis.filter(x => String(x).trim() !== imei);
         changed = true;
       }
     } else {
-      // NON-SERIAL: bump qtyEntered (default to filling to systemQty)
+      // NON-SERIAL: find row by SKU/Description, bump qtyEntered (default: fill to systemQty)
       const j = items.findIndex(it =>
-        (!String(it.systemImei||"")) &&
+        !String(it.systemImei||"") &&
         (sku ? String(it.sku||"").trim().toUpperCase() === sku.toUpperCase() : true) &&
         (desc ? String(it.description||"").trim() === desc : true)
       );
@@ -69,28 +65,30 @@ module.exports = async (req, res) => {
       }
     }
 
-    if (!changed) return ok(res, { ok:true, updated:false, record: rec });
+    if (!changed) return ok(res, { ok:true, updated:false, record: latest });
 
-    // Recompute scanned/missing from items
-    const total = Number(rec.total || 0);
+    // Recompute scanned / missing
     const serialScanned = items.filter(it => String(it.systemImei||"") && Number(it.qtyEntered||0) >= 1).length;
     const nonSerialMissing = items
       .filter(it => !String(it.systemImei||""))
       .reduce((a, it) => a + Math.max(Number(it.systemQty||0) - Number(it.qtyEntered||0), 0), 0);
-    const serialMissing = Math.max(0, (Array.isArray(rec.missingImeis) ? rec.missingImeis.length : 0));
-    const scanned = serialScanned + (total - (serialMissing + nonSerialMissing)); // best-effort
+    const serialMissing = Math.max(0, (Array.isArray(latest.missingImeis) ? latest.missingImeis.length : 0));
     const missing = serialMissing + nonSerialMissing;
+
+    // If you track 'total' separately you can keep it, otherwise infer: scanned = total - missing
+    const total = Number(latest.total || (items.reduce((a,it)=>a + (Number(it.systemQty||0) || (String(it.systemImei||"") ? 1 : 0)),0)));
+    const scanned = Math.max(0, total - missing);
 
     const updated = await Store.upsertBin({
       bin,
-      counter: rec.counter || user || "—",
+      counter: latest.counter || user || "—",
       items,
-      missingImeis: rec.missingImeis || [],
+      missingImeis: latest.missingImeis || [],
       scanned,
       missing,
-      state: rec.state || "investigation",
+      state: latest.state || "investigation",
       submittedAt: nowISO(),
-    });                                                                            // :contentReference[oaicite:3]{index=3}
+    });
 
     return ok(res, { ok:true, updated:true, record: updated });
   } catch (e) {
