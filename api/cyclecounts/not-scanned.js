@@ -44,42 +44,52 @@ module.exports = async (req, res) => {
     // Expected headers in NotScanned:
     // Bin, Counter, SKU, Description, Type, QtySystem, QtyEntered
     let all = await readTabObjects(sheetId, "NotScanned");
-    // If sheet is empty, fallback to Store snapshot (latest per bin)
-if (!all.length) {
-  try {
-    const Store = require("../_lib/store");
-    const bins = await Store.listBins();
+// Always synthesize from Store (latest per bin) and merge with sheet rows
+try {
+  const Store = require("../_lib/store");
+  const bins = await Store.listBins();
 
-    // keep only the latest record per bin
-    const latest = new Map();
-    for (const b of bins) {
-      const k = String(b.bin || "").trim().toUpperCase();
-      const t = Date.parse(b.submittedAt || b.updatedAt || b.started || 0) || 0;
-      const prev = latest.get(k);
-      const prevT = prev ? (Date.parse(prev.submittedAt || prev.updatedAt || prev.started || 0) || 0) : -1;
-      if (!prev || t > prevT) latest.set(k, b);
-    }
+  // latest per bin
+  const latest = new Map();
+  for (const b of bins) {
+    const k = String(b.bin || "").trim().toUpperCase();
+    const t = Date.parse(b.submittedAt || b.updatedAt || b.started || 0) || 0;
+    const prev = latest.get(k);
+    const prevT = prev ? (Date.parse(prev.submittedAt || prev.updatedAt || prev.started || 0) || 0) : -1;
+    if (!prev || t > prevT) latest.set(k, b);
+  }
 
-    // synthesize NotScanned rows from nonSerialShortages
-    all = [];
-    for (const b of latest.values()) {
-      const nss = Array.isArray(b.nonSerialShortages) ? b.nonSerialShortages : [];
-      for (const s of nss) {
-        if (Number(s.qtyEntered || 0) < Number(s.systemQty || 0)) {
-          all.push({
-            Bin: b.bin,
-            Counter: b.counter || "—",
-            SKU: s.sku || "—",
-            Description: s.description || "—",
-            Type: "nonserial",
-            QtySystem: Number(s.systemQty || 0),
-            QtyEntered: Number(s.qtyEntered || 0),
-          });
-        }
+  // Build rows where QtyEntered < QtySystem for ALL items (serial + non-serial)
+  const fromStore = [];
+  for (const b of latest.values()) {
+    const counter = String(b.counter || "—").trim();
+    const items = Array.isArray(b.items) ? b.items : [];
+    for (const it of items) {
+      const sku         = String(it.sku || "—").trim();
+      const description = String(it.description || "—").trim();
+      const systemImei  = String(it.systemImei || "").trim();
+      const hasSerial   = !!systemImei;
+      const systemQty   = Number(it.systemQty != null ? it.systemQty : (hasSerial ? 1 : 0)) || 0;
+      const qtyEntered  = Number(it.qtyEntered || 0);
+      if (qtyEntered < systemQty) {
+        fromStore.push({
+          Bin: b.bin,
+          Counter: counter,
+          SKU: sku,
+          Description: description,
+          Type: hasSerial ? "serial" : "nonserial",
+          QtySystem: systemQty,
+          QtyEntered: qtyEntered,
+          SystemImei: systemImei,
+        });
       }
     }
-  } catch (_) {}
-}
+  }
+
+  // Merge Store rows with whatever we read from the sheet (sheet may be empty or non-serial only)
+  all = (all || []).concat(fromStore);
+} catch (_) {}
+
 
 
     // Optional filters
@@ -94,21 +104,28 @@ if (!all.length) {
     }
 
     // Normalize + dedupe by Bin+SKU+Description, keep latest row (last write wins)
-    const keyOf = (r) => [norm(r.Bin || r.bin), norm(r.SKU || r.sku), norm(r.Description || r.description)].join("|");
+    const keyOf = (r) => [
+  norm(r.Bin || r.bin),
+  norm(r.SKU || r.sku),
+  norm(r.Description || r.description),
+  norm(r.SystemImei || r.systemImei) // keep serial rows distinct
+].join("|");
+
     const map = new Map();
     for (const r of all) map.set(keyOf(r), r);
     const rows = Array.from(map.values());
 
     const records = rows.map(r => ({
-      bin: norm(r.Bin ?? r.bin),
-      counter: norm(r.Counter ?? r.counter) || "—",
-      sku: norm(r.SKU ?? r.sku) || "—",
-      description: norm(r.Description ?? r.description) || "—",
-      systemImei: "", // non-serial view
-      systemQty: Number(r.QtySystem ?? r.systemQty ?? 0),
-      qtyEntered: Number(r.QtyEntered ?? r.qtyEntered ?? 0),
-      type: norm(r.Type ?? r.type) || "nonserial",
-    }));
+  bin: norm(r.Bin ?? r.bin),
+  counter: norm(r.Counter ?? r.counter) || "—",
+  sku: norm(r.SKU ?? r.sku) || "—",
+  description: norm(r.Description ?? r.description) || "—",
+  systemImei: norm(r.SystemImei ?? r.systemImei), // show IMEI when present
+  systemQty: Number(r.QtySystem ?? r.systemQty ?? 0),
+  qtyEntered: Number(r.QtyEntered ?? r.qtyEntered ?? 0),
+  type: norm(r.Type ?? r.type) || (norm(r.SystemImei ?? r.systemImei) ? "serial" : "nonserial"),
+}));
+
 
     return ok(res, { records });
   } catch (e) {
