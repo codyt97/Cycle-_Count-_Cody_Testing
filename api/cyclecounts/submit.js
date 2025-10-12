@@ -1,12 +1,5 @@
 // api/cyclecounts/submit.js
 /* eslint-disable no-console */
-// Accepts a bin submission from the counter and persists:
-// - the cycle count summary (shared Store)
-// - wrong-bin audits (shared Store)
-// - non-serial shortages (derived)
-// And appends rows into Google Sheets tabs:
-//   Bins, WrongBinAudits, NotScanned (now includes SERIAL and NON-SERIAL gaps)
-
 const { withCORS } = require("../_lib/respond");
 const Store = require("../_lib/store");
 const { appendRow } = require("../_lib/sheets");
@@ -16,23 +9,16 @@ function now(){ return new Date().toISOString(); }
 
 async function readJSON(req){
   if (req.body && typeof req.body === "object") return req.body;
-  if (typeof req.body === "string" && req.body) {
-    try { return JSON.parse(req.body); } catch {}
-  }
+  if (typeof req.body === "string" && req.body) { try { return JSON.parse(req.body); } catch {} }
   return new Promise(resolve => {
-    let data = "";
-    req.on("data", c => data += c);
-    req.on("end", () => {
-      try { resolve(data ? JSON.parse(data) : {}); }
-      catch { resolve({}); }
-    });
+    let data = ""; req.on("data", c => (data += c));
+    req.on("end", () => { try { resolve(data ? JSON.parse(data) : {}); } catch { resolve({}); } });
   });
 }
 
-// Derive non-serial shortages from items if not provided
 function deriveNonSerialShortages(items = []) {
   return (Array.isArray(items) ? items : [])
-    .filter(it => !String(it.systemImei || "").trim()) // non-serial rows only
+    .filter(it => !String(it.systemImei || "").trim())
     .map(it => ({
       sku: it.sku || "—",
       description: it.description || "—",
@@ -63,28 +49,25 @@ module.exports = async function handler(req, res){
     const scanned  = Number.isFinite(+body.scanned) ? +body.scanned : 0;
     let   missing  = Number.isFinite(+body.missing) ? +body.missing : undefined;
 
-    const items           = Array.isArray(body.items) ? body.items : [];
-    const missingImeis    = Array.isArray(body.missingImeis) ? body.missingImeis : [];
-    const wrongBin        = Array.isArray(body.wrongBin) ? body.wrongBin : [];
-    const startedAt       = norm(body.startedAt || body.started || "");
-    const submittedAt     = now();
+    const items        = Array.isArray(body.items) ? body.items : [];
+    const missingImeis = Array.isArray(body.missingImeis) ? body.missingImeis : [];
+    const wrongBin     = Array.isArray(body.wrongBin) ? body.wrongBin : [];
+    const startedAt    = norm(body.startedAt || body.started || "");
+    const submittedAt  = now();
 
-    if (!bin) {
-      res.statusCode = 400;
-      return res.end(JSON.stringify({ ok:false, error:"missing_bin" }));
-    }
+    if (!bin) { res.statusCode = 400; return res.end(JSON.stringify({ ok:false, error:"missing_bin" })); }
 
-    // Non-serial shortages
-    const nonSerialShortages = Array.isArray(body.nonSerialShortages) && body.nonSerialShortages.length
-      ? body.nonSerialShortages
-      : deriveNonSerialShortages(items);
+    const nonSerialShortages =
+      Array.isArray(body.nonSerialShortages) && body.nonSerialShortages.length
+        ? body.nonSerialShortages
+        : deriveNonSerialShortages(items);
 
-    // Compute final missing if absent: serial deficits + non-serial deficits
-    const serialMissing     = missingImeis.length;
-    const nonSerialMissing  = sumNonSerialMissing(nonSerialShortages);
-    const finalMissing      = (typeof missing === "number") ? missing : (serialMissing + nonSerialMissing);
+    const finalMissing =
+      typeof missing === "number"
+        ? missing
+        : (missingImeis.length + sumNonSerialMissing(nonSerialShortages));
 
-    // ------ persist wrong-bin audits into shared Store ------
+    // Wrong-bin audits → Store
     if (wrongBin.length) {
       for (const wb of wrongBin) {
         const imei = norm(wb.imei);
@@ -99,7 +82,7 @@ module.exports = async function handler(req, res){
       }
     }
 
-    // ------ upsert the cycle count into shared Store (for Investigator/Summary) ------
+    // Upsert cycle count → Store
     const record = await Store.upsertBin({
       bin,
       user: norm(body.user || ""),
@@ -115,14 +98,13 @@ module.exports = async function handler(req, res){
       submittedAt,
     });
 
-    // ---------- Sheets logging (await + report) ----------
+    // ---- Sheets logging (await + report) ----
     const sheetsResult = { bins:false, notScanned:0, audits:0, errors:[] };
 
-    // Bins row
+    // Bins
     try {
       await appendRow("Bins", [
-        bin,
-        counter || "—",
+        bin, counter || "—",
         Number(total || 0),
         Number(scanned || 0),
         Number(finalMissing || 0),
@@ -136,12 +118,11 @@ module.exports = async function handler(req, res){
     }
 
     // NotScanned: NON-SERIAL
-    if (Array.isArray(nonSerialShortages) && nonSerialShortages.length) {
+    if (nonSerialShortages.length) {
       for (const s of nonSerialShortages) {
         try {
           await appendRow("NotScanned", [
-            bin,
-            counter || "—",
+            bin, counter || "—",
             s.sku || "—",
             s.description || "—",
             "nonserial",
@@ -156,30 +137,22 @@ module.exports = async function handler(req, res){
     }
 
     // NotScanned: SERIAL (from missingImeis)
-    if (Array.isArray(missingImeis) && missingImeis.length) {
-      for (const miRaw of missingImeis) {
-        const mi = String(miRaw || "").trim();
+    if (missingImeis.length) {
+      for (const raw of missingImeis) {
+        const mi = norm(raw);
         if (!mi) continue;
-
-        // Try to enrich from snapshot (best-effort)
         let sku = "—", description = "—";
         try {
-          const invRec = await Store.findByIMEI(mi);
-          if (invRec) {
-            sku = invRec.sku || "—";
-            description = invRec.description || "—";
-          }
-        } catch (_) {}
-
+          const ref = await Store.findByIMEI(mi);
+          if (ref) { sku = norm(ref.sku); description = norm(ref.description); }
+        } catch {}
         try {
           await appendRow("NotScanned", [
-            bin,
-            counter || "—",
-            sku,
-            description,
+            bin, counter || "—",
+            sku, description,
             "serial",
-            1,   // QtySystem
-            0,   // QtyEntered
+            1,  // QtySystem
+            0,  // QtyEntered
           ]);
           sheetsResult.notScanned++;
         } catch (e) {
@@ -188,8 +161,8 @@ module.exports = async function handler(req, res){
       }
     }
 
-    // WrongBinAudits (if provided)
-    if (Array.isArray(wrongBin) && wrongBin.length) {
+    // WrongBinAudits
+    if (wrongBin.length) {
       for (const wb of wrongBin) {
         try {
           await appendRow("WrongBinAudits", [
