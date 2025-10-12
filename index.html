@@ -860,7 +860,6 @@ async function fetchNotScanned() {
 }
 
 // --- Investigator: render Not-Scanned ---
-async function renderInvestigatorNotScanned(){
 // --- Investigator: render Not-Scanned ---
 async function renderInvestigatorNotScanned(){
   const tbody = document.getElementById("invNotScannedBody");
@@ -877,9 +876,9 @@ async function renderInvestigatorNotScanned(){
 
       let cls = "";
       if (!isSerial){
-        if (ent === sys) cls = "ok";      // matched
-        else if (ent > sys) cls = "bad";  // overcount
-        else cls = "warn";                // deficit
+        if (ent === sys) cls = "ok";
+        else if (ent > sys) cls = "bad";
+        else cls = "warn";
       }
 
       const invCell = isSerial
@@ -910,6 +909,7 @@ async function renderInvestigatorNotScanned(){
     tbody.innerHTML = `<tr><td colspan="7" class="empty">Failed to load not-scanned.</td></tr>`;
   }
 }
+
 
 
 // Investigator “scan” of a missing serial IMEI → clear from list
@@ -1393,10 +1393,7 @@ async function refreshInvestigator(){
         `).join("");
 
     // 4) Not-scanned (serial + non-serial)
-    // 4) Not-scanned (serial + non-serial)
 await renderInvestigatorNotScanned();
-
-
     showAlerts(investAlerts,[]);
   }catch(e){
     showAlerts(investAlerts,[{type:"warn",msg:`Failed to load investigator data.<br><small>${escapeHTML(String(e.message||e))}</small>`}]);
