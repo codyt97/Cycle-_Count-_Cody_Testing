@@ -44,6 +44,43 @@ module.exports = async (req, res) => {
     // Expected headers in NotScanned:
     // Bin, Counter, SKU, Description, Type, QtySystem, QtyEntered
     let all = await readTabObjects(sheetId, "NotScanned");
+    // If sheet is empty, fallback to Store snapshot (latest per bin)
+if (!all.length) {
+  try {
+    const Store = require("../_lib/store");
+    const bins = await Store.listBins();
+
+    // keep only the latest record per bin
+    const latest = new Map();
+    for (const b of bins) {
+      const k = String(b.bin || "").trim().toUpperCase();
+      const t = Date.parse(b.submittedAt || b.updatedAt || b.started || 0) || 0;
+      const prev = latest.get(k);
+      const prevT = prev ? (Date.parse(prev.submittedAt || prev.updatedAt || prev.started || 0) || 0) : -1;
+      if (!prev || t > prevT) latest.set(k, b);
+    }
+
+    // synthesize NotScanned rows from nonSerialShortages
+    all = [];
+    for (const b of latest.values()) {
+      const nss = Array.isArray(b.nonSerialShortages) ? b.nonSerialShortages : [];
+      for (const s of nss) {
+        if (Number(s.qtyEntered || 0) < Number(s.systemQty || 0)) {
+          all.push({
+            Bin: b.bin,
+            Counter: b.counter || "—",
+            SKU: s.sku || "—",
+            Description: s.description || "—",
+            Type: "nonserial",
+            QtySystem: Number(s.systemQty || 0),
+            QtyEntered: Number(s.qtyEntered || 0),
+          });
+        }
+      }
+    }
+  } catch (_) {}
+}
+
 
     // Optional filters
     const wantUser = norm(req.query.user || "").toLowerCase();
