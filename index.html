@@ -1229,14 +1229,15 @@ scanInput.value="";
             <td class="mono">${escapeHTML(it.imei)}</td>
             <td>${escapeHTML(it.scannedBin)}</td>
             <td>${escapeHTML(it.trueLocation)}</td>
-            <td><span class="badge">${escapeHTML(a.status || 'open')}</span></td>
+            <td><span class="badge">${escapeHTML(it.status || 'open')}</span></td>
 <td class="row-sm">
-  ${a.status==="moved"
+  ${it.status==="moved"
     ? "Yes"
-    : `<button class="btn primary sm" data-move="${escapeHTML(a.id)}">Yes</button>
-       <button class="btn ghost sm" data-notmove="${escapeHTML(a.id)}">No</button>`}
+    : `<button class="btn primary sm" data-move="${escapeHTML(it.id)}">Yes</button>
+       <button class="btn ghost sm" data-notmove="${escapeHTML(it.id)}">No</button>`}
 </td>
-<td class="mono">${escapeHTML(a.movedTo||'')}</td>
+<td class="mono">${escapeHTML(it.movedTo||'')}</td>
+
 
             <td>${escapeHTML(it.movedBy||'')}</td>
             <td>${escapeHTML(it.decision||'')}</td>
