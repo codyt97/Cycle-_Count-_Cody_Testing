@@ -74,8 +74,10 @@ function normalizeRowsFromArray(values) {
   const pick = (row, i) => (i >= 0 && i < row.length ? clean(row[i]) : "");
 
   const rows = rowsRaw.map(r => {
-    const systemImei = pick(r, iImei);
-    const hasSerial = !!systemImei;
+    const rawImei = pick(r, iImei);
+    const systemImei = String(rawImei || "").replace(/\D+/g, ""); // keep digits only
+    const hasSerial = systemImei.length >= 11; // tolerate ESN/IMEI variants; tighten if you want 14-15
+
     let qty = 0;
     if (!hasSerial) {
       const qv = pick(r, iQty);
@@ -125,7 +127,7 @@ async function loadFromDriveFile(fileId) {
     const csv = await drive.files.export({ fileId, mimeType: "text/csv" }, { responseType: "arraybuffer" });
     const wb  = XLSX.read(Buffer.from(csv.data), { type: "buffer" });
     const sheet = wb.Sheets[process.env.DRIVE_SHEET_TAB || wb.SheetNames[0]];
-    const values = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+    const values = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: false });
     const { headers, rows } = normalizeRowsFromArray(values);
     return { tab: process.env.DRIVE_SHEET_TAB || wb.SheetNames[0], headers, rows, name, mime };
   }
@@ -140,7 +142,7 @@ async function loadFromDriveFile(fileId) {
     : wb.SheetNames[0];
 
   const sheet = wb.Sheets[tab];
-  const values = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+  const values = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: false });
   const { headers, rows } = normalizeRowsFromArray(values);
   return { tab, headers, rows, name, mime };
 }
@@ -189,9 +191,20 @@ module.exports = async (req, res) => {
     }));
 
     if (req.query.debug === "1") {
-      const sampleBins = Array.from(new Set(rows.map(r => r.location))).slice(0, 100);
-      return ok(res, { records, meta: { tab, totalRows: rows.length, sampleBins } });
+  const sampleBins = Array.from(new Set(rows.map(r => r.location))).slice(0, 50);
+  return ok(res, {
+    records,
+    meta: {
+      tab,
+      totalRows: rows.length,
+      headers,
+      firstRowSample: rows.slice(0, 3),
+      want: normBin(binRaw),
+      sampleBins
     }
+  });
+}
+
 
     return ok(res, { records, meta: { tab, totalRows: rows.length, cachedMs: Math.max(0, TTL_MS - (Date.now() - cache.at)) } });
   } catch (e) {
