@@ -949,15 +949,15 @@ document.addEventListener("keydown", async (e) => {
   if (!el || e.key !== 'Enter') return;
 
   const sku = el.getAttribute('data-sku') || '';
-const bin = el.getAttribute('data-bin') || '';
-const qtyEntered = Number(el.value || 0);
+  const bin = el.getAttribute('data-bin') || '';
+  const qtyEntered = Number(el.value || 0);
 
-const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}`, {
-  method: 'DELETE',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ user: userId(), bin, sku, qtyEntered })
-});
-
+  try {
+    const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: userId(), bin, sku, qtyEntered })
+    });
 
     if (!res.ok) throw new Error(await res.text());
 
@@ -972,6 +972,7 @@ const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}`, {
     }]);
   }
 });
+
 
 
 
