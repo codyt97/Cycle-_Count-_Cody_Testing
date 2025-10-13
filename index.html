@@ -468,6 +468,31 @@
 
     // --- State (Page 1) -------------------------------------------
     let currentBin = "";
+    // --- Global selection for Investigator page ---
+let investSelectedBin = "";
+
+// Attach the click handler to #investBody only once
+function wireInvestBinClickOnce(){
+  const tbody = document.getElementById("investBody");
+  if (!tbody || tbody.dataset.clickWired) return;   // already wired or not yet in DOM
+  tbody.dataset.clickWired = "1";
+
+  tbody.addEventListener("click", (e) => {
+    const tr = e.target.closest("tr");
+    if (!tr) return;
+    const firstTd = tr.querySelector("td");           // first column = Bin
+    const bin = firstTd ? firstTd.textContent.trim() : "";
+    if (!bin) return;
+
+    investSelectedBin = bin;
+    renderInvestigatorNotScanned();                   // reload not-scanned for this bin
+
+    // optional row highlight
+    [...tbody.querySelectorAll("tr")].forEach(r => r.classList.remove("ok"));
+    tr.classList.add("ok");
+  });
+}
+
 /** @type {{location:string, sku:string, description:string, systemImei:string, scannedImei?:string}[]} */
 let rows = [];
 const scanned = new Set();
@@ -849,8 +874,7 @@ async function fetchSummary(){
 
 async function fetchNotScanned() {
   if (CONFIG.FORCE_MOCK) return [];
-  // Prefer an investigator-selected bin; fall back to currentBin if set
-  const bin = (typeof investSelectedBin !== "undefined" && investSelectedBin) ? investSelectedBin : (currentBin || "");
+  const bin = investSelectedBin || currentBin || "";
   const q = new URLSearchParams({ user: userId(), ...(bin ? { bin } : {}) });
   const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}?${q.toString()}`, { cache:"no-store" });
   if (!res.ok) throw new Error(await res.text());
@@ -858,6 +882,8 @@ async function fetchNotScanned() {
   const items = j.items || j.records || [];
   return Array.isArray(items) ? items : [];
 }
+
+
 
 
 
@@ -1388,24 +1414,7 @@ async function refreshInvestigator(){
             </tr>
           `;
         }).join("");
-      // Which bin’s not-scanned list we’re viewing
-let investSelectedBin = "";
 
-// Click a Bin Status row to select that bin and reload Not-Scanned
-document.getElementById("investBody")?.addEventListener("click", (e) => {
-  const tr = e.target.closest("tr");
-  if (!tr) return;
-  const binCell = tr.querySelector("td"); // first column is Bin
-  const bin = binCell ? binCell.textContent.trim() : "";
-  if (!bin) return;
-
-  investSelectedBin = bin;
-  renderInvestigatorNotScanned();
-
-  // optional highlight
-  [...document.querySelectorAll("#investBody tr")].forEach(r => r.classList.remove("ok"));
-  tr.classList.add("ok");
-});
 
     // 3) Wrong-bin (hide resolved)
     const wrongOpen = (Array.isArray(wrong) ? wrong : []).filter(w => (w.status||"open") !== "resolved");
