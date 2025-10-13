@@ -1,19 +1,38 @@
 // api/cyclecounts/escalate.js
-const { ok, bad, method, withCORS } = require("../_lib/respond");
-const Store = require("../_lib/store");
+/* eslint-disable no-console */
+const { ok, bad, cors, norm } = require("../_lib/sheets-utils");
+
+// === CONFIG ===
+const LOGS_POST_URL = "https://script.google.com/a/macros/connectuscorp.com/s/AKfycbzuY99ioTUZYYDtDJZY-fhj1eoRer0OUTMJ8JF13iJ5AAOqhmY-p90g3-e9xWw3epAM/exec";
 
 module.exports = async (req, res) => {
-  if (req.method === "OPTIONS") return withCORS(res), res.status(204).end();
-  if (req.method !== "POST") return method(res, ["POST", "OPTIONS"]);
-  withCORS(res);
+  cors(res, "POST,OPTIONS");
+  if (req.method === "OPTIONS") return res.status(204).end();
+  if (req.method !== "POST") return bad(res, "Method Not Allowed", 405);
 
   try {
-    const { bin, actor } = (typeof req.body === "string" ? JSON.parse(req.body) : req.body) || {};
+    const body = req.body || {};
+    const bin  = norm(body.bin);
+    const user = norm(body.user);
+    const notes= norm(body.notes || "");
     if (!bin) return bad(res, "bin is required");
-    const out = await Store.escalateBin(bin, actor);
-    if (!out) return bad(res, "bin not found", 404);
-    return ok(res, { ok: true, record: out });
+
+    await fetch(LOGS_POST_URL, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({
+        ts: new Date().toISOString(),
+        user, action:"escalate",
+        bin, sku:"", systemImei:"",
+        moved:"", movedTo:"",
+        notes,
+        sessionId:"api"
+      })
+    });
+
+    return ok(res, { ok:true });
   } catch (e) {
-    return bad(res, String(e.message || e));
+    console.error("[escalate]", e?.stack || e);
+    return bad(res, "internal_error", 500);
   }
 };
