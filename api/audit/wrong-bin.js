@@ -43,8 +43,10 @@ async function listWrongBinAudits({ bin = "", user = "", status = "" } = {}) {
       raw:        a, // keep original for PATCH/DELETE
     }))
     .filter(r => (BIN   ? r.scannedBin.toUpperCase() === BIN : true))
-    .filter(r => (USER  ? r.decidedBy.toLowerCase() === USER : true))
-    .filter(r => (STATE ? r.status === STATE                  : true));
+// Do NOT filter by user here; caller may pass ?user for DELETE attribution.
+// .filter(r => (USER  ? r.decidedBy.toLowerCase() === USER : true))
+.filter(r => (STATE ? r.status === STATE                  : true));
+
 }
 
 /**
