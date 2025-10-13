@@ -1,156 +1,190 @@
-// api/audit/wrong-bin.js  (shared audits for Investigator)
+// api/audit/wrong-bin.js
 /* eslint-disable no-console */
-const { withCORS } = require("../_lib/respond");
+const { ok, bad, method, withCORS } = require("../_lib/respond");
 const Store = require("../_lib/store");
 const { appendRow } = require("../_lib/sheets");
 
-function json(res, code, obj){
-  res.statusCode = code;
-  res.setHeader("Content-Type","application/json; charset=utf-8");
-  res.setHeader("Access-Control-Allow-Origin","*");
-  res.setHeader("Access-Control-Allow-Methods","GET,POST,PATCH,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers","Content-Type, Authorization, X-User");
-  res.end(JSON.stringify(obj));
+// ---------------------------- utils ----------------------------
+const norm   = (s) => String(s ?? "").trim();
+const nowISO = () => new Date().toISOString();
+
+/**
+ * Try to list wrong-bin audits from Store with several possible helper names,
+ * then filter by optional bin/user/status.
+ */
+async function listWrongBinAudits({ bin = "", user = "", status = "" } = {}) {
+  let rows = [];
+
+  if (typeof Store.listWrongBins === "function") {
+    rows = await Store.listWrongBins(bin);
+  } else if (typeof Store.listAudits === "function") {
+    rows = await Store.listAudits();
+  } else if (typeof Store.list === "function") {
+    rows = await Store.list("audits"); // very generic fallback
+  } else {
+    rows = [];
+  }
+
+  // Normalize a bit and filter
+  const BIN   = norm(bin).toUpperCase();
+  const USER  = norm(user).toLowerCase();
+  const STATE = norm(status).toLowerCase();
+
+  return (rows || [])
+    .map(a => ({
+      id:         a.id || a._id || "",
+      imei:       norm(a.imei || a.systemImei || ""),
+      scannedBin: norm(a.scannedBin || a.scanned_from || a.sourceBin || a.bin || ""),
+      trueBin:    norm(a.trueLocation || a.decidedBin || a.targetBin || ""),
+      status:     (a.status || a.state || "open").toLowerCase(),
+      decidedBy:  norm(a.decidedBy || a.resolvedBy || a.closedBy || ""),
+      updatedAt:  a.updatedAt || a.decidedAt || a.closedAt || a.timestamp || "",
+      createdAt:  a.createdAt || a.insertedAt || "",
+      raw:        a, // keep original for PATCH/DELETE
+    }))
+    .filter(r => (BIN   ? r.scannedBin.toUpperCase() === BIN : true))
+    .filter(r => (USER  ? r.decidedBy.toLowerCase() === USER : true))
+    .filter(r => (STATE ? r.status === STATE                  : true));
 }
-function norm(s){ return String(s ?? "").trim(); }
-function now(){ return new Date().toISOString(); }
 
-module.exports = async function handler(req, res){
-  if (req.method === "OPTIONS"){ withCORS(res); res.statusCode=204; return res.end(); }
-  withCORS(res);
-
-  // GET: list all audits (optionally filter by status, imei, bin)
-  if (req.method === "GET"){
-    try {
-      const status = norm(req.query?.status || "");    // e.g. "open", "moved", "closed"
-      const imei   = norm(req.query?.imei || "");
-      const bin    = norm(req.query?.bin || "");       // scannedBin filter
-      const audits = await Store.listAudits();
-      const out = audits.filter(a => {
-        if (status && String(a.status||"").toLowerCase() !== status.toLowerCase()) return false;
-        if (imei && String(a.imei||"").trim() !== imei) return false;
-        if (bin && String(a.scannedBin||"").trim().toLowerCase() !== bin.toLowerCase()) return false;
-        return true;
-      });
-      return json(res,200,{ ok:true, audits: out });
-    } catch (e) {
-      return json(res,500,{ ok:false, error:String(e.message||e) });
-    }
+/**
+ * Load a single audit by id (tries several Store shapes).
+ */
+async function getAuditById(id) {
+  if (typeof Store.getAudit === "function") {
+    return Store.getAudit(id);
   }
-
-  // POST: create/open an audit
-  if (req.method === "POST"){
-    try {
-      const body = typeof req.body === "string" ? JSON.parse(req.body||"{}") : (req.body || {});
-      const imei        = norm(body.imei);
-      const scannedBin  = norm(body.scannedBin);
-      const trueLocation= norm(body.trueLocation);
-      const scannedBy   = norm(body.scannedBy || "—");
-      if (!imei || !scannedBin || !trueLocation){
-        return json(res,400,{ ok:false, error:"missing_required_fields", need:["imei","scannedBin","trueLocation"]});
-      }
-      const ts = now();
-      const audit = await Store.appendAudit({
-        imei, scannedBin, trueLocation, scannedBy, status: "open"
-      });
-
-      // Sheets append (fire-and-forget)
-      (async () => {
-        try {
-          await appendRow("WrongBinAudits", [
-            imei, scannedBin, trueLocation, scannedBy, "open", ts, ts
-          ]);
-        } catch (e) { console.error("[Sheets][Audits][POST] append fail:", e?.message || e); }
-      })();
-
-      return json(res,200,{ ok:true, audit });
-    } catch (e) {
-      return json(res,500,{ ok:false, error:String(e.message||e) });
-    }
+  if (typeof Store.get === "function") {
+    return Store.get("audits", id);
   }
-  
-  // PATCH: update (mark moved/closed, etc.)
-// PATCH: update an audit (moved/closed etc.)
-if (req.method === "PATCH") {
+  // Fallback: list & find
+  const all = await listWrongBinAudits({});
+  return all.find(a => a.id === id)?.raw || null;
+}
+
+/**
+ * Patch an audit by id with given fields.
+ */
+async function patchAudit(id, patch) {
+  if (typeof Store.patchAudit === "function") {
+    return Store.patchAudit(id, patch);
+  }
+  if (typeof Store.update === "function") {
+    return Store.update("audits", id, patch);
+  }
+  // As a last resort, try a save with id
+  if (typeof Store.saveWrongBin === "function") {
+    const current = await getAuditById(id);
+    return Store.saveWrongBin({ ...(current || {}), ...patch, id });
+  }
+  if (typeof Store.save === "function") {
+    const current = await getAuditById(id);
+    return Store.save("audits", { ...(current || {}), ...patch, id });
+  }
+  throw new Error("Store does not support patching audits");
+}
+
+// ---------------------------- handler ----------------------------
+module.exports = async (req, res) => {
   try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body||"{}") : (req.body || {});
-    const id      = String(body.id || "").trim();         // preferred selector
-    const imei    = String(body.imei || "").trim();       // fallback selector
-    const movedTo = String(body.movedTo || "").trim();
-    const movedBy = String(body.movedBy || "").trim();
-    const status  = String(body.status  || "moved").toLowerCase();
-
-    // Locate the audit by id or by open IMEI
-    const audits = await Store.listAudits();
-    let target = null;
-    if (id) {
-      target = audits.find(a => a.id === id);
-    } else if (imei) {
-      target = audits.find(a => String(a.imei).trim() === imei && String(a.status||"") === "open");
+    // CORS preflight
+    if (req.method === "OPTIONS") {
+      withCORS(res);
+      return res.status(204).end();
     }
-    if (!target) return res.status(404).json({ ok:false, error:"audit_not_found" });
 
-    const updated = await Store.patchAudit(target.id, {
-      status,
-      movedTo: movedTo || target.movedTo,
-      movedBy: movedBy || target.movedBy
-    });
+    // Uniform CORS for others
+    withCORS(res);
 
-    // Optional: append a log row to the "WrongBinAudits" sheet
-    (async () => {
+    // Parse body/query safely
+    const q    = req.query || {};
+    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+    const id   = norm(q.id   || body.id   || "");
+    const bin  = norm(q.bin  || body.bin  || "");
+    const user = norm(q.user || body.user || "");
+    const imei = norm(q.imei || body.imei || "");
+
+    // ---------------------- GET ----------------------
+    if (req.method === "GET") {
+      // Optional filters: ?bin=, ?user=, ?status=
+      const status = norm(q.status || "");
+      const records = await listWrongBinAudits({ bin, user, status });
+      return ok(res, { records });
+    }
+
+    // --------------------- PATCH ---------------------
+    // Update decision fields (e.g., decidedBin / decidedBy / status / note)
+    if (req.method === "PATCH") {
+      if (!id) return bad(res, "missing_id", 400);
+
+      const decidedBin = norm(body.decidedBin || body.trueBin || "");
+      const decidedBy  = norm(body.decidedBy || user);
+      const note       = norm(body.note || "");
+      const status     = norm(body.status || "");
+
+      const patch = {
+        ...(decidedBin && { decidedBin }),
+        ...(decidedBy  && { decidedBy }),
+        ...(note       && { note }),
+        ...(status     && { status }),
+        updatedAt: nowISO(),
+      };
+
+      // If caller supplies imei/bin, keep them too (handy for normalization)
+      if (imei) patch.imei = imei;
+      if (bin)  patch.scannedBin = bin;
+
+      const updated = await patchAudit(id, patch);
+
+      // best-effort append to Sheet
       try {
-        const { appendRow } = require("../_lib/sheets");
-        const ts = new Date().toISOString();
-        await appendRow("WrongBinAudits", [
-          updated.imei, updated.scannedBin, updated.trueLocation,
-          updated.movedBy || updated.scannedBy || "—",
-          updated.status, updated.createdAt, ts
+        await appendRow("ConnectUs – Cycle Count Logs", "WrongBinDecisions", [
+          nowISO(), decidedBy || "—", (updated.scannedBin || bin || "—"),
+          (updated.decidedBin || decidedBin || "—"), (updated.imei || imei || "—"),
+          (status || updated.status || "patched")
         ]);
-      } catch (e) { console.error("[Sheets][Audits][PATCH] append fail:", e?.message || e); }
-    })();
+      } catch (e) {
+        console.warn("[wrong-bin][PATCH] sheet append failed:", e.message || e);
+      }
 
-    return res.status(200).json({ ok:true, audit: updated });
-  } catch (e) {
-    return res.status(500).json({ ok:false, error:String(e.message||e) });
-  }
-}
-
-
-  // DELETE: soft-close (no hard delete in Store; mark closed)
-  if (req.method === "DELETE"){
-    try {
-      const body = typeof req.body === "string" ? JSON.parse(req.body||"{}") : (req.body || {});
-      const id = norm(req.query?.id || body.id || "");
-      if (!id) return json(res,400,{ ok:false, error:"missing_id" });
-
-      const user = norm(req.query?.user || body.user || "");
-const patch = { status: "closed", updatedAt: now() };
-if (user) patch.decidedBy = user;
-
-const updated = await Store.patchAudit(id, patch);
-
-      if (!updated) return json(res,404,{ ok:false, error:"not_found" });
-
-      (async () => {
-        try {
-          await appendRow("WrongBinAudits", [
-            String(updated?.imei || ""),
-            String(updated?.scannedBin || ""),
-            String(updated?.trueLocation || ""),
-            String(updated?.decidedBy || updated?.movedBy || "—"),
-            "closed",
-            String(updated?.createdAt || now()),
-            String(updated?.updatedAt || now()),
-          ]);
-        } catch (e) { console.error("[Sheets][Audits][DELETE] append fail:", e?.message || e); }
-      })();
-
-      return json(res,200,{ ok:true, audit: updated });
-    } catch (e) {
-      return json(res,500,{ ok:false, error:String(e.message||e) });
+      return ok(res, { ok: true, record: updated });
     }
-  }
 
-  // Fallback
-  return json(res,405,{ ok:false, error:"method_not_allowed" });
+    // -------------------- DELETE --------------------
+    // Soft-close the audit (resolved) and capture who resolved it
+    if (req.method === "DELETE") {
+      if (!id) return bad(res, "missing_id", 400);
+
+      const decidedBy = user || norm(body.decidedBy || "");
+      const patch = {
+        status: "closed",
+        decidedBy: decidedBy || undefined,
+        resolvedBy: decidedBy || undefined,
+        resolvedAt: nowISO(),
+        updatedAt: nowISO(),
+      };
+
+      const updated = await patchAudit(id, patch);
+
+      // best-effort append to Sheet
+      try {
+        await appendRow("ConnectUs – Cycle Count Logs", "WrongBinDecisions", [
+          nowISO(), decidedBy || "—", (updated.scannedBin || "—"),
+          (updated.decidedBin || "—"), (updated.imei || "—"), "closed"
+        ]);
+      } catch (e) {
+        console.warn("[wrong-bin][DELETE] sheet append failed:", e.message || e);
+      }
+
+      return ok(res, { ok: true });
+    }
+
+    // -------------------- Fallback --------------------
+    return method(res, ["GET", "PATCH", "DELETE", "OPTIONS"]);
+  } catch (e) {
+    console.error("[wrong-bin] handler error:", e);
+    res.statusCode = 500;
+    res.setHeader("content-type", "application/json; charset=utf-8");
+    return res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+  }
 };
