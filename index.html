@@ -891,7 +891,11 @@ async function fetchNotScanned() {
 async function renderInvestigatorNotScanned(){
   const tbody = document.getElementById("invNotScannedBody");
   try{
-    const items = await fetchNotScanned();
+    const raw = await fetchNotScanned();
+const items = raw.filter(r =>
+  String(r.sku||"").trim() || String(r.systemImei||"").trim()
+);
+
     if (!items.length){
       tbody.innerHTML = `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`;
       return;
