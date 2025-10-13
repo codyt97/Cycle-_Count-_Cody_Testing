@@ -1,107 +1,44 @@
-// api/inventory/bin.js  (self-healing snapshot fallback to Drive)
+// api/inventory/bin-live.js  — live read from Google Sheets (no snapshot)
+/* eslint-disable no-console */
 const { ok, bad, method, withCORS } = require("../_lib/respond");
-const Store = require("../_lib/store");
 const { google } = require("googleapis");
-const XLSX = require("xlsx");
 
-function clean(s){ return String(s ?? "").trim(); }
-function normBin(s){
+function clean(s) {
+  return String(s ?? "").trim();
+}
+function normBin(s) {
   return String(s || "")
-    .replace(/\u2013|\u2014/g,"-")
-    .replace(/\s+/g," ").trim().toUpperCase();
+    .replace(/\u2013|\u2014/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
 }
 
-function getJwt(){
+/** Build a Sheets client from GOOGLE_CREDENTIALS_JSON */
+function getSheets() {
   const raw = process.env.GOOGLE_CREDENTIALS_JSON || "";
   if (!raw) throw new Error("Missing GOOGLE_CREDENTIALS_JSON");
-  const creds = JSON.parse(raw);
+  let creds;
+  try { creds = JSON.parse(raw); } catch { throw new Error("GOOGLE_CREDENTIALS_JSON is not valid JSON"); }
   const key = String(creds.private_key || "").replace(/\r?\n/g, "\n");
-  if (!creds.client_email || !key) throw new Error("Bad GOOGLE_CREDENTIALS_JSON");
-
-const drive = () => google.drive({ version: "v3", auth: getJwt() });
-
-function numLoose(s){
-  if (s == null) return undefined;
-  const m = String(s).match(/-?\d[\d,]*/);
-  if (!m) return undefined;
-  const n = Number(m[0].replace(/,/g,""));
-  return Number.isFinite(n) ? n : undefined;
+  if (!creds.client_email || !key) throw new Error("Bad GOOGLE_CREDENTIALS_JSON: missing client_email/private_key");
+  const auth = new google.auth.JWT(creds.client_email, null, key, [
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/drive.readonly",
+  ]);
+  return google.sheets({ version: "v4", auth });
 }
 
-function normalizeFromSheetValues(values){
-  if (!Array.isArray(values) || !values.length) return [];
-  const headers = values[0].map(h => clean(h));
-  const rowsRaw = values.slice(1);
-
-  const idx = (names) => {
-    const H = headers.map(h => h.toLowerCase());
-    for (const n of names) {
-      const i = H.indexOf(String(n).toLowerCase());
-      if (i !== -1) return i;
-    }
-    return -1;
-  };
-
-  const iLoc  = idx(["bin","location","locationbin","locationbinref.name","bin code","location code"]);
-  const iSku  = idx(["sku","item","item ","itemcode","itemref.code","part","part number"]);
-  const iDesc = idx(["description","itemname","itemref.name","desc","name","product description"]);
-  const iImei = idx(["systemimei","imei","serial","serialno","lot or serial","lot/serial","lotorserialno"]);
-  const qtyCandidates = [
-    "systemqty","system qty","qty","quantity","qty system","quantity system","qty_system",
-    "on hand","onhand","on_hand","qtyonhand","qty on hand","qoh","soh",
-    "available","available qty","availableqty","avail qty","availqty",
-    "stock","inventory","bin qty","binqty","location qty","locationqty"
-  ];
-  const iQty = headers.findIndex(h => qtyCandidates.includes(h.toLowerCase()));
-
-  const val = (r,i) => (i>=0 && i<r.length ? clean(r[i]) : "");
-  return rowsRaw.map(r => {
-    const rawImei = val(r,iImei);
-    const systemImei = String(rawImei || "").replace(/\D+/g,""); // preserve long numbers
-    const hasSerial = systemImei.length >= 11;
-    let qty = 0;
-    if (!hasSerial) {
-      const n = numLoose(val(r,iQty));
-      qty = Number.isFinite(n) ? n : 0;
-    }
-    return {
-      location:    val(r,iLoc),
-      sku:         val(r,iSku),
-      description: val(r,iDesc),
-      systemImei,
-      hasSerial,
-      systemQty: hasSerial ? 1 : qty,
-    };
-  }).filter(x => x.location || x.sku || x.systemImei);
-}
-
-async function loadFromDriveUnified(fileId){
-  const d = drive();
-  const meta = await d.files.get({ fileId, fields: "id,name,mimeType" });
-  const mime = meta.data.mimeType || "";
-  const name = meta.data.name || "";
-
-  // Google Sheet → export CSV
-  if (mime === "application/vnd.google-apps.spreadsheet") {
-    const csv = await d.files.export({ fileId, mimeType: "text/csv" }, { responseType: "arraybuffer" });
-    const wb = XLSX.read(Buffer.from(csv.data), { type: "buffer" });
-    const tab = process.env.DRIVE_SHEET_TAB && wb.Sheets[process.env.DRIVE_SHEET_TAB]
-      ? process.env.DRIVE_SHEET_TAB
-      : wb.SheetNames[0];
-    const values = XLSX.utils.sheet_to_json(wb.Sheets[tab], { header: 1, defval: "", raw: false });
-    return normalizeFromSheetValues(values);
-  }
-
-  // XLSX/CSV on Drive
-  const bin = await d.files.get({ fileId, alt: "media" }, { responseType: "arraybuffer" });
-  const buf = Buffer.from(bin.data);
-  const looksText = name.toLowerCase().endsWith(".csv") || /^text\//.test(mime);
-  const wb = looksText ? XLSX.read(buf.toString("utf8"), { type: "string" }) : XLSX.read(buf, { type: "buffer" });
-  const tab = process.env.DRIVE_SHEET_TAB && wb.Sheets[process.env.DRIVE_SHEET_TAB]
-    ? process.env.DRIVE_SHEET_TAB
-    : wb.SheetNames[0];
-  const values = XLSX.utils.sheet_to_json(wb.Sheets[tab], { header: 1, defval: "", raw: false });
-  return normalizeFromSheetValues(values);
+/** Normalize headers -> lowerCamelCase (location, sku, description, systemImei, hasSerial, systemQty) */
+function normalizeHeader(h) {
+  const s = String(h || "").trim().toLowerCase();
+  if (s === "location" || s === "bin") return "location";
+  if (s === "sku" || s === "item" || s === "item sku") return "sku";
+  if (s.startsWith("desc")) return "description";
+  if (s.includes("imei")) return "systemImei";
+  if (s.includes("serial")) return "hasSerial";
+  if (s.includes("qty")) return "systemQty";
+  return s.replace(/[^a-z0-9]+([a-z0-9])/g, (_, c) => c.toUpperCase());
 }
 
 module.exports = async (req, res) => {
@@ -109,37 +46,65 @@ module.exports = async (req, res) => {
   if (req.method !== "GET") return method(res, ["GET","OPTIONS"]);
   withCORS(res);
 
-  const match = clean(req.query.bin || "").toLowerCase();
-  if (!match) return bad(res, "bin is required", 400);
+  try {
+    const binRaw = String(req.query.bin || "").trim();
+    if (!binRaw) return bad(res, "bin is required", 400);
+    const BIN = normBin(binRaw);
+    const match = BIN.toLowerCase();
 
-  // 1) try snapshot first (Store — was Redis, now memory)
-  let all = await Store.getInventory(); // empty after Redis removal:contentReference[oaicite:1]{index=1}
-  // 2) self-heal: if empty, pull from Drive now, seed Store, then proceed
-  if (!all || all.length === 0) {
-    try {
-      const fileId = process.env.DRIVE_FILE_ID || "";
-      if (!fileId) return bad(res, "Missing DRIVE_FILE_ID", 500);
-      const rows = await loadFromDriveUnified(fileId);
-      if (rows.length) {
-        await Store.setInventory(rows);                            // seed snapshot
-        await Store.setInventoryMeta({ source:"drive", count:rows.length }); // keep status
-        all = rows;
-      }
-    } catch (e) {
-      console.error("[bin][self-heal] drive load failed:", e?.message || e);
+    const spreadsheetId = process.env.INVENTORY_SHEET_ID || "";
+    const tabName = process.env.DRIVE_SHEET_TAB || "Inventory";
+    if (!spreadsheetId) return bad(res, "Missing INVENTORY_SHEET_ID", 500);
+
+    const sheets = getSheets();
+    const range = `${tabName}!A1:Z`;
+    const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+    const rows = resp.data.values || [];
+    if (!rows.length) return ok(res, { records: [] });
+
+    const header = rows[0].map(normalizeHeader);
+    const idx = Object.fromEntries(header.map((k, i) => [k, i]));
+
+    // Helper to read a column safely
+    const col = (r, key) => clean(r[idx[key]]);
+
+    // Build records
+    const data = [];
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i] || [];
+      const loc = normBin(col(r, "location"));
+      if (!loc) continue;
+      if (loc.toLowerCase() !== match) continue;
+
+      const sku  = col(r, "sku");
+      const desc = col(r, "description");
+      const imei = col(r, "systemImei");
+
+      // hasSerial: true if IMEI present OR explicit column says true/Y/1
+      let hasSerial = false;
+      const hasSerialRaw = col(r, "hasSerial").toLowerCase();
+      if (imei) hasSerial = true;
+      else if (["y", "yes", "true", "1"].includes(hasSerialRaw)) hasSerial = true;
+
+      // systemQty: prefer numeric column; else default to 1 for serial, 0 for non-serial
+      let qty = 0;
+      const qtyRaw = col(r, "systemQty");
+      if (qtyRaw && !Number.isNaN(Number(qtyRaw))) qty = Number(qtyRaw);
+      else qty = hasSerial ? (imei ? 1 : 0) : 0;
+
+      data.push({
+        location: loc,
+        sku: sku,
+        description: desc,
+        systemImei: String(imei || ""),
+        hasSerial: !!hasSerial,
+        systemQty: Number.isFinite(qty) ? qty : (imei ? 1 : 0),
+      });
     }
+
+    return ok(res, { records: data });
+  } catch (e) {
+    console.error("[bin-live] fail:", e);
+    return bad(res, e?.message || String(e), 500);
   }
-
-  const records = (all || [])
-    .filter(r => (String(r.location || "").trim().toLowerCase() === match))
-    .map(r => ({
-      location:    r.location || "",
-      sku:         r.sku || "",
-      description: r.description || "",
-      systemImei:  String(r.systemImei || ""),
-      hasSerial:   !!r.hasSerial,
-      systemQty:   Number.isFinite(r.systemQty) ? r.systemQty : (r.systemImei ? 1 : 0),
-    }));
-
-  return ok(res, { records });
 };
