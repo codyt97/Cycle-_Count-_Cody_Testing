@@ -1497,19 +1497,23 @@ await renderInvestigatorNotScanned();
         `).join("") : `<tr><td colspan="9" class="empty">No wrong-bin logs.</td></tr>`);
 
 // Not-scanned
-// Not-scanned
 const missing = (await fetchNotScanned()).filter(it => {
   const sku  = String(it.sku || "").trim();
   const desc = String(it.description || "").trim();
   const imei = String(it.systemImei || "").trim();
   const sys  = Number(it.systemQty || 0);
   const ent  = Number(it.qtyEntered || 0);
+
   const isBlank = (s) => !s || s === "—" || s === "-" || s.toUpperCase() === "N/A";
 
+  // hide fully blank rows (no IMEI and SKU/Desc are blanks)
   if (!imei && isBlank(sku) && isBlank(desc)) return false;
+  // hide satisfied non-serial shortages
   if (!imei && ent >= sys) return false;
+
   return true;
 });
+
 supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
 
   const isSerial = !!(it.systemImei && String(it.systemImei).trim());
@@ -1541,6 +1545,39 @@ supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
       }
     }
     refreshSupervisor.addEventListener("click", refreshSupervisorViews);
+  // Supervisor: handle Delete on Not-Scanned (serial & non-serial)
+document.getElementById("supNotScannedBody")?.addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-del-short]");
+  if (!btn) return;
+
+  const bin    = btn.getAttribute("data-bin") || "";
+  const imei   = (btn.getAttribute("data-imei") || "").trim();
+  const sku    = btn.getAttribute("data-sku") || "";
+  const sysQty = Number(btn.getAttribute("data-sysqty") || 0);
+
+  if (!bin) {
+    alert("Missing bin for this row; cannot delete.");
+    return;
+  }
+
+  try {
+    // Build the correct DELETE body
+    const body = imei
+      ? { user: userId(), bin, type: "serial", systemImei: imei }  // serial clear
+      : { user: userId(), bin, sku, qtyEntered: sysQty };          // non-serial satisfied
+
+    const res = await fetch(CONFIG.NOT_SCANNED_ENDPOINT, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(await res.text());
+
+    await refreshSupervisorViews();
+  } catch (err) {
+    alert(`Delete failed: ${String(err.message || err)}`);
+  }
+});
 
     // Inline supervisor resolve with decision attribution
     document.addEventListener("click", async (e)=>{
