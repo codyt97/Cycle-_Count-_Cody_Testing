@@ -3,7 +3,7 @@
 const { ok, bad, method, withCORS } = require("../_lib/respond");
 const Store = require("../_lib/store");
 const { appendRow } = require("../_lib/sheets");
-
+ 
 module.exports = async (req, res) => {
   if (req.method === "OPTIONS") return withCORS(res), res.status(204).end();
   if (req.method !== "GET")     return method(res, ["GET","OPTIONS"]);
