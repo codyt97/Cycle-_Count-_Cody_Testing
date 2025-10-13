@@ -3,7 +3,7 @@ const { ok, bad, method, withCORS } = require("../_lib/respond");
 const Store = require("../_lib/store");
 const { google } = require("googleapis");
 const XLSX = require("xlsx");
-
+ 
 function clean(s){ return String(s ?? "").trim(); }
 function normBin(s){
   return String(s || "")
