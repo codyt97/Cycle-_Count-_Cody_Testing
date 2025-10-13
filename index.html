@@ -891,8 +891,27 @@ async function fetchNotScanned() {
 async function renderInvestigatorNotScanned(){
   const tbody = document.getElementById("invNotScannedBody");
   try{
-    const raw   = await fetchNotScanned();
-    const items = raw.filter(r => String(r.sku||"").trim() || String(r.systemImei||"").trim());
+    const raw = await fetchNotScanned();
+const items = raw.filter(r => {
+  const sku   = String(r.sku || "").trim();
+  const desc  = String(r.description || "").trim();
+  const imei  = String(r.systemImei || "").trim();
+  const sys   = Number(r.systemQty || 0);
+  const ent   = Number(r.qtyEntered || 0);
+  const isSerial = !!imei;
+
+  // Treat common sentinels as blank
+  const isBlank = (s) => !s || s === "—" || s === "-" || s.toUpperCase() === "N/A";
+
+  // Drop rows that are fully blank (no IMEI and both SKU/Desc blank)
+  if (!imei && isBlank(sku) && isBlank(desc)) return false;
+
+  // Also hide satisfied non-serial shortages on the client (in case the sheet/API still sends them)
+  if (!isSerial && ent >= sys) return false;
+
+  return true;
+});
+
 
     if (!items.length){
       tbody.innerHTML = `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`;
@@ -1479,8 +1498,20 @@ await renderInvestigatorNotScanned();
 
 // Not-scanned
 // Not-scanned
-const missing = await fetchNotScanned();
+const missing = (await fetchNotScanned()).filter(it => {
+  const sku  = String(it.sku || "").trim();
+  const desc = String(it.description || "").trim();
+  const imei = String(it.systemImei || "").trim();
+  const sys  = Number(it.systemQty || 0);
+  const ent  = Number(it.qtyEntered || 0);
+  const isBlank = (s) => !s || s === "—" || s === "-" || s.toUpperCase() === "N/A";
+
+  if (!imei && isBlank(sku) && isBlank(desc)) return false;
+  if (!imei && ent >= sys) return false;
+  return true;
+});
 supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
+
   const isSerial = !!(it.systemImei && String(it.systemImei).trim());
   return `
     <tr>
