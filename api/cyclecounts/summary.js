@@ -107,15 +107,17 @@ for (const [k, b] of latestByBin.entries()) {
   const updatedRaw = b.submittedAt || b.updatedAt || b.started;
 
   merged.set(k, {
-    bin: b.bin,
-    counter: String(b.counter || "—"),
-    started: toEST(startedRaw),
-    updated: toEST(updatedRaw),
-    updatedTs: Date.parse(updatedRaw) || 0,  // <— numeric sort key
-    total, scanned, missing,
-    state: String(b.state || "investigation"),
-  });
-}
+  bin: b.bin,
+  counter: String(b.counter || "—"),
+  started: toEST(started),
+  updated: toEST(updated),
+  updatedTs: Date.parse(updated) || 0,  // <— numeric sort key
+  total,
+  scanned,
+  missing,
+  state: String(b.state || "investigation"),
+});
+
 
 // 3) Sort by updated desc (numeric) and return
 const out = Array.from(merged.values())
