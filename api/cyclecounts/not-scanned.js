@@ -241,30 +241,34 @@ if (qtyEntered >= systemQty) {
     type:       norm(r.Type ?? r.type) || (norm(r.SystemImei ?? r.systemImei) ? "serial" : "nonserial"),
   }));
 
-  // Hide satisfied non-serials and blank meta rows coming from the sheet
-  records = records.filter(r => {
-    if (r.type === "nonserial") {
-      if ((r.qtyEntered || 0) >= (r.systemQty || 0)) return false; // fully matched
-      const blank = (!r.sku || r.sku === "—") && (!r.description || r.description === "—");
-      if (blank) return false;
-    }
-    return true;
-  });
 
-  return ok(res, { records });
 
 
 // Hide sheet rows that are already satisfied or blank non-serials
-records = records.filter(r => {
-  if (r.type === "nonserial") {
-    if (r.qtyEntered >= r.systemQty) return false;                       // fully matched
-    const isBlank = (!r.sku || r.sku === "—") && (!r.description || r.description === "—");
-    if (isBlank) return false;                                           // blank meta
+const wantBin = norm(req.query?.bin || "");
+
+// Hide satisfied non-serials & blank sheet rows (defensive)
+let filtered = records.filter(r => {
+  const isSerial = !!norm(r.systemImei);
+  const sys = Number(r.systemQty || 0);
+  const ent = Number(r.qtyEntered || 0);
+
+  if (!isSerial) {
+    const blank = (!norm(r.sku) || norm(r.sku) === "—") &&
+                  (!norm(r.description) || norm(r.description) === "—");
+    if (blank) return false;
+    if (ent >= sys) return false; // fully matched
   }
   return true;
 });
 
-return ok(res, { records });
+// Scope by bin if provided
+if (wantBin) {
+  filtered = filtered.filter(r => norm(r.bin).toUpperCase() === wantBin.toUpperCase());
+}
+
+return ok(res, { records: filtered });
+
 
 }
 
