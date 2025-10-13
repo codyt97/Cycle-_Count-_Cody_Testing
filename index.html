@@ -436,56 +436,6 @@
       FORCE_MOCK: false,
       LOGO_FILENAME: "./download.png",
     };
-        // === Sheets-only config (Route 1) ===
-    // Inventory tab published as CSV:
-    //   File → Share → Publish to the web → [Your Inventory tab] + CSV → Publish
-    // Paste the exact URL here:
-   const CSV_URL  = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRtp3DjbdH7HtN5jAZtK4tNpEiDnweKaiu_LsE_YT1VZ4oLDuBPlHwwetgRrspzETcrn1xdQXPO3YCl/pub?gid=0&single=true&output=csv";
-
-
-    // Logs Apps Script Web App (Extensions → Apps Script → Deploy as Web app, Anyone):
-    const LOGS_URL = "https://script.google.com/macros/s/YOUR_APPS_SCRIPT_DEPLOY_ID/exec";
-
-    // Tiny helpers
-    const _norm = s => String(s||"").trim();
-    const _normBin = s => _norm(s).replace(/\u2013|\u2014/g,"-").replace(/\s+/g," ").toUpperCase();
-
-    // Minimal CSV parser (handles quotes)
-    function _parseCSV(text){
-      const rows=[]; let row=[], cur='', i=0, q=false;
-      while(i<text.length){
-        const c=text[i], n=text[i+1];
-        if(q){ if(c=='"'&&n=='"'){cur+='"';i+=2;continue;} if(c=='"'){q=false;i++;continue;} cur+=c;i++;continue; }
-        if(c=='"'){ q=true; i++; continue; }
-        if(c==','){ row.push(cur); cur=''; i++; continue; }
-        if(c=='\n'){ row.push(cur); rows.push(row); row=[]; cur=''; i++; continue; }
-        cur+=c; i++;
-      }
-      row.push(cur); rows.push(row);
-      return rows;
-    }
-
-    // Write a log row to your "ConnectUs-Cycle Count Logs" sheet
-    async function logAction(entry){
-      try {
-        const res = await fetch(LOGS_URL, {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({
-            ts: new Date().toISOString(),
-            sessionId: window.ccSession || (window.ccSession = Math.random().toString(36).slice(2)),
-            user: (window.currentUser && window.currentUser.name) || 'anon',
-            ...entry
-          })
-        });
-        const out = await res.json().catch(()=>({}));
-        if (!res.ok || !out.ok) console.warn('Log failed', out);
-      } catch (err) {
-        console.warn('Log exception', err);
-      }
-    }
-
-    
 
     // --- Roles & Users (hardcoded) --------------------------------
     const ROLES = {
@@ -798,68 +748,61 @@ if (subset==="missing") {
     ]);
 
     // --- API calls -------------------------------------------------
-  // Cache all inventory rows for fast client-side filtering
-  let __INV_ALL = null;  // [{bin, sku, desc, imei, qty}, ...]
-
-function fetchBinSnapshot(bin){
-  if (CONFIG.FORCE_MOCK){ return mockBin(bin); }
-  return (async () => {
-    const target = _normBin(bin);
-
-    // 1) Lazy-load full inventory once from CSV
-    if (!__INV_ALL){
-      const r = await fetch(CSV_URL, { cache:"no-store" });
-      if (!r.ok) throw new Error("CSV fetch failed: " + r.status);
-      const txt = await r.text();
-      const rows = _parseCSV(txt);
-
-      const H = rows[0].map(h => _norm(h).toLowerCase());
-      const iBin  = H.findIndex(x => ["bin","location","location code","locationbin","locationbinref.name"].includes(x));
-      const iImei = H.findIndex(x => ["systemimei","imei","serial","serialno","lot or serial","lot/serial","lotorserialno"].includes(x));
-      const iSku  = H.findIndex(x => ["sku","item","item code","itemref.code","part","part number"].includes(x));
-      const iQty  = H.findIndex(x => ["qty","quantity","on hand","qoh","available","bin qty"].includes(x));
-      const iDesc = H.findIndex(x => ["description","item description"].includes(x));
-
-      __INV_ALL = [];
-      for (let r=1; r<rows.length; r++){
-        const row = rows[r]; if (!row || !row.length) continue;
-        __INV_ALL.push({
-          bin: _norm(row[iBin]),
-          imei: _norm(row[iImei]),
-          sku: _norm(row[iSku]),
-          qty: iQty>=0 ? Number(String(row[iQty]).replace(/,/g,"").trim()||0) : undefined,
-          desc: _norm(row[iDesc]),
-        });
+    async function fetchBinSnapshot(bin){
+      if (CONFIG.FORCE_MOCK){ return mockBin(bin); }
+      const res = await fetch(CONFIG.BIN_ENDPOINT + encodeURIComponent(bin), { cache:"no-store" });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`BIN API ${res.status}: ${txt}`);
       }
+      const data = await res.json();
+      const list = Array.isArray(data.records) ? data.records : [];
+      return list.map(r => {
+  const sysImei = String(r.systemImei || r.imei || r.serial || "");
+  const hasSerial = !!sysImei;
+// Coerce to number safely; if NaN → default (1 for serial, 0 for non-serial)
+const rawQty = r.systemQty ?? (hasSerial ? 1 : 0);
+const systemQty = (() => {
+  const n = Number(String(rawQty).replace(/,/g, "").trim());
+  return Number.isFinite(n) ? n : (hasSerial ? 1 : 0);
+})();
+return {
+  location: r.location || bin,
+  sku: r.sku || r.itemCode || "—",
+  description: r.description || r.itemName || "—",
+  systemImei: sysImei,
+  hasSerial,
+  systemQty,
+  qtyEntered: 0,
+  scannedImei: "",
+};
+
+});
+
     }
 
-    // 2) Filter by the requested bin and map to UI shape
-    const hits = __INV_ALL.filter(x => _normBin(x.bin) === target);
-    return hits.map(r => {
-      const hasSerial = !!r.imei;
-      const sysQty = hasSerial ? 1 : (Number(r.qty||0) || 0);
-      return {
-        location: r.bin || bin,
-        sku: r.sku || "—",
-        description: r.desc || "—",
-        systemImei: r.imei || "",
-        hasSerial,
-        systemQty: sysQty,
-        qtyEntered: 0,
-        scannedImei: "",
-      };
-    });
-  })();
-}
+    async function locateImei(imei){
+  try{
+    if (CONFIG.FORCE_MOCK) return mockLocate(imei, currentBin || "K-01-01");
+    const params = new URLSearchParams({
+  user: userId(),
+  scannedBin: currentBin || "",
+  scannedBy: currentUser?.name || "—",
+});
+const res = await fetch(
+  `${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${params.toString()}`,
+  { cache:"no-store" }
+);
 
 
-async function locateImei(imei){
-    const needle = _norm(imei);
-    if (!__INV_ALL) { await fetchBinSnapshot(currentBin || ""); } // ensure CSV is loaded
-    const found = __INV_ALL.find(r => _norm(r.imei) === needle);
-    if (!found) return null;
-    return { found:true, location: found.bin, sku: found.sku, description: found.desc };
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
+    return data || null;
+  }catch(e){
+    showAlerts(alerts,[{type:"warn",msg:`IMEI lookup failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
+    return null;
   }
+}
 
 
 async function logWrongBin(payload) {
@@ -879,8 +822,7 @@ async function logWrongBin(payload) {
 
 async function fetchAuditList() {
   if (CONFIG.FORCE_MOCK) { return mockAudits(); }
-  const q = new URLSearchParams({ status: "open" });
-const res = await fetch(`${CONFIG.AUDIT_ENDPOINT}?${q.toString()}`, { cache: "no-store" });
+  const res = await fetch(`${CONFIG.AUDIT_ENDPOINT}?user=${encodeURIComponent(userId())}`);
   if (!res.ok) throw new Error(await res.text());
     const j = await res.json();
   const audits = j.audits || j.records || [];
@@ -950,26 +892,9 @@ async function renderInvestigatorNotScanned(){
   const tbody = document.getElementById("invNotScannedBody");
   try{
     const raw = await fetchNotScanned();
-const items = raw.filter(r => {
-  const sku   = String(r.sku || "").trim();
-  const desc  = String(r.description || "").trim();
-  const imei  = String(r.systemImei || "").trim();
-  const sys   = Number(r.systemQty || 0);
-  const ent   = Number(r.qtyEntered || 0);
-  const isSerial = !!imei;
-
-  // Treat common sentinels as blank
-  const isBlank = (s) => !s || s === "—" || s === "-" || s.toUpperCase() === "N/A";
-
-  // Drop rows that are fully blank (no IMEI and both SKU/Desc blank)
-  if (!imei && isBlank(sku) && isBlank(desc)) return false;
-
-  // Also hide satisfied non-serial shortages on the client (in case the sheet/API still sends them)
-  if (!isSerial && ent >= sys) return false;
-
-  return true;
-});
-
+const items = raw.filter(r =>
+  String(r.sku||"").trim() || String(r.systemImei||"").trim()
+);
 
     if (!items.length){
       tbody.innerHTML = `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`;
@@ -1301,9 +1226,7 @@ document.getElementById("refreshInvestigations")?.addEventListener("click", ()=>
         currentBin = bin; scanned.clear();
         rows = await fetchBinSnapshot(bin);
         showAlerts(alerts,[{type:"ok",msg:`Loaded <b>${rows.length}</b> IMEIs for bin <b>${escapeHTML(bin)}</b>.`}]);
-try { await logAction({ action:'bin-search', bin, rows: rows.length, imeis: rows.filter(r=>r.systemImei).length }); } catch {}
-renderTable(); scanInput.focus();
-
+        renderTable(); scanInput.focus();
       }catch(err){
         const msg = (err && err.message) ? String(err.message) : "Failed to load bin.";
         showAlerts(alerts,[{type:"warn",msg:`Failed to load bin.<br><small>${escapeHTML(msg)}</small>`}]);
@@ -1557,26 +1480,9 @@ await renderInvestigatorNotScanned();
         `).join("") : `<tr><td colspan="9" class="empty">No wrong-bin logs.</td></tr>`);
 
 // Not-scanned
-const missing = (await fetchNotScanned()).filter(it => {
-  const sku  = String(it.sku || "").trim();
-  const desc = String(it.description || "").trim();
-  const imei = String(it.systemImei || "").trim();
-  const sys  = Number(it.systemQty || 0);
-  const ent  = Number(it.qtyEntered || 0);
-
-  const isBlank = (s) => !s || s === "—" || s === "-" || s.toUpperCase() === "N/A";
-
-  // drop fully blank lines (no IMEI and SKU/Desc are placeholders)
-  if (!imei && isBlank(sku) && isBlank(desc)) return false;
-  // drop satisfied non-serial shortages
-  if (!imei && ent >= sys) return false;
-
-  return true;
-});
-
-
+// Not-scanned
+const missing = await fetchNotScanned();
 supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
-
   const isSerial = !!(it.systemImei && String(it.systemImei).trim());
   return `
     <tr>
@@ -1586,15 +1492,13 @@ supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
       <td>${escapeHTML(it.description||"—")}</td>
       <td class="mono">${escapeHTML(it.systemImei||"—")}</td>
       <td class="row-sm">
-        <button class="btn danger sm"
-        data-del-short
-        data-bin="${escapeHTML(it.bin || '')}"
-        data-sku="${escapeHTML(it.sku || '')}"
-        data-imei="${escapeHTML(it.systemImei || '')}"
-        data-type="${it.systemImei ? 'serial' : 'nonserial'}"
-        data-sysqty="${Number((it.systemQty ?? it.QtySystem ?? it.qtySystem) || 0)}">
-        Delete
-       </button>
+        <button class="btn ghost sm"
+          data-sup-del
+          data-bin="${escapeHTML(it.bin||"")}"
+          data-type="${isSerial ? "serial" : "nonserial"}"
+          ${isSerial ? `data-systemImei="${escapeHTML(String(it.systemImei||""))}"` : ""}
+          ${!isSerial ? `data-sku="${escapeHTML(String(it.sku||""))}"` : ""}
+        >🗑️ Delete</button>
       </td>
     </tr>
   `;
@@ -1608,54 +1512,6 @@ supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
       }
     }
     refreshSupervisor.addEventListener("click", refreshSupervisorViews);
-    
-document.getElementById("supNotScannedBody")?.addEventListener("click", async (e) => {
-  const btn = e.target.closest("[data-del-short]");
-  if (!btn) return;
-
-  const bin   = (btn.getAttribute("data-bin") || "").trim();
-  const imei  = (btn.getAttribute("data-imei") || "").trim();
-  const sku   = (btn.getAttribute("data-sku") || "").trim();
-  const kind  = (btn.getAttribute("data-type") || (imei ? "serial" : "nonserial")).toLowerCase();
-
-  // strongest possible sysQty: data-attr -> read from row cell fallback
-  let sysQty = Number(btn.getAttribute("data-sysqty") || 0);
-  if (!sysQty) {
-    const tr = btn.closest("tr");
-    // fallback: try to read the "SYSTEM QTY" cell (6th td in your table)
-    const tds = tr ? tr.querySelectorAll("td") : [];
-    const txt = tds && tds[5] ? tds[5].textContent : "";
-    sysQty = Number(String(txt).replace(/[^\d.-]/g,"")) || 0;
-  }
-
-  if (!bin) {
-    alert("Missing bin for this row; cannot delete.");
-    return;
-  }
-
-  // Build body
-  const body = (kind === "serial" && imei)
-    ? { user: userId(), bin, type: "serial", systemImei: imei }
-    : { user: userId(), bin, type: "nonserial", sku, qtyEntered: sysQty };
-
-  // Diagnostic log so we see what we’re sending
-  console.log("[supervisor delete] body →", body);
-
-  try {
-    const res = await fetch(CONFIG.NOT_SCANNED_ENDPOINT, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const text = await res.text();
-    if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
-
-    await refreshSupervisorViews();
-  } catch (err) {
-    alert(`Delete failed:\n${String(err.message || err)}`);
-  }
-});
-
 
     // Inline supervisor resolve with decision attribution
     document.addEventListener("click", async (e)=>{
