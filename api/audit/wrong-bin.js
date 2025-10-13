@@ -123,7 +123,12 @@ if (req.method === "PATCH") {
       const id = norm(req.query?.id || body.id || "");
       if (!id) return json(res,400,{ ok:false, error:"missing_id" });
 
-      const updated = await Store.patchAudit(id, { status: "closed", updatedAt: now() });
+      const user = norm(req.query?.user || body.user || "");
+const patch = { status: "closed", updatedAt: now() };
+if (user) patch.decidedBy = user;
+
+const updated = await Store.patchAudit(id, patch);
+
       if (!updated) return json(res,404,{ ok:false, error:"not_found" });
 
       (async () => {
