@@ -1,7 +1,7 @@
 // api/_lib/store.js
 const { randomUUID } = require("crypto");
 let redis = null;
-
+ 
 // --- Redis wiring ---
 try {
   if (process.env.REDIS_URL) {
