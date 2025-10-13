@@ -496,29 +496,7 @@
       INVESTIGATOR: "investigator",
       SUPERVISOR: "supervisor",
     };
-    // Route 1 (Sheets-only) endpoints
-  const CSV_URL  = "https://docs.google.com/spreadsheets/d/YOUR_FILE_ID/export?format=csv&gid=YOUR_GID"; // Inventory tab as CSV
-  const LOGS_URL = "https://script.google.com/a/macros/connectuscorp.com/s/AKfycbzuY99ioTUZYYDtDJZY-fhj1eoRer0OUTMJ8JF13iJ5AAOqhmY-p90g3-e9xWw3epAM/exec";
 
-
-  // simple helpers
-  const _norm = s => String(s||"").trim();
-  const _normBin = s => _norm(s).replace(/\u2013|\u2014/g,"-").replace(/\s+/g," ").toUpperCase();
-
-  // tiny CSV parser
-  function _parseCSV(text){
-    const rows=[]; let row=[], cur='', i=0, q=false;
-    while(i<text.length){
-      const c=text[i], n=text[i+1];
-      if(q){ if(c=='"'&&n=='"'){cur+='"';i+=2;continue;} if(c=='"'){q=false;i++;continue;} cur+=c;i++;continue; }
-      if(c=='"'){ q=true; i++; continue; }
-      if(c==','){ row.push(cur); cur=''; i++; continue; }
-      if(c=='\n'){ row.push(cur); rows.push(row); row=[]; cur=''; i++; continue; }
-      cur+=c; i++;
-    }
-    row.push(cur); rows.push(row);
-    return rows;
-  }
     const USERS = {
       // Cycle Counters
       "matt":     { name:"Matt Westerfer", role:ROLES.COUNTER, password:"pass" },
@@ -1326,7 +1304,9 @@ document.getElementById("refreshInvestigations")?.addEventListener("click", ()=>
         currentBin = bin; scanned.clear();
         rows = await fetchBinSnapshot(bin);
         showAlerts(alerts,[{type:"ok",msg:`Loaded <b>${rows.length}</b> IMEIs for bin <b>${escapeHTML(bin)}</b>.`}]);
-        renderTable(); scanInput.focus();
+try { await logAction({ action:'bin-search', bin, rows: rows.length, imeis: rows.filter(r=>r.systemImei).length }); } catch {}
+renderTable(); scanInput.focus();
+
       }catch(err){
         const msg = (err && err.message) ? String(err.message) : "Failed to load bin.";
         showAlerts(alerts,[{type:"warn",msg:`Failed to load bin.<br><small>${escapeHTML(msg)}</small>`}]);
