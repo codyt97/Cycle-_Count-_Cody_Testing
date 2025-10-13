@@ -104,21 +104,24 @@ for (const [k, b] of latestByBin.entries()) {
   const scanned = Math.max(0, total - missing);
 
   const startedRaw = b.started || b.submittedAt || b.updatedAt;
-  const updatedRaw = b.submittedAt || b.updatedAt || b.started;
+const updatedRaw = b.submittedAt || b.updatedAt || b.started;
+const started    = toEST(startedRaw);
+const updated    = toEST(updatedRaw);
+const updatedTs  = Date.parse(updatedRaw) || 0;
 
-  merged.set(k, {
+merged.set(k, {
   bin: b.bin,
   counter: String(b.counter || "—"),
-  started: toEST(started),
-  updated: toEST(updated),
-  updatedTs: Date.parse(updated) || 0,  // <— numeric sort key
+  started,
+  updated,
+  updatedTs,                      // numeric sort key
   total,
   scanned,
   missing,
   state: String(b.state || "investigation"),
 });
 
-
+} 
 // 3) Sort by updated desc (numeric) and return
 const out = Array.from(merged.values())
   .sort((a,b) => (b.updatedTs||0) - (a.updatedTs||0))
