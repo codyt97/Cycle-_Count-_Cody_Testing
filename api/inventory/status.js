@@ -13,14 +13,18 @@ const toEST = (iso) => {
 };
 
 function getSheets() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
-  const key = (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
-  if (!email || !key) throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_EMAIL/GOOGLE_PRIVATE_KEY");
-  const auth = new google.auth.JWT(email, null, key, [
+  const raw = process.env.GOOGLE_CREDENTIALS_JSON || "";
+  if (!raw) throw new Error("Missing GOOGLE_CREDENTIALS_JSON");
+  const creds = JSON.parse(raw);
+  const key = String(creds.private_key || "").replace(/\r?\n/g, "\n");
+  if (!creds.client_email || !key) throw new Error("Bad GOOGLE_CREDENTIALS_JSON");
+  const auth = new google.auth.JWT(creds.client_email, null, key, [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/drive.readonly",
   ]);
   return google.sheets({ version: "v4", auth });
 }
+
 
 async function readTabObjects(spreadsheetId, tabName) {
   const sheets = getSheets();
