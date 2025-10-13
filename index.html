@@ -1525,13 +1525,15 @@ supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
       <td>${escapeHTML(it.description||"—")}</td>
       <td class="mono">${escapeHTML(it.systemImei||"—")}</td>
       <td class="row-sm">
-        <button class="btn ghost sm"
-          data-sup-del
-          data-bin="${escapeHTML(it.bin||"")}"
-          data-type="${isSerial ? "serial" : "nonserial"}"
-          ${isSerial ? `data-systemImei="${escapeHTML(String(it.systemImei||""))}"` : ""}
-          ${!isSerial ? `data-sku="${escapeHTML(String(it.sku||""))}"` : ""}
-        >🗑️ Delete</button>
+        <button class="btn danger sm"
+        data-del-short
+        data-bin="${escapeHTML(it.bin || '')}"
+        data-sku="${escapeHTML(it.sku || '')}"
+        data-imei="${escapeHTML(it.systemImei || '')}"
+        data-sysqty="${Number(it.systemQty || 0)}">
+  Delete
+</button>
+
       </td>
     </tr>
   `;
