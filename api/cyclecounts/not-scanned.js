@@ -5,6 +5,7 @@ const { google } = require("googleapis");
 const Store = require("../_lib/store");
 const { appendRow } = require("../_lib/sheets");
 
+// ---------------------------- utils ----------------------------
 const norm = (s) => String(s ?? "").trim();
 const nowISO = () => new Date().toISOString();
 
@@ -33,7 +34,20 @@ async function readTabObjects(spreadsheetId, tabName) {
   });
 }
 
-async function handleDelete(req, res){
+function looseUserMatch(counter, want) {
+  const c = norm(counter).toLowerCase();
+  const w = norm(want).toLowerCase();
+  if (!c || !w) return false;
+  if (c === w) return true;
+  if (c.includes(w)) return true;
+  const parts = c.split(/\s+/);
+  const first = parts[0] || "";
+  const last = parts[parts.length - 1] || "";
+  return first === w || last === w;
+}
+
+// ---------------------------- DELETE ----------------------------
+async function handleDelete(req, res) {
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
     let bin       = norm(body.bin || req.query?.bin || "");
@@ -41,10 +55,11 @@ async function handleDelete(req, res){
     const sku     = norm(body.sku || req.query?.sku || "");
     const entered = Number(body.qtyEntered != null ? body.qtyEntered : req.query?.qtyEntered) || 0;
     const user    = norm(body.user || body.counter || req.query?.user || "");
+    const type    = (body.type || (imei ? "serial" : "nonserial")).toLowerCase();
 
     if (!imei && !sku) return bad(res, "systemImei or sku is required", 400);
 
-    // Derive bin if missing (by IMEI or by SKU with deficit)
+    // If bin is missing, try to infer it from latest Store records (by IMEI or SKU with deficit)
     if (!bin) {
       const all = await Store.listBins();
       let best = null, bestT = -1;
@@ -52,226 +67,226 @@ async function handleDelete(req, res){
         const t = Date.parse(r.submittedAt || r.updatedAt || r.started || 0) || 0;
         const items = Array.isArray(r.items) ? r.items : [];
         const missingImeis = Array.isArray(r.missingImeis) ? r.missingImeis : [];
+
         const hitByImei = imei && (
           missingImeis.some(x => norm(x) === imei) ||
           items.some(it => norm(it.systemImei) === imei && Number(it.qtyEntered||0) < (Number(it.systemQty||0) || 1))
         );
+
         const hitBySku  = sku && items.some(it =>
           !norm(it.systemImei) && norm(it.sku) === sku && Number(it.qtyEntered||0) < Number(it.systemQty||0)
         );
+
         if (hitByImei || hitBySku) { if (t > bestT) { best = r; bestT = t; } }
       }
       if (!best) return bad(res, "bin not found for provided identifier", 404);
       bin = norm(best.bin);
     }
 
-    // Load latest record for bin
+    // Pull latest bin record
     const all = await Store.listBins();
-    let rec = null, recTime = -1;
+    let rec = null, recT = -1;
     for (const r of all) {
       if (norm(r.bin).toUpperCase() !== bin.toUpperCase()) continue;
       const t = Date.parse(r.submittedAt || r.updatedAt || r.started || 0) || 0;
-      if (t > recTime) { rec = r; recTime = t; }
+      if (t > recT) { rec = r; recT = t; }
     }
     if (!rec) return bad(res, "bin not found", 404);
 
+    // Normalize shapes
     rec.items = Array.isArray(rec.items) ? [...rec.items] : [];
     rec.missingImeis = Array.isArray(rec.missingImeis) ? [...rec.missingImeis] : [];
 
     let changed = false;
 
-    if (imei) {
-      // SERIAL clear
+    if (type === "serial" || imei) {
+      // ---- SERIAL CLEAR ----
+      const targetImei = imei;
+      // fill qtyEntered to 1 (or to systemQty if explicitly modeled)
       for (const it of rec.items) {
-        if (norm(it.systemImei) === imei) {
+        if (norm(it.systemImei) === targetImei) {
           const target = Math.max(1, Number(it.systemQty || 1));
           if (Number(it.qtyEntered || 0) < target) { it.qtyEntered = target; changed = true; }
         }
       }
+      // also pop from explicit missing list if present
       const before = rec.missingImeis.length;
-      rec.missingImeis = rec.missingImeis.filter(x => norm(x) !== imei);
+      rec.missingImeis = rec.missingImeis.filter(x => norm(x) !== targetImei);
       if (rec.missingImeis.length !== before) changed = true;
+
     } else {
-      // NON-SERIAL update by SKU
-      const it = rec.items.find(x => !norm(x.systemImei) && norm(x.sku) === sku);
-      if (!it) return bad(res, "sku not found in bin", 404);
-      const sys = Number(it.systemQty || 0);
-      const newEntered = Math.min(sys, Math.max(0, Number(entered || 0)));
-      if (Number(it.qtyEntered || 0) !== newEntered) { it.qtyEntered = newEntered; changed = true; }
+      // ---- NON-SERIAL: set / bump qtyEntered for this SKU ----
+      const wantSku = sku;
+      let found = false;
+      for (const it of rec.items) {
+        if (!norm(it.systemImei) && norm(it.sku) === wantSku) {
+          const sys = Number(it.systemQty || 0);
+          const cur = Number(it.qtyEntered || 0);
+          const next = Math.max(cur, Math.min(sys, Number(entered || 0)));
+          if (next !== cur) { it.qtyEntered = next; changed = true; }
+          found = true;
+        }
+      }
+      if (!found) return bad(res, "sku not found in this bin", 404);
     }
 
+    // Recompute totals only if anything changed
     if (changed) {
-      const items = rec.items;
-      const total = items.reduce((a, it) => a + (norm(it.systemImei) ? 1 : Number(it.systemQty || 0)), 0);
-      const serialMissing = rec.missingImeis.length;
-      const nonSerialMissing = items
+      const serialMissing = Array.isArray(rec.missingImeis)
+        ? rec.missingImeis.length
+        : rec.items.filter(it => norm(it.systemImei) && Number(it.qtyEntered||0) < 1).length;
+
+      const nonSerialMissing = rec.items
         .filter(it => !norm(it.systemImei))
         .reduce((a, it) => a + Math.max(Number(it.systemQty||0) - Number(it.qtyEntered||0), 0), 0);
-      const missing = Math.max(0, serialMissing + nonSerialMissing);
+
+      const missing = serialMissing + nonSerialMissing;
+      const total = Number(rec.total || (
+        rec.items.reduce((a,it)=>a + (norm(it.systemImei) ? 1 : Number(it.systemQty||0)), 0)
+      ));
       const scanned = Math.max(0, total - missing);
 
-      rec = await Store.upsertBin({ ...rec, scanned, missing, updatedAt: nowISO() });
+      rec = await Store.upsertBin({
+        ...rec,
+        scanned,
+        missing,
+        updatedAt: nowISO(),
+      });
 
-      // optional audit for serial clears
-      try { if (imei) await appendRow("FoundImeis", [bin, imei, user || "—", rec.counter || "—", nowISO()]); } catch {}
+      // Optional: write an audit row for traceability
+      try {
+        await appendRow("ConnectUs – Cycle Count Logs", "NotScannedActions", [
+          nowISO(), user || "—", bin, (imei ? "serial" : "nonserial"),
+          imei || sku, entered || "", scanned, missing
+        ]);
+      } catch (e) {
+        console.warn("[not-scanned] append audit failed:", e.message || e);
+      }
     }
 
-    // remaining (for non-serial UX)
-    let remaining = 0;
-    if (!imei) {
-      const it2 = rec.items.find(x => !norm(x.systemImei) && norm(x.sku) === sku);
-      if (it2) remaining = Math.max(0, Number(it2.systemQty||0) - Number(it2.qtyEntered||0));
-    }
-
-    return ok(res, { ok:true, bin, imei, sku, updated: changed, remaining, record: rec });
+    return ok(res, { ok: true, bin: rec.bin, scanned: rec.scanned, missing: rec.missing });
   } catch (e) {
     console.error("[not-scanned][DELETE] fail:", e);
     return bad(res, String(e.message || e), 500);
   }
 }
 
+// ---------------------------- GET ----------------------------
+async function handleGet(req, res) {
+  try {
+    const sheetId = process.env.LOGS_SHEET_ID || "";
+    if (!sheetId) return bad(res, "Missing LOGS_SHEET_ID", 500);
 
+    // 1) Pull sheet rows (NotScanned tab)
+    let all = await readTabObjects(sheetId, "NotScanned");
 
-// -------- GET: list not-scanned (existing behavior, unchanged except small helpers) --------
-function looseUserMatch(counter, want) {
-  const c = norm(counter).toLowerCase();
-  const w = norm(want).toLowerCase();
-  if (!c || !w) return false;
-  if (c === w) return true;
-  if (c.includes(w)) return true;
-  const [first, ...rest] = c.split(/\s+/);
-  const last = rest.length ? rest[rest.length-1] : "";
-  return first === w || last === w;
-}
-
-async function handleGet(req, res){
-  const sheetId = process.env.LOGS_SHEET_ID || "";
-  if (!sheetId) return bad(res, "Missing LOGS_SHEET_ID", 500);
-
-  // read sheet rows
-  let all = await readTabObjects(sheetId, "NotScanned");
-
-  // synthesize from latest Store records
-  const latestByBin = new Map();
-  for (const b of await Store.listBins()) {
-    const k = norm(b.bin).toUpperCase();
-    const t = Date.parse(b.submittedAt || b.updatedAt || b.started || 0) || 0;
-    const cur = latestByBin.get(k);
-    const ct  = cur ? (Date.parse(cur.submittedAt || cur.updatedAt || cur.started || 0) || 0) : -1;
-    if (!cur || t > ct) latestByBin.set(k, b);
-  }
-
-  const fromStore = [];
-  for (const b of latestByBin.values()) {
-    const counter = norm(b.counter || "—");
-    const items = Array.isArray(b.items) ? b.items : [];
-    for (const it of items) {
-      const sku         = norm(it.sku || "—");
-      const description = norm(it.description || "—");
-      const systemImei  = norm(it.systemImei || "");
-      const hasSerial   = !!systemImei;
-      const systemQty   = Number(it.systemQty != null ? it.systemQty : (hasSerial ? 1 : 0)) || 0;
-      const qtyEntered  = Number(it.qtyEntered || 0);
-      // skip fully satisfied or blank non-serials
-if (qtyEntered >= systemQty) {
-  // already matched; do not show
-} else if (!hasSerial && (!sku || sku === "—") && (!description || description === "—")) {
-  // blank non-serial meta; hide
-} else {
-  fromStore.push({
-    Bin: b.bin, Counter: counter, SKU: sku, Description: description,
-    Type: hasSerial ? "serial" : "nonserial",
-    QtySystem: systemQty, QtyEntered: qtyEntered, SystemImei: systemImei,
-  });
-}
-
+    // 2) Synthesize “not-scanned” rows from the latest Store bins
+    const latestByBin = new Map();
+    for (const b of await Store.listBins()) {
+      const k = norm(b.bin).toUpperCase();
+      const t = Date.parse(b.submittedAt || b.updatedAt || b.started || 0) || 0;
+      const cur = latestByBin.get(k);
+      if (!cur || t > cur._t) latestByBin.set(k, { ...b, _t: t });
     }
 
-    // also include b.missingImeis that didn't have an item row
-    const known = new Set(items.map(x => norm(x.systemImei)).filter(Boolean));
-    if (Array.isArray(b.missingImeis)) {
-      for (const raw of b.missingImeis) {
-        const mi = norm(raw);
-        if (!mi || known.has(mi)) continue;
-        let sku = "—", description = "—";
-        try {
-          const ref = await Store.findByIMEI(mi);
-          if (ref) { sku = norm(ref.sku); description = norm(ref.description); }
-        } catch {}
+    const fromStore = [];
+    for (const b of latestByBin.values()) {
+      const BIN = norm(b.bin);
+      const counter = norm(b.counter || "—");
+      const items = Array.isArray(b.items) ? b.items : [];
+      const missingImeis = Array.isArray(b.missingImeis) ? b.missingImeis : [];
+
+      // serial deficits by explicit missingImeis (if present)
+      for (const mi of missingImeis) {
         fromStore.push({
-          Bin: b.bin, Counter: counter, SKU: sku, Description: description,
-          Type: "serial", QtySystem: 1, QtyEntered: 0, SystemImei: mi,
+          Bin: BIN, Counter: counter, SKU: "", Description: "",
+          Type: "serial", QtySystem: 1, QtyEntered: 0, SystemImei: norm(mi),
         });
       }
+
+      // deficits derived from items (both serial and non-serial)
+      for (const it of items) {
+        const sku  = norm(it.sku);
+        const desc = norm(it.description || it.desc || "");
+        const imei = norm(it.systemImei);
+        const sys  = Number(it.systemQty || (imei ? 1 : 0));
+        const ent  = Number(it.qtyEntered || 0);
+
+        if (imei) {
+          // a serial still missing if ent < 1 and not already in missingImeis
+          if (ent < 1 && !missingImeis.some(x => norm(x) === imei)) {
+            fromStore.push({
+              Bin: BIN, Counter: counter, SKU: "", Description: desc,
+              Type: "serial", QtySystem: 1, QtyEntered: 0, SystemImei: imei,
+            });
+          }
+        } else {
+          const remaining = Math.max(0, sys - ent);
+          if (remaining > 0 && sys > 0) {
+            fromStore.push({
+              Bin: BIN, Counter: counter, SKU: sku, Description: desc,
+              Type: "nonserial", QtySystem: sys, QtyEntered: ent, SystemImei: "",
+            });
+          }
+        }
+      }
     }
-  }
-  all = (all || []).concat(fromStore);
 
-  const wantUser = norm(req.query.user || "");
-  const wantBin  = norm(req.query.bin  || "");
+    // 3) Merge sources and de-dup (prefer sheet row)
+    all = (all || []).concat(fromStore);
+    const wantUser = norm(req.query.user || "");
+    const wantBin  = norm(req.query.bin  || "");
 
-  let filtered = all;
-  if (wantBin) {
-    const BIN = wantBin.toUpperCase();
-    filtered = filtered.filter(r => norm(r.Bin || r.bin).toUpperCase() === BIN);
-  } else if (wantUser) {
-    const byUser = filtered.filter(r => looseUserMatch(r.Counter || r.counter, wantUser));
-    filtered = byUser.length ? byUser : filtered;
-  }
+    let filtered = all;
+    if (wantBin) {
+      const BIN = wantBin.toUpperCase();
+      filtered = filtered.filter(r => norm(r.Bin || r.bin).toUpperCase() === BIN);
+    } else if (wantUser) {
+      const byUser = filtered.filter(r => looseUserMatch(r.Counter || r.counter, wantUser));
+      filtered = byUser.length ? byUser : filtered;
+    }
 
-  const keyOf = (r) => [
-    norm(r.Bin || r.bin),
-    norm(r.SKU || r.sku),
-    norm(r.Description || r.description),
-    norm(r.SystemImei || r.systemImei),
-  ].join("|");
+    const keyOf = (r) => [
+      norm(r.Bin || r.bin),
+      norm(r.SKU || r.sku),
+      norm(r.Description || r.description),
+      norm(r.SystemImei || r.systemImei),
+    ].join("|");
 
-  const map = new Map();
-  for (const r of filtered) map.set(keyOf(r), r);
-  const rows = Array.from(map.values());
+    const map = new Map();
+    for (const r of filtered) map.set(keyOf(r), r);
+    const rows = Array.from(map.values());
 
+    // 4) Normalize and FINAL filter (single return path)
     let records = rows.map(r => ({
-    bin:        norm(r.Bin ?? r.bin),
-    counter:    norm(r.Counter ?? r.counter) || "—",
-    sku:        norm(r.SKU ?? r.sku) || "—",
-    description:norm(r.Description ?? r.description) || "—",
-    systemImei: norm(r.SystemImei ?? r.systemImei),
-    systemQty:  Number(r.QtySystem ?? r.systemQty ?? 0),
-    qtyEntered: Number(r.QtyEntered ?? r.qtyEntered ?? 0),
-    type:       norm(r.Type ?? r.type) || (norm(r.SystemImei ?? r.systemImei) ? "serial" : "nonserial"),
-  }));
+      bin:        norm(r.Bin ?? r.bin),
+      counter:    norm(r.Counter ?? r.counter) || "—",
+      sku:        norm(r.SKU ?? r.sku) || "—",
+      description:norm(r.Description ?? r.description) || "—",
+      systemImei: norm(r.SystemImei ?? r.systemImei),
+      systemQty:  Number(r.QtySystem ?? r.systemQty ?? 0),
+      qtyEntered: Number(r.QtyEntered ?? r.qtyEntered ?? 0),
+      type:       norm(r.Type ?? r.type) || (norm(r.SystemImei ?? r.systemImei) ? "serial" : "nonserial"),
+    }));
 
+    // Hide blank non-serials & already satisfied non-serial shortages
+    records = records.filter(r => {
+      if (r.type === "nonserial") {
+        const blank = (!r.sku || r.sku === "—") && (!r.description || r.description === "—");
+        if (blank) return false;
+        if ((r.qtyEntered || 0) >= (r.systemQty || 0)) return false;
+      }
+      return true;
+    });
 
-
-
-// Hide sheet rows that are already satisfied or blank non-serials
-const wantBin = norm(req.query?.bin || "");
-
-// Hide satisfied non-serials & blank sheet rows (defensive)
-let filtered = records.filter(r => {
-  const isSerial = !!norm(r.systemImei);
-  const sys = Number(r.systemQty || 0);
-  const ent = Number(r.qtyEntered || 0);
-
-  if (!isSerial) {
-    const blank = (!norm(r.sku) || norm(r.sku) === "—") &&
-                  (!norm(r.description) || norm(r.description) === "—");
-    if (blank) return false;
-    if (ent >= sys) return false; // fully matched
+    return ok(res, { records });
+  } catch (e) {
+    console.error("[not-scanned][GET] fail:", e);
+    return bad(res, String(e.message || e), 500);
   }
-  return true;
-});
-
-// Scope by bin if provided
-if (wantBin) {
-  filtered = filtered.filter(r => norm(r.bin).toUpperCase() === wantBin.toUpperCase());
 }
 
-return ok(res, { records: filtered });
-
-
-}
-
+// ---------------------------- router ----------------------------
 module.exports = async (req, res) => {
   if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
   if (req.method === "DELETE")  { withCORS(res); return handleDelete(req, res); }
