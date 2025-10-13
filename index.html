@@ -436,6 +436,58 @@
       FORCE_MOCK: false,
       LOGO_FILENAME: "./download.png",
     };
+        // === Sheets-only config (Route 1) ===
+    // Inventory tab published as CSV:
+    //   File → Share → Publish to the web → [Your Inventory tab] + CSV → Publish
+    // Paste the exact URL here:
+    const CSV_URL  = "https://docs.google.com/spreadsheets/d/YOUR_FILE_ID/export?format=csv&gid=YOUR_GID";
+
+    // Logs Apps Script Web App (Extensions → Apps Script → Deploy as Web app, Anyone):
+    const LOGS_URL = "https://script.google.com/macros/s/YOUR_APPS_SCRIPT_DEPLOY_ID/exec";
+
+    // Tiny helpers
+    const _norm = s => String(s||"").trim();
+    const _normBin = s => _norm(s).replace(/\u2013|\u2014/g,"-").replace(/\s+/g," ").toUpperCase();
+
+    // Minimal CSV parser (handles quotes)
+    function _parseCSV(text){
+      const rows=[]; let row=[], cur='', i=0, q=false;
+      while(i<text.length){
+        const c=text[i], n=text[i+1];
+        if(q){ if(c=='"'&&n=='"'){cur+='"';i+=2;continue;} if(c=='"'){q=false;i++;continue;} cur+=c;i++;continue; }
+        if(c=='"'){ q=true; i++; continue; }
+        if(c==','){ row.push(cur); cur=''; i++; continue; }
+        if(c=='\n'){ row.push(cur); rows.push(row); row=[]; cur=''; i++; continue; }
+        cur+=c; i++;
+      }
+      row.push(cur); rows.push(row);
+      return rows;
+    }
+
+    // Client-side cache of all inventory rows
+    let __INV_ALL = null;
+
+    // Write a log row to your "ConnectUs-Cycle Count Logs" sheet
+    async function logAction(entry){
+      try {
+        const res = await fetch(LOGS_URL, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            ts: new Date().toISOString(),
+            sessionId: window.ccSession || (window.ccSession = Math.random().toString(36).slice(2)),
+            user: (window.currentUser && window.currentUser.name) || 'anon',
+            ...entry
+          })
+        });
+        const out = await res.json().catch(()=>({}));
+        if (!res.ok || !out.ok) console.warn('Log failed', out);
+      } catch (err) {
+        console.warn('Log exception', err);
+      }
+    }
+
+    
 
     // --- Roles & Users (hardcoded) --------------------------------
     const ROLES = {
@@ -443,7 +495,28 @@
       INVESTIGATOR: "investigator",
       SUPERVISOR: "supervisor",
     };
+    // Route 1 (Sheets-only) endpoints
+  const CSV_URL  = "https://docs.google.com/spreadsheets/d/YOUR_FILE_ID/export?format=csv&gid=YOUR_GID"; // Inventory tab as CSV
+  const LOGS_URL = "https://script.google.com/macros/s/YOUR_APPS_SCRIPT_DEPLOY_ID/exec";                 // Apps Script for logs
 
+  // simple helpers
+  const _norm = s => String(s||"").trim();
+  const _normBin = s => _norm(s).replace(/\u2013|\u2014/g,"-").replace(/\s+/g," ").toUpperCase();
+
+  // tiny CSV parser
+  function _parseCSV(text){
+    const rows=[]; let row=[], cur='', i=0, q=false;
+    while(i<text.length){
+      const c=text[i], n=text[i+1];
+      if(q){ if(c=='"'&&n=='"'){cur+='"';i+=2;continue;} if(c=='"'){q=false;i++;continue;} cur+=c;i++;continue; }
+      if(c=='"'){ q=true; i++; continue; }
+      if(c==','){ row.push(cur); cur=''; i++; continue; }
+      if(c=='\n'){ row.push(cur); rows.push(row); row=[]; cur=''; i++; continue; }
+      cur+=c; i++;
+    }
+    row.push(cur); rows.push(row);
+    return rows;
+  }
     const USERS = {
       // Cycle Counters
       "matt":     { name:"Matt Westerfer", role:ROLES.COUNTER, password:"pass" },
@@ -748,61 +821,68 @@ if (subset==="missing") {
     ]);
 
     // --- API calls -------------------------------------------------
-    async function fetchBinSnapshot(bin){
-      if (CONFIG.FORCE_MOCK){ return mockBin(bin); }
-      const res = await fetch(CONFIG.BIN_ENDPOINT + encodeURIComponent(bin), { cache:"no-store" });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`BIN API ${res.status}: ${txt}`);
+  // Cache all inventory rows for fast client-side filtering
+  let __INV_ALL = null;  // [{bin, sku, desc, imei, qty}, ...]
+
+function fetchBinSnapshot(bin){
+  if (CONFIG.FORCE_MOCK){ return mockBin(bin); }
+  return (async () => {
+    const target = _normBin(bin);
+
+    // 1) Lazy-load full inventory once from CSV
+    if (!__INV_ALL){
+      const r = await fetch(CSV_URL, { cache:"no-store" });
+      if (!r.ok) throw new Error("CSV fetch failed: " + r.status);
+      const txt = await r.text();
+      const rows = _parseCSV(txt);
+
+      const H = rows[0].map(h => _norm(h).toLowerCase());
+      const iBin  = H.findIndex(x => ["bin","location","location code","locationbin","locationbinref.name"].includes(x));
+      const iImei = H.findIndex(x => ["systemimei","imei","serial","serialno","lot or serial","lot/serial","lotorserialno"].includes(x));
+      const iSku  = H.findIndex(x => ["sku","item","item code","itemref.code","part","part number"].includes(x));
+      const iQty  = H.findIndex(x => ["qty","quantity","on hand","qoh","available","bin qty"].includes(x));
+      const iDesc = H.findIndex(x => ["description","item description"].includes(x));
+
+      __INV_ALL = [];
+      for (let r=1; r<rows.length; r++){
+        const row = rows[r]; if (!row || !row.length) continue;
+        __INV_ALL.push({
+          bin: _norm(row[iBin]),
+          imei: _norm(row[iImei]),
+          sku: _norm(row[iSku]),
+          qty: iQty>=0 ? Number(String(row[iQty]).replace(/,/g,"").trim()||0) : undefined,
+          desc: _norm(row[iDesc]),
+        });
       }
-      const data = await res.json();
-      const list = Array.isArray(data.records) ? data.records : [];
-      return list.map(r => {
-  const sysImei = String(r.systemImei || r.imei || r.serial || "");
-  const hasSerial = !!sysImei;
-// Coerce to number safely; if NaN → default (1 for serial, 0 for non-serial)
-const rawQty = r.systemQty ?? (hasSerial ? 1 : 0);
-const systemQty = (() => {
-  const n = Number(String(rawQty).replace(/,/g, "").trim());
-  return Number.isFinite(n) ? n : (hasSerial ? 1 : 0);
-})();
-return {
-  location: r.location || bin,
-  sku: r.sku || r.itemCode || "—",
-  description: r.description || r.itemName || "—",
-  systemImei: sysImei,
-  hasSerial,
-  systemQty,
-  qtyEntered: 0,
-  scannedImei: "",
-};
-
-});
-
     }
 
-    async function locateImei(imei){
-  try{
-    if (CONFIG.FORCE_MOCK) return mockLocate(imei, currentBin || "K-01-01");
-    const params = new URLSearchParams({
-  user: userId(),
-  scannedBin: currentBin || "",
-  scannedBy: currentUser?.name || "—",
-});
-const res = await fetch(
-  `${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${params.toString()}`,
-  { cache:"no-store" }
-);
-
-
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
-    return data || null;
-  }catch(e){
-    showAlerts(alerts,[{type:"warn",msg:`IMEI lookup failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
-    return null;
-  }
+    // 2) Filter by the requested bin and map to UI shape
+    const hits = __INV_ALL.filter(x => _normBin(x.bin) === target);
+    return hits.map(r => {
+      const hasSerial = !!r.imei;
+      const sysQty = hasSerial ? 1 : (Number(r.qty||0) || 0);
+      return {
+        location: r.bin || bin,
+        sku: r.sku || "—",
+        description: r.desc || "—",
+        systemImei: r.imei || "",
+        hasSerial,
+        systemQty: sysQty,
+        qtyEntered: 0,
+        scannedImei: "",
+      };
+    });
+  })();
 }
+
+
+async function locateImei(imei){
+    const needle = _norm(imei);
+    if (!__INV_ALL) { await fetchBinSnapshot(currentBin || ""); } // ensure CSV is loaded
+    const found = __INV_ALL.find(r => _norm(r.imei) === needle);
+    if (!found) return null;
+    return { found:true, location: found.bin, sku: found.sku, description: found.desc };
+  }
 
 
 async function logWrongBin(payload) {
