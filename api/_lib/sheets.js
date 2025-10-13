@@ -3,17 +3,20 @@
 const { google } = require("googleapis");
 
 function getJwt() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
-  const key = (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
-  if (!email || !key) {
-    throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_EMAIL or GOOGLE_PRIVATE_KEY");
+  const raw = process.env.GOOGLE_CREDENTIALS_JSON || "";
+  if (!raw) throw new Error("Missing GOOGLE_CREDENTIALS_JSON");
+  let creds;
+  try { creds = JSON.parse(raw); } catch (e) {
+    throw new Error("GOOGLE_CREDENTIALS_JSON is not valid JSON");
   }
-  // Sheets write + Drive read
-  return new google.auth.JWT(email, null, key, [
+  const key = String(creds.private_key || "").replace(/\r?\n/g, "\n");
+  if (!creds.client_email || !key) throw new Error("Bad GOOGLE_CREDENTIALS_JSON: missing client_email/private_key");
+  return new google.auth.JWT(creds.client_email, null, key, [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.readonly",
   ]);
 }
+
 
 function getSheets() {
   const auth = getJwt();
