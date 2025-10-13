@@ -468,13 +468,14 @@
 
     // --- State (Page 1) -------------------------------------------
     let currentBin = "";
-    // --- Global selection for Investigator page ---
+}
+// --- Global selection for Investigator page ---
 let investSelectedBin = "";
 
 // Attach the click handler to #investBody only once
 function wireInvestBinClickOnce(){
   const tbody = document.getElementById("investBody");
-  if (!tbody || tbody.dataset.clickWired) return;   // already wired or not yet in DOM
+  if (!tbody || tbody.dataset.clickWired) return;
   tbody.dataset.clickWired = "1";
 
   tbody.addEventListener("click", (e) => {
@@ -485,9 +486,9 @@ function wireInvestBinClickOnce(){
     if (!bin) return;
 
     investSelectedBin = bin;
-    renderInvestigatorNotScanned();                   // reload not-scanned for this bin
+    renderInvestigatorNotScanned();
 
-    // optional row highlight
+    // optional highlight
     [...tbody.querySelectorAll("tr")].forEach(r => r.classList.remove("ok"));
     tr.classList.add("ok");
   });
@@ -1414,6 +1415,9 @@ async function refreshInvestigator(){
             </tr>
           `;
         }).join("");
+    // Ensure click-to-select is attached exactly once
+wireInvestBinClickOnce();
+
 
 
     // 3) Wrong-bin (hide resolved)
