@@ -1506,13 +1506,14 @@ const missing = (await fetchNotScanned()).filter(it => {
 
   const isBlank = (s) => !s || s === "—" || s === "-" || s.toUpperCase() === "N/A";
 
-  // hide fully blank rows (no IMEI and SKU/Desc are blanks)
+  // drop fully blank lines (no IMEI and SKU/Desc are placeholders)
   if (!imei && isBlank(sku) && isBlank(desc)) return false;
-  // hide satisfied non-serial shortages
+  // drop satisfied non-serial shortages
   if (!imei && ent >= sys) return false;
 
   return true;
 });
+
 
 supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
 
@@ -1530,10 +1531,10 @@ supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
         data-bin="${escapeHTML(it.bin || '')}"
         data-sku="${escapeHTML(it.sku || '')}"
         data-imei="${escapeHTML(it.systemImei || '')}"
-        data-sysqty="${Number(it.systemQty || 0)}">
-  Delete
-</button>
-
+        data-type="${it.systemImei ? 'serial' : 'nonserial'}"
+        data-sysqty="${Number((it.systemQty ?? it.QtySystem ?? it.qtySystem) || 0)}">
+        Delete
+       </button>
       </td>
     </tr>
   `;
@@ -1547,39 +1548,54 @@ supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
       }
     }
     refreshSupervisor.addEventListener("click", refreshSupervisorViews);
-  // Supervisor: handle Delete on Not-Scanned (serial & non-serial)
+    
 document.getElementById("supNotScannedBody")?.addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-del-short]");
   if (!btn) return;
 
-  const bin    = btn.getAttribute("data-bin") || "";
-  const imei   = (btn.getAttribute("data-imei") || "").trim();
-  const sku    = btn.getAttribute("data-sku") || "";
-  const sysQty = Number(btn.getAttribute("data-sysqty") || 0);
+  const bin   = (btn.getAttribute("data-bin") || "").trim();
+  const imei  = (btn.getAttribute("data-imei") || "").trim();
+  const sku   = (btn.getAttribute("data-sku") || "").trim();
+  const kind  = (btn.getAttribute("data-type") || (imei ? "serial" : "nonserial")).toLowerCase();
+
+  // strongest possible sysQty: data-attr -> read from row cell fallback
+  let sysQty = Number(btn.getAttribute("data-sysqty") || 0);
+  if (!sysQty) {
+    const tr = btn.closest("tr");
+    // fallback: try to read the "SYSTEM QTY" cell (6th td in your table)
+    const tds = tr ? tr.querySelectorAll("td") : [];
+    const txt = tds && tds[5] ? tds[5].textContent : "";
+    sysQty = Number(String(txt).replace(/[^\d.-]/g,"")) || 0;
+  }
 
   if (!bin) {
     alert("Missing bin for this row; cannot delete.");
     return;
   }
 
-  try {
-    // Build the correct DELETE body
-    const body = imei
-      ? { user: userId(), bin, type: "serial", systemImei: imei }  // serial clear
-      : { user: userId(), bin, sku, qtyEntered: sysQty };          // non-serial satisfied
+  // Build body
+  const body = (kind === "serial" && imei)
+    ? { user: userId(), bin, type: "serial", systemImei: imei }
+    : { user: userId(), bin, type: "nonserial", sku, qtyEntered: sysQty };
 
+  // Diagnostic log so we see what we’re sending
+  console.log("[supervisor delete] body →", body);
+
+  try {
     const res = await fetch(CONFIG.NOT_SCANNED_ENDPOINT, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(await res.text());
+    const text = await res.text();
+    if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
 
     await refreshSupervisorViews();
   } catch (err) {
-    alert(`Delete failed: ${String(err.message || err)}`);
+    alert(`Delete failed:\n${String(err.message || err)}`);
   }
 });
+
 
     // Inline supervisor resolve with decision attribution
     document.addEventListener("click", async (e)=>{
