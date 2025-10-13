@@ -12,14 +12,12 @@ function normBin(s){
 }
 
 function getJwt(){
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
-  const key = (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
-  if (!email || !key) throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_EMAIL/GOOGLE_PRIVATE_KEY");
-  return new google.auth.JWT(email, null, key, [
-    "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
-  ]);
-}
+  const raw = process.env.GOOGLE_CREDENTIALS_JSON || "";
+  if (!raw) throw new Error("Missing GOOGLE_CREDENTIALS_JSON");
+  const creds = JSON.parse(raw);
+  const key = String(creds.private_key || "").replace(/\r?\n/g, "\n");
+  if (!creds.client_email || !key) throw new Error("Bad GOOGLE_CREDENTIALS_JSON");
+
 const drive = () => google.drive({ version: "v3", auth: getJwt() });
 
 function numLoose(s){
