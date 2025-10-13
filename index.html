@@ -822,7 +822,8 @@ async function logWrongBin(payload) {
 
 async function fetchAuditList() {
   if (CONFIG.FORCE_MOCK) { return mockAudits(); }
-  const res = await fetch(`${CONFIG.AUDIT_ENDPOINT}?user=${encodeURIComponent(userId())}`);
+  const q = new URLSearchParams({ status: "open" });
+const res = await fetch(`${CONFIG.AUDIT_ENDPOINT}?${q.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(await res.text());
     const j = await res.json();
   const audits = j.audits || j.records || [];
