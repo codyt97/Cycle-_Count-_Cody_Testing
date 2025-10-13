@@ -1,25 +1,17 @@
 // api/admin/rebuild-store.js
 //
-// Force-refresh the inventory snapshot from Google Drive into Store (KV).
-// Auth: optional simple token via ?token=... or header X-Admin-Token (set ADMIN_TOKEN env if you want)
+// Force-refresh inventory snapshot from **Google Sheets** into Store (KV).
+// If INVENTORY_SHEET_ID is set, uses Sheets API (recommended).
+// If not, falls back to Drive file download (XLSX/CSV) IF INVENTORY_DRIVE_FILE_ID is set.
 //
-// Required ENVs:
-// - GOOGLE_SERVICE_ACCOUNT_EMAIL
-// - GOOGLE_PRIVATE_KEY   (use "\n" escapes in Vercel)
-// - INVENTORY_DRIVE_FILE_ID  (the Drive file ID of your XLSX/CSV source)
-//
-// Optional ENVs (for KV are already set):
-// - KV_REST_API_URL
-// - KV_REST_API_TOKEN
-//
-// Returns: { ok: true, rows: <int>, meta: {sourceFileId, updatedAt} }
+// Auth (optional): ?token=... or header X-Admin-Token when ADMIN_TOKEN env is set.
 
 const { ok, bad, method, withCORS } = require("../_lib/respond");
 const { google } = require("googleapis");
 const XLSX = require("xlsx");
 const Store = require("../_lib/store");
 
-function reqToken(req) {
+function wantAuth(req) {
   return (
     req?.query?.token ||
     req?.headers?.["x-admin-token"] ||
@@ -27,20 +19,18 @@ function reqToken(req) {
     ""
   );
 }
-
-function requireEnv(name) {
+function need(name) {
   const v = process.env[name] || "";
   if (!v) throw new Error(`Missing required env: ${name}`);
   return v;
 }
-
-async function driveClient() {
-  const email = requireEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL");
-  const key = requireEnv("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n");
-  const auth = new google.auth.JWT(email, null, key, [
+function jwt() {
+  const email = need("GOOGLE_SERVICE_ACCOUNT_EMAIL");
+  const key = need("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n");
+  return new google.auth.JWT(email, null, key, [
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
   ]);
-  return google.drive({ version: "v3", auth });
 }
 
 function normalizeHeader(s) {
@@ -53,113 +43,153 @@ function normalizeHeader(s) {
 }
 
 function postProcessRow(row) {
-  // Normalize common fields used elsewhere in your app
   const out = { ...row };
-  // Try to align a few canonical keys:
   const aliases = {
     bin: ["bin", "location", "bin location", "bin code"],
-    systemImei: ["system imei", "imei", "serial", "serial number", "lotserial", "lot or serial", "lotorserialno"],
-    sku: ["sku", "item", "item no", "item number", "part number"],
-    qty: ["qty", "quantity", "on hand", "qty on hand"],
-    description: ["description", "item description", "product description"],
+    systemImei: [
+      "system imei","imei","imei 1","imei1","esn","meid",
+      "serial","serial no","serial number","lotserial","lot or serial","lotorserialno","lot/serial"
+    ],
+    sku: ["sku","item","item no","item number","part number"],
+    qty: ["qty","quantity","on hand","qty on hand"],
+    description: ["description","item description","product description"],
   };
-  for (const [canon, names] of Object.entries(aliases)) {
+  for (const [canon, keys] of Object.entries(aliases)) {
     if (out[canon] != null) continue;
-    const hit = names.find(n => out[n] != null);
+    const hit = keys.find(k => out[k] != null);
     if (hit) out[canon] = out[hit];
   }
   return out;
 }
 
-async function fetchDriveFile(drive, fileId) {
-  // Get metadata to learn mime/type
-  const meta = await drive.files.get({ fileId, fields: "id, name, mimeType, size" });
-  // Download as binary buffer
-  const res = await drive.files.get(
-    { fileId, alt: "media" },
-    { responseType: "arraybuffer" }
-  );
-  return { meta: meta.data, buffer: Buffer.from(res.data) };
+// ---- Sheets path ----
+async function fetchFromSheet(auth) {
+  const sheets = google.sheets({ version: "v4", auth });
+  const sheetId = process.env.INVENTORY_SHEET_ID || "";
+  if (!sheetId) return null; // signal to try Drive path
+
+  const range = process.env.INVENTORY_SHEET_RANGE || ""; // e.g., "Inventory!A:Z"
+  const req = range ? { spreadsheetId: sheetId, range } : { spreadsheetId: sheetId };
+  const resp = await sheets.spreadsheets.values.get(req).catch(async (e) => {
+    // If no explicit range, get first sheet’s A:Z
+    if (range) throw e;
+    const meta = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
+    const first = meta.data.sheets?.[0]?.properties?.title || "Sheet1";
+    return sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `${first}!A:Z` });
+  });
+
+  const rows = resp.data.values || [];
+  if (!rows.length) return { rows: [], meta: { sourceType: "sheets", sheetId } };
+
+  const [header, ...body] = rows;
+  const keys = header.map(normalizeHeader);
+
+  const list = body.map(r => {
+    const obj = {};
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      if (!k) continue;
+      obj[k] = r[i] ?? "";
+    }
+    return postProcessRow(obj);
+  });
+
+  return {
+    rows: list,
+    meta: {
+      sourceType: "sheets",
+      sheetId,
+      range: range || "(firstSheet!A:Z)",
+      rows: list.length,
+      updatedAt: new Date().toISOString(),
+    },
+  };
 }
 
-function parseTable(buffer, nameHint = "") {
-  // Supports XLSX or CSV
-  // Try workbook; if fails, try CSV
+// ---- Drive file fallback (XLSX/CSV) ----
+async function fetchFromDrive(auth) {
+  const driveFileId =
+    process.env.INVENTORY_DRIVE_FILE_ID ||
+    process.env.GOOGLE_DRIVE_FILE_ID ||
+    process.env.DRIVE_FILE_ID ||
+    "";
+  if (!driveFileId) return null;
+
+  const drive = google.drive({ version: "v3", auth });
+  const meta = await drive.files.get({ fileId: driveFileId, fields: "id,name,mimeType,size" });
+  // Prefer export for Google Sheets files
+  let buffer;
+  if (String(meta.data.mimeType || "").includes("spreadsheet")) {
+    const exp = await drive.files.export(
+      { fileId: driveFileId, mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+      { responseType: "arraybuffer" }
+    );
+    buffer = Buffer.from(exp.data);
+  } else {
+    const res = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "arraybuffer" });
+    buffer = Buffer.from(res.data);
+  }
+
+  // Parse workbook/CSV
+  let list = [];
   try {
     const wb = XLSX.read(buffer, { type: "buffer" });
-    const sheetName =
-      wb.SheetNames.find(n => /inv|stock|export|sheet|items?/i.test(n)) ||
-      wb.SheetNames[0];
+    const sheetName = wb.SheetNames[0];
     const ws = wb.Sheets[sheetName];
-    let rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
-
-    // normalize header keys
-    rows = rows.map(r => {
+    const raw = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    list = raw.map(row => {
       const out = {};
-      for (const [k, v] of Object.entries(r)) {
-        out[normalizeHeader(k)] = v;
-      }
+      for (const [k, v] of Object.entries(row)) out[normalizeHeader(k)] = v;
       return postProcessRow(out);
     });
-    return rows;
-  } catch (e) {
-    // CSV fallback (rare)
+  } catch {
     const txt = buffer.toString("utf8");
-    const lines = txt.split(/\r?\n/);
-    const [hdr, ...rest] = lines.filter(Boolean);
-    const headers = hdr.split(",").map(h => normalizeHeader(h));
-    const rows = rest.map(line => {
+    const lines = txt.split(/\r?\n/).filter(Boolean);
+    const hdr = lines.shift().split(",");
+    const keys = hdr.map(normalizeHeader);
+    list = lines.map(line => {
       const cells = line.split(",");
       const obj = {};
-      headers.forEach((h, i) => (obj[h] = (cells[i] ?? "").trim()));
+      keys.forEach((k, i) => (obj[k] = (cells[i] ?? "").trim()));
       return postProcessRow(obj);
     });
-    return rows;
   }
+
+  return {
+    rows: list,
+    meta: {
+      sourceType: "drive",
+      fileId: meta.data.id,
+      fileName: meta.data.name,
+      rows: list.length,
+      updatedAt: new Date().toISOString(),
+    },
+  };
 }
 
 async function handler(req, res) {
   try {
-    if (req.method !== "POST" && req.method !== "GET") {
-      return method(res, ["GET", "POST"]);
+    if (req.method !== "GET" && req.method !== "POST") return method(res, ["GET", "POST"]);
+
+    // Optional simple token
+    if (process.env.ADMIN_TOKEN) {
+      const t = wantAuth(req);
+      if (t !== process.env.ADMIN_TOKEN) return bad(res, 401, { ok: false, error: "Unauthorized" });
     }
 
-    // Optional simple protection
-    const expected = process.env.ADMIN_TOKEN || "";
-    if (expected) {
-      const token = reqToken(req);
-      if (token !== expected) {
-        return bad(res, 401, { ok: false, error: "Unauthorized" });
-      }
+    const auth = await jwt();
+
+    // Prefer Sheets, then Drive
+    let payload = await fetchFromSheet(auth);
+    if (!payload) payload = await fetchFromDrive(auth);
+    if (!payload) {
+      return bad(res, 400, { ok: false, error: "Set INVENTORY_SHEET_ID (preferred) or INVENTORY_DRIVE_FILE_ID." });
     }
 
-    const fileId =
-      process.env.INVENTORY_DRIVE_FILE_ID ||
-      process.env.GOOGLE_DRIVE_FILE_ID ||
-      process.env.DRIVE_FILE_ID ||
-      "";
+    await Store.setInventory(payload.rows);
+    const meta = await Store.setInventoryMeta(payload.meta);
 
-    if (!fileId) {
-      return bad(res, 400, {
-        ok: false,
-        error:
-          "Missing INVENTORY_DRIVE_FILE_ID (or GOOGLE_DRIVE_FILE_ID/DRIVE_FILE_ID) env.",
-      });
-    }
-
-    const drive = await driveClient();
-    const { meta, buffer } = await fetchDriveFile(drive, fileId);
-    const rows = parseTable(buffer, meta?.name);
-    const count = rows.length;
-
-    await Store.setInventory(rows);
-    const savedMeta = await Store.setInventoryMeta({
-      sourceFileId: meta?.id || fileId,
-      sourceName: meta?.name || "",
-      sourceSize: meta?.size || 0,
-    });
-
-    return ok(res, { ok: true, rows: count, meta: savedMeta });
+    return ok(res, { ok: true, rows: payload.rows.length, meta });
   } catch (e) {
     console.error("[rebuild-store] error", e?.message || e);
     return bad(res, 500, { ok: false, error: String(e?.message || e) });
