@@ -849,17 +849,18 @@ async function fetchSummary(){
 
 async function fetchNotScanned() {
   if (CONFIG.FORCE_MOCK) return [];
-  const res = await fetch(
-    `${CONFIG.NOT_SCANNED_ENDPOINT}?user=${encodeURIComponent(userId())}`,
-    { cache:"no-store" }
-  );
+  // Prefer an investigator-selected bin; fall back to currentBin if set
+  const bin = (typeof investSelectedBin !== "undefined" && investSelectedBin) ? investSelectedBin : (currentBin || "");
+  const q = new URLSearchParams({ user: userId(), ...(bin ? { bin } : {}) });
+  const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}?${q.toString()}`, { cache:"no-store" });
   if (!res.ok) throw new Error(await res.text());
   const j = await res.json();
   const items = j.items || j.records || [];
   return Array.isArray(items) ? items : [];
 }
 
-// --- Investigator: render Not-Scanned ---
+
+
 // --- Investigator: render Not-Scanned ---
 async function renderInvestigatorNotScanned(){
   const tbody = document.getElementById("invNotScannedBody");
@@ -882,20 +883,19 @@ async function renderInvestigatorNotScanned(){
       }
 
       const invCell = isSerial
-  ? `<input class="field mono" placeholder="scan IMEI"
-            data-invscan="${escapeHTML(row.systemImei)}"
-            data-bin="${escapeHTML(row.bin || "")}"
-            style="width:160px" />`
-  : ``;
+        ? `<input class="field mono" placeholder="scan IMEI"
+                  data-invscan="${escapeHTML(row.systemImei)}"
+                  data-bin="${escapeHTML(row.bin || "")}"
+                  style="width:160px" />`
+        : ``;
 
-const qtyCell = isSerial ? `` : `
-  <input class="field mono" placeholder="enter qty"
-         data-nonserial
-         data-sku="${escapeHTML(row.sku || "")}"
-         data-bin="${escapeHTML(row.bin || "")}"
-         value="${ent}" style="width:120px" />
-`;
-
+      const qtyCell = isSerial ? `` : `
+        <input class="field mono" placeholder="enter qty"
+               data-nonserial
+               data-sku="${escapeHTML(row.sku || "")}"
+               data-bin="${escapeHTML(row.bin || "")}"
+               value="${ent}" style="width:120px" />
+      `;
 
       const remaining = isSerial ? ent : Math.max(0, sys - ent);
 
@@ -918,13 +918,14 @@ const qtyCell = isSerial ? `` : `
 
 
 
+
 // Investigator “scan” of a missing serial IMEI → clear from list
 document.addEventListener("keydown", async (e)=>{
   const el = e.target.closest("[data-invscan]");
   if (!el || e.key !== "Enter") return;
   const sys = el.getAttribute("data-invscan");
-const bin = el.getAttribute("data-bin") || "";
-const body = { user: userId(), bin, type:"serial", systemImei: sys };
+  const bin = el.getAttribute("data-bin") || (currentBin || "");
+  const body = { user: userId(), bin, type:"serial", systemImei: sys };
 
   try{
     const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}`, {
@@ -1387,6 +1388,24 @@ async function refreshInvestigator(){
             </tr>
           `;
         }).join("");
+      // Which bin’s not-scanned list we’re viewing
+let investSelectedBin = "";
+
+// Click a Bin Status row to select that bin and reload Not-Scanned
+document.getElementById("investBody")?.addEventListener("click", (e) => {
+  const tr = e.target.closest("tr");
+  if (!tr) return;
+  const binCell = tr.querySelector("td"); // first column is Bin
+  const bin = binCell ? binCell.textContent.trim() : "";
+  if (!bin) return;
+
+  investSelectedBin = bin;
+  renderInvestigatorNotScanned();
+
+  // optional highlight
+  [...document.querySelectorAll("#investBody tr")].forEach(r => r.classList.remove("ok"));
+  tr.classList.add("ok");
+});
 
     // 3) Wrong-bin (hide resolved)
     const wrongOpen = (Array.isArray(wrong) ? wrong : []).filter(w => (w.status||"open") !== "resolved");
