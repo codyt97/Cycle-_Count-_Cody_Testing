@@ -14,7 +14,7 @@ function getJwt() {
     "https://www.googleapis.com/auth/drive.readonly",
   ]);
 }
- 
+
 function getSheets() {
   const auth = getJwt();
   return google.sheets({ version: "v4", auth });
