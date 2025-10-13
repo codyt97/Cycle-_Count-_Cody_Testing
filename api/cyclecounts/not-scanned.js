@@ -33,7 +33,7 @@ async function readTabObjects(spreadsheetId, tabName) {
   });
 }
 
-async function handleDelete(req, res){
+async function handleDelete(req, res) {
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
     let bin       = norm(body.bin || req.query?.bin || "");
