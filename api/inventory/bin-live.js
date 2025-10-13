@@ -9,7 +9,7 @@ function normBin(s){
   return String(s || "")
     .replace(/\u2013|\u2014/g,"-")
     .replace(/\s+/g," ").trim().toUpperCase();
-}
+} 
 
 function getJwt(){
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
