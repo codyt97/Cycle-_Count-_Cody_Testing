@@ -882,14 +882,20 @@ async function renderInvestigatorNotScanned(){
       }
 
       const invCell = isSerial
-        ? `<input class="field mono" placeholder="scan IMEI" data-invscan="${escapeHTML(row.systemImei)}" style="width:160px" />`
-        : ``;
+  ? `<input class="field mono" placeholder="scan IMEI"
+            data-invscan="${escapeHTML(row.systemImei)}"
+            data-bin="${escapeHTML(row.bin || "")}"
+            style="width:160px" />`
+  : ``;
 
-      const qtyCell = isSerial ? `` : `
-        <input class="field mono" placeholder="enter qty"
-               data-nonserial data-sku="${escapeHTML(row.sku || "")}"
-               value="${ent}" style="width:120px" />
-      `;
+const qtyCell = isSerial ? `` : `
+  <input class="field mono" placeholder="enter qty"
+         data-nonserial
+         data-sku="${escapeHTML(row.sku || "")}"
+         data-bin="${escapeHTML(row.bin || "")}"
+         value="${ent}" style="width:120px" />
+`;
+
 
       const remaining = isSerial ? ent : Math.max(0, sys - ent);
 
@@ -917,7 +923,9 @@ document.addEventListener("keydown", async (e)=>{
   const el = e.target.closest("[data-invscan]");
   if (!el || e.key !== "Enter") return;
   const sys = el.getAttribute("data-invscan");
-  const body = { user: userId(), bin: (currentBin || ""), type:"serial", systemImei: sys };
+const bin = el.getAttribute("data-bin") || "";
+const body = { user: userId(), bin, type:"serial", systemImei: sys };
+
   try{
     const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}`, {
       method:"DELETE",
@@ -941,14 +949,15 @@ document.addEventListener("keydown", async (e) => {
   if (!el || e.key !== 'Enter') return;
 
   const sku = el.getAttribute('data-sku') || '';
-  const qtyEntered = Number(el.value || 0);
+const bin = el.getAttribute('data-bin') || '';
+const qtyEntered = Number(el.value || 0);
 
-  try {
-    const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}`, {
+const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}`, {
   method: 'DELETE',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ user: userId(), bin: (currentBin || ''), sku, qtyEntered })
+  body: JSON.stringify({ user: userId(), bin, sku, qtyEntered })
 });
+
 
     if (!res.ok) throw new Error(await res.text());
 
