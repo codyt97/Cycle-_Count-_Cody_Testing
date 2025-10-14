@@ -75,17 +75,20 @@ async function handleGet(req, res) {
 async function handleDelete(req, res) {
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-let bin  = norm(body.bin || req.query?.bin || "");  // let (we may fill it)
-const imei = norm(body.systemImei || body.imei || req.query?.imei || "");
-const sku  = norm(body.sku || req.query?.sku || "");
-...
-if (!imei && !sku) return bad(res, "systemImei or sku is required", 400);
-if (!bin && imei) {
-  const all = await Store.listBins();
-  const hit = (all || []).find(x => (x.items || []).some(it => String(it.systemImei || "").trim() === imei));
-  bin = hit?.bin || "";
-}
-if (!bin) return bad(res, "bin is required", 400);
+    let bin     = norm(body.bin || req.query?.bin || "");  // let (we may fill it)
+    const imei  = norm(body.systemImei || body.imei || req.query?.imei || "");
+    const sku   = norm(body.sku || req.query?.sku || "");
+    const user  = norm(body.user || req.query?.user || "");
+    const entered = Number(body.qtyEntered ?? req.query?.qtyEntered ?? 0);
+
+    if (!imei && !sku) return bad(res, "systemImei or sku is required", 400);
+    if (!bin && imei) {
+      const all = await Store.listBins();
+      const hit = (all || []).find(x => (x.items || []).some(it => String(it.systemImei || "").trim() === imei));
+      bin = hit?.bin || "";
+    }
+    if (!bin) return bad(res, "bin is required", 400);
+
 
 
 
