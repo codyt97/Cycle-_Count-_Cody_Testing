@@ -797,6 +797,11 @@ const res = await fetch(
 
 
     if (!res.ok) throw new Error(await res.text());
+    pendingWrongBin.length = 0;
+showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
+document.getElementById("tab2")?.click();       // jump to Investigator
+refreshInvestigator().catch(()=>{});            // refresh in background (do NOT await)
+
     const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
     return data || null;
   }catch(e){
