@@ -6,7 +6,7 @@ const Store = require("../_lib/store");
 
 // tiny per-instance cache to smooth bursts (optional)
 let cache = { at: 0, payload: null };
-const TTL_MS = 30_000; // 30s
+const TTL_MS = 3000; // 30s
 
 function toEST(s){
   if (!s) return "—";
@@ -105,9 +105,11 @@ module.exports = async (req,res) => {
 
   try {
     // 1) serve from short cache to absorb bursts
-    if (cache.payload && (Date.now() - cache.at) < TTL_MS) {
-      return ok(res, { records: cache.payload });
-    }
+    const noCache = String(req.headers["x-no-cache"] || "").toLowerCase() === "1";
+if (!noCache && cache.payload && (Date.now() - cache.at) < TTL_MS) {
+  return ok(res, { records: cache.payload });
+}
+
 
     // 2) try Store first (no Sheets quota)
     const storeBins = await Store.listBins(); // returns [] if empty
