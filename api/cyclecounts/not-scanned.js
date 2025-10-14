@@ -75,14 +75,27 @@ async function handleGet(req, res) {
 async function handleDelete(req, res) {
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-    const bin       = norm(body.bin || req.query?.bin || "");
-    const imei      = norm(body.systemImei || body.imei || req.query?.imei || "");
-    const sku       = norm(body.sku || req.query?.sku || "");
-    const entered   = Number(body.qtyEntered != null ? body.qtyEntered : req.query?.qtyEntered) || 0;
-    const user      = norm(body.user || body.counter || req.query?.user || "");
+let bin     = norm(body.bin || req.query?.bin || "");     // <-- note: 'let' so we can fill it
+const imei  = norm(body.systemImei || body.imei || req.query?.imei || "");
+const sku   = norm(body.sku || req.query?.sku || "");
+const entered = Number(body.qtyEntered != null ? body.qtyEntered : req.query?.qtyEntered) || 0;
+const user    = norm(body.user || body.counter || req.query?.user || "");
 
-    if (!bin) return bad(res, "bin is required", 400);
-    if (!imei && !sku) return bad(res, "systemImei or sku is required", 400);
+// must have at least imei or sku
+if (!imei && !sku) return bad(res, "systemImei or sku is required", 400);
+
+// infer bin by IMEI if caller didn’t send bin
+if (!bin && imei) {
+  const all = await Store.listBins();
+  const hit = (all || []).find(x =>
+    (x.items || []).some(it => String(it.systemImei || "").trim() === imei)
+  );
+  bin = hit?.bin || "";
+}
+
+// still no bin? bail with same error
+if (!bin) return bad(res, "bin is required", 400);
+
 
     const updated = await Store.upsertBin(bin, (b) => {
       const items = Array.isArray(b.items) ? [...b.items] : [];
