@@ -1062,6 +1062,8 @@ showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitte
 document.getElementById("tab2")?.click();
 await refreshInvestigator();
 
+          pendingWrongBin.length = 0;
+
         }
         pendingWrongBin.length = 0;
 showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
@@ -1593,10 +1595,13 @@ function playFail(){document.getElementById("snd-bad")?.play().catch(()=>{}); }
 
   </script>
   
- <audio id="snd-ok"  preload="auto"><source src="/sounds/ok.mp3"  type="audio/mpeg"></audio>
- <audio id="snd-bad" preload="auto"><source src="/sounds/bad.mp3" type="audio/mpeg"></audio>
- function playOk(){  document.getElementById("snd-ok")?.play().catch(()=>{}); }
- function playFail(){document.getElementById("snd-bad")?.play().catch(()=>{}); }
+ <audio id="snd-ok"  preload="auto">
+  <source src="/sounds/ok.mp3"  type="audio/mpeg">
+</audio>
+<audio id="snd-bad" preload="auto">
+  <source src="/sounds/bad.mp3" type="audio/mpeg">
+</audio>
+ }
 
 </body>
 </html>
