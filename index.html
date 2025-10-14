@@ -797,6 +797,12 @@ const res = await fetch(
 
 
 if (!res.ok) throw new Error(await res.text());
+// instant feedback + switch to Investigator
+showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
+document.getElementById("tab2")?.click();
+// background refresh (do NOT await)
+refreshInvestigator().catch(()=>{});
+
 const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
 return data || null;
 
@@ -1051,7 +1057,11 @@ const payload = {
 
       try{
         if (!CONFIG.FORCE_MOCK){
-const res = await fetch(`${CONFIG.SUBMIT_BIN_ENDPOINT}?user=${encodeURIComponent(userId())}`, {
+const res = await fetch(`${CONFIG.SUMMARY_ENDPOINT}?user=${encodeURIComponent(userId())}`, {
+  headers: { "x-no-cache": "1" },
+  cache: "no-store"
+});
+ {
   method:"POST",
   headers:{"Content-Type":"application/json"},
   body: JSON.stringify({ user: userId(), ...payload })
