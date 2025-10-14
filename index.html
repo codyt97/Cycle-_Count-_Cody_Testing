@@ -1059,7 +1059,15 @@ const res = await fetch(`${CONFIG.SUBMIT_BIN_ENDPOINT}?user=${encodeURIComponent
   headers:{"Content-Type":"application/json"},
   body: JSON.stringify({ user: userId(), ...payload })
 });
-
+   
+      if (pendingWrongBin.length) {
+  await fetch("/api/audit/wrong-bin", {
+    method: "POST",
+    headers: { "Content-Type":"application/json" },
+    body: JSON.stringify({ items: pendingWrongBin, user: userId(), bin: currentBin })
+  }).catch(()=>{});
+  pendingWrongBin.length = 0;
+}
 
           if (!res.ok) throw new Error(await res.text());
           pendingWrongBin.length = 0;
