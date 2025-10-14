@@ -798,10 +798,8 @@ const res = await fetch(
 
 if (!res.ok) throw new Error(await res.text());
 const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
+return data || null;
 
-
-    const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
-    return data || null;
   }catch(e){
     showAlerts(alerts,[{type:"warn",msg:`IMEI lookup failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
     return null;
