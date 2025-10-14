@@ -1065,6 +1065,10 @@ showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitte
         showAlerts(alerts,[{type:"warn",msg:`Submit failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
       }
     }
+    showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
+    document.getElementById("tab2")?.click();        // switch to Investigator tab
+await refreshInvestigator();                      // and refresh tables
+
 
 async function escalateBinToSupervisor(bin){
   try{
@@ -1259,6 +1263,7 @@ scanned.add(imei);
 
 
 showAlerts(alerts,[{type:"ok",msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.`}]);
+playOk();
 renderTable(); scanInput.value=""; return;
 
       }
@@ -1277,8 +1282,11 @@ if (info && info.location){
   });
   const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>. (Will be logged on Submit)`;
   showAlerts(alerts,[{type:"warn",msg}]);
+  playFail();
 } else {
   showAlerts(alerts,[{type:"warn",msg:`IMEI <b>${escapeHTML(imei)}</b> not found in snapshot.`}]);
+  playFail();
+
 }
 scanInput.value="";
 
@@ -1577,6 +1585,12 @@ document.addEventListener("click", async (e)=>{
       if (authOverlay.style.display === "none"){ binInput?.focus(); }
     }
     init();
+    function playOk(){  document.getElementById("snd-ok")?.play().catch(()=>{}); }
+function playFail(){document.getElementById("snd-bad")?.play().catch(()=>{}); }
+
   </script>
+ <audio id="snd-ok"  preload="auto"><source src="/sounds/ok.mp3"  type="audio/mpeg"></audio>
+<audio id="snd-bad" preload="auto"><source src="/sounds/bad.mp3" type="audio/mpeg"></audio>
+ 
 </body>
 </html>
