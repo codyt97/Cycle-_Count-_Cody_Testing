@@ -796,11 +796,9 @@ const res = await fetch(
 );
 
 
-    if (!res.ok) throw new Error(await res.text());
-    pendingWrongBin.length = 0;
-showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
-document.getElementById("tab2")?.click();       // jump to Investigator
-refreshInvestigator().catch(()=>{});            // refresh in background (do NOT await)
+if (!res.ok) throw new Error(await res.text());
+const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
+
 
     const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
     return data || null;
@@ -1070,8 +1068,18 @@ const res = await fetch(`${CONFIG.SUBMIT_BIN_ENDPOINT}?user=${encodeURIComponent
   pendingWrongBin.length = 0;
 }
 
-          if (!res.ok) throw new Error(await res.text());
-const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
+if (!res.ok) throw new Error(await res.text());
+
+// instant feedback + switch to Investigator
+showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
+document.getElementById("tab2")?.click();
+
+// refresh Investigator without waiting on it
+refreshInvestigator().catch(()=>{});
+
+// optional: still read response if you need it later
+const data = await res.json();
+
 
 
         }
@@ -1609,7 +1617,8 @@ function playFail(){document.getElementById("snd-bad")?.play().catch(()=>{}); }
 
   </script>
   
-<audio id="snd-ok"  preload="auto"><source src="/sounds/ok.mp3"  type="audio/mpeg"></audio>
-<audio id="snd-bad" preload="auto"><source src="/sounds/bad.mp3" type="audio/mpeg"></audio>
+<audio id="snd-ok"  src="/sounds/ok.mp3"  preload="auto"></audio>
+<audio id="snd-bad" src="/sounds/bad.mp3" preload="auto"></audio>
+
 </body>
 </html>
