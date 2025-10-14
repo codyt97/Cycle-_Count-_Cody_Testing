@@ -797,14 +797,9 @@ const res = await fetch(
 
 
 if (!res.ok) throw new Error(await res.text());
-// instant feedback + switch to Investigator
-showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
-document.getElementById("tab2")?.click();
-// background refresh (do NOT await)
-refreshInvestigator().catch(()=>{});
-
 const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
 return data || null;
+
 
   }catch(e){
     showAlerts(alerts,[{type:"warn",msg:`IMEI lookup failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
@@ -1082,17 +1077,19 @@ const payload = {
 
       try{
         if (!CONFIG.FORCE_MOCK){
-const res = await fetch(`${CONFIG.SUMMARY_ENDPOINT}?user=${encodeURIComponent(userId())}`, {
-  headers: { "x-no-cache": "1" },
-  cache: "no-store"
-});
- {
+const res = await fetch(`${CONFIG.SUBMIT_BIN_ENDPOINT}?user=${encodeURIComponent(userId())}`, {
   method:"POST",
   headers:{"Content-Type":"application/json"},
   body: JSON.stringify({ user: userId(), ...payload })
 });
-   
-      if (pendingWrongBin.length) {
+if (!res.ok) throw new Error(await res.text());
+
+// show feedback immediately and switch to Investigator
+showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
+document.getElementById("tab2")?.click();
+
+// (optional) post buffered wrong-bin audits once; don't block UI if it fails
+if (pendingWrongBin.length) {
   await fetch("/api/audit/wrong-bin", {
     method: "POST",
     headers: { "Content-Type":"application/json" },
@@ -1101,17 +1098,12 @@ const res = await fetch(`${CONFIG.SUMMARY_ENDPOINT}?user=${encodeURIComponent(us
   pendingWrongBin.length = 0;
 }
 
-if (!res.ok) throw new Error(await res.text());
-
-// instant feedback + switch to Investigator
-showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
-document.getElementById("tab2")?.click();
-
 // refresh Investigator without waiting on it
 refreshInvestigator().catch(()=>{});
 
-// optional: still read response if you need it later
-const data = await res.json();
+// (optional) still read submit response if needed
+// const data = await res.json();
+
 
 
 
