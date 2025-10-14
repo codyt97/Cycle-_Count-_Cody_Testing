@@ -866,9 +866,10 @@ async function patchAudit(id, payload){
 async function fetchSummary(){
   if (CONFIG.FORCE_MOCK) return mockSummary();
   const res = await fetch(
-    `${CONFIG.SUMMARY_ENDPOINT}?user=${encodeURIComponent(userId())}`,
-    { cache:"no-store" }
-  );
+  `${CONFIG.SUMMARY_ENDPOINT}?user=${encodeURIComponent(userId())}`,
+  { cache:"no-store", headers: { "x-no-cache": "1" } }
+);
+
   if (!res.ok) throw new Error(await res.text());
   const j = await res.json();
   const rows = j.records || j.bins || [];
@@ -1070,10 +1071,8 @@ const res = await fetch(`${CONFIG.SUBMIT_BIN_ENDPOINT}?user=${encodeURIComponent
 }
 
           if (!res.ok) throw new Error(await res.text());
-          pendingWrongBin.length = 0;
-showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
-document.getElementById("tab2")?.click();
-await refreshInvestigator();
+const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
+
 
         }
 
