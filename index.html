@@ -894,6 +894,31 @@ async function fetchNotScanned() {
 
 
 
+function renderInvestigatorWrongImeis(items) {
+  const tb = document.getElementById("investWrongBinBody");
+  if (!tb) return;
+  if (!Array.isArray(items) || !items.length) {
+    tb.innerHTML = `<tr><td colspan="8" class="empty">No wrong-bin items.</td></tr>`;
+    return;
+  }
+  tb.innerHTML = items.map(it => `
+    <tr>
+      <td class="mono">${escapeHTML(it.imei || "")}</td>
+      <td>${escapeHTML(it.scannedBin || "")}</td>
+      <td>${escapeHTML(it.trueLocation || it.expectedBin || "")}</td>
+      <td><span class="badge">${escapeHTML(it.status || "open")}</span></td>
+      <td>${it.status==="moved" ? "Yes" : "No"}</td>
+      <td class="mono">${escapeHTML(it.movedTo || "")}</td>
+      <td>${escapeHTML(it.movedBy || "")}</td>
+      <td class="row-sm">
+        ${it.status==="resolved" ? "" : `
+          <button class="btn primary sm" data-move="${escapeHTML(it.id || it._id || "")}">Yes</button>
+          <button class="btn ghost sm" data-notmove="${escapeHTML(it.id || it._id || "")}">No</button>
+        `}
+      </td>
+    </tr>
+  `).join("");
+}
 
 
 // --- Investigator: render Not-Scanned ---
