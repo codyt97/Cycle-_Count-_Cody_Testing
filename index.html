@@ -1057,6 +1057,11 @@ const res = await fetch(`${CONFIG.SUBMIT_BIN_ENDPOINT}?user=${encodeURIComponent
 
 
           if (!res.ok) throw new Error(await res.text());
+          pendingWrongBin.length = 0;
+showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
+document.getElementById("tab2")?.click();
+await refreshInvestigator();
+
         }
         pendingWrongBin.length = 0;
 showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
@@ -1065,9 +1070,7 @@ showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitte
         showAlerts(alerts,[{type:"warn",msg:`Submit failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
       }
     }
-    showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
-    document.getElementById("tab2")?.click();        // switch to Investigator tab
-await refreshInvestigator();                      // and refresh tables
+  
 
 
 async function escalateBinToSupervisor(bin){
@@ -1589,8 +1592,11 @@ document.addEventListener("click", async (e)=>{
 function playFail(){document.getElementById("snd-bad")?.play().catch(()=>{}); }
 
   </script>
+  
  <audio id="snd-ok"  preload="auto"><source src="/sounds/ok.mp3"  type="audio/mpeg"></audio>
-<audio id="snd-bad" preload="auto"><source src="/sounds/bad.mp3" type="audio/mpeg"></audio>
- 
+ <audio id="snd-bad" preload="auto"><source src="/sounds/bad.mp3" type="audio/mpeg"></audio>
+ function playOk(){  document.getElementById("snd-ok")?.play().catch(()=>{}); }
+ function playFail(){document.getElementById("snd-bad")?.play().catch(()=>{}); }
+
 </body>
 </html>
