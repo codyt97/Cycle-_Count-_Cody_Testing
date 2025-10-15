@@ -782,30 +782,30 @@ return {
 
     }
 
-    async function locateImei(imei){
-  try{
-    if (CONFIG.FORCE_MOCK) return mockLocate(imei, currentBin || "K-01-01");
+async function locateImei(imei){
+  try {
     const params = new URLSearchParams({
-  user: userId(),
-  scannedBin: currentBin || "",
-  scannedBy: currentUser?.name || "—",
-});
-const res = await fetch(
-  `${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${params.toString()}`,
-  { cache:"no-store" }
-);
+      user: userId(),
+      scannedBin: currentBin || "",
+      scannedBy: currentUser?.name || "—",
+    });
 
+    const res = await fetch(
+      `${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${params.toString()}`,
+      { cache:"no-store" }
+    );
+    if (!res.ok) throw new Error(await res.text());
 
-if (!res.ok) throw new Error(await res.text());
-const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
-return data || null;
-
-
-  }catch(e){
-    showAlerts(alerts,[{type:"warn",msg:`IMEI lookup failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
+    const data = await res.json(); // includes expectedBin or location
+    // Normalize for both possible field names
+    if (data && !data.location && data.expectedBin) data.location = data.expectedBin;
+    return data || null;
+  } catch(e) {
+    showAlerts(alerts,[{type:"warn",msg:`IMEI lookup failed: ${escapeHTML(String(e.message||e))}`}]);
     return null;
   }
 }
+
 
 
 async function logWrongBin(payload) {
@@ -1336,10 +1336,15 @@ if (info && info.location){
   showAlerts(alerts,[{type:"warn",msg}]);
   playFail();
 } else {
-  showAlerts(alerts,[{type:"warn",msg:`IMEI <b>${escapeHTML(imei)}</b> not found in snapshot.`}]);
+  } else if (info && (info.location || info.expectedBin)) {
+  const loc = info.location || info.expectedBin;
+  showAlerts(alerts,[{type:"warn",msg:`Wrong bin: IMEI <b>${escapeHTML(imei)}</b> belongs in <b>${escapeHTML(loc)}</b>.`}]);
   playFail();
-
+} else {
+  showAlerts(alerts,[{type:"warn",msg:`IMEI <b>${escapeHTML(imei)}</b> not found anywhere in snapshot.`}]);
+  playFail();
 }
+
 scanInput.value="";
 
 
