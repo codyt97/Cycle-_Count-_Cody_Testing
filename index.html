@@ -782,18 +782,11 @@ return {
 
     }
 
-    async function locateImei(imei){
-  try{
-    if (CONFIG.FORCE_MOCK) return mockLocate(imei, currentBin || "K-01-01");
-    const params = new URLSearchParams({
-  user: userId(),
-  scannedBin: currentBin || "",
-  scannedBy: currentUser?.name || "—",
-});
-const res = await fetch(
-  `${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${params.toString()}`,
-  { cache:"no-store" }
-);
+const data = await res.json(); // {found, location, expectedBin, auditLogged?} (server adds these)
+if (data && !data.location && data.expectedBin) data.location = data.expectedBin;
+if (data && typeof data.found === "undefined") data.found = !!(data.location && String(data.location).trim());
+return data || null;
+
 
 
 if (!res.ok) throw new Error(await res.text());
@@ -1343,7 +1336,7 @@ if (loc) {
     ts: new Date().toISOString()
   });
 
-  const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> belongs in <b>${escapeHTML(loc)}</b>. (Will be logged on Submit)`;
+  const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> belongs in <b>${escapeHTML(loc)}</b>. (Logged)`;
   showAlerts(alerts, [{ type: "warn", msg }]);
   playFail();
 } else {
