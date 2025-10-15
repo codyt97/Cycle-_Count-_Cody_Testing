@@ -782,23 +782,42 @@ return {
 
     }
 
+async function locateImei(imei){
+  try{
+    if (CONFIG.FORCE_MOCK) return mockLocate(imei, currentBin || "K-01-01");
+
+    const params = new URLSearchParams({
+      user: (currentUser?.username || currentUser?.name || "anon").toLowerCase(),
+      scannedBin: currentBin || "",
+      scannedBy: currentUser?.name || "—",
+    });
+
+    const res = await fetch(
+      `${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${params.toString()}`,
+      { cache:"no-store" }
+    );
+    if (!res.ok) throw new Error(await res.text());
+
+    const data = await res.json(); // { found?, location?, expectedBin?, auditLogged? ... }
+    // Normalize – accept either `location` or `expectedBin`
+    if (data && !data.location && data.expectedBin) data.location = data.expectedBin;
+    if (data && typeof data.found === "undefined") {
+      data.found = !!(data.location && String(data.location).trim());
+    }
+    return data || null;
+  }catch(e){
+    showAlerts(alerts,[{type:"warn",
+      msg:`IMEI lookup failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
+    return null;
+  }
+}
+
+
 //const data = await res.json(); // {found, location, expectedBin, auditLogged?} (server adds these)
-if (data && !data.location && data.expectedBin) data.location = data.expectedBin;
-if (data && typeof data.found === "undefined") data.found = !!(data.location && String(data.location).trim());
-return data || null;
 
 
 
-//if (!res.ok) throw new Error(await res.text());
-const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
-return data || null;
-    // Normalize for older/newer server responses
-if (data && !data.location && data.expectedBin) {
-  data.location = data.expectedBin;
-}
-if (data && typeof data.found === "undefined") {
-  data.found = !!(data.location && String(data.location).trim());
-}
+
 
 
 
