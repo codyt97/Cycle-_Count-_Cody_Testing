@@ -799,6 +799,14 @@ const res = await fetch(
 if (!res.ok) throw new Error(await res.text());
 const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
 return data || null;
+    // Normalize for older/newer server responses
+if (data && !data.location && data.expectedBin) {
+  data.location = data.expectedBin;
+}
+if (data && typeof data.found === "undefined") {
+  data.found = !!(data.location && String(data.location).trim());
+}
+
 
 
   }catch(e){
@@ -1323,23 +1331,26 @@ renderTable(); scanInput.value=""; return;
       // Not in current bin -> ask inventory API for true location (it also auto-logs audit)
 // Not in current bin -> ask inventory API for true location (no server audit yet; we buffer)
 const info = await locateImei(imei);
-if (info && info.location){
+const loc = info && (info.location || info.expectedBin) ? (info.location || info.expectedBin) : "";
+
+if (loc) {
   pendingWrongBin.push({
     imei,
     scannedBin: currentBin || "",
-    trueLocation: info.location,
+    trueLocation: loc,
     status: "open",
     scannedBy: currentUser?.name || "—",
     ts: new Date().toISOString()
   });
-  const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>. (Will be logged on Submit)`;
-  showAlerts(alerts,[{type:"warn",msg}]);
+
+  const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> belongs in <b>${escapeHTML(loc)}</b>. (Will be logged on Submit)`;
+  showAlerts(alerts, [{ type: "warn", msg }]);
   playFail();
 } else {
-  showAlerts(alerts,[{type:"warn",msg:`IMEI <b>${escapeHTML(imei)}</b> not found in snapshot.`}]);
+  showAlerts(alerts, [{ type: "warn", msg: `IMEI <b>${escapeHTML(imei)}</b> not found in snapshot.` }]);
   playFail();
-
 }
+
 scanInput.value="";
 
 
