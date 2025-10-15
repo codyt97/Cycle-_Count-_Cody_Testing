@@ -54,7 +54,19 @@ module.exports = async (req, res) => {
       } catch (e) { console.error("[imei] audit append fail:", e?.message || e); }
     }
 
-    return ok(res, { ok: true, match: matched, imei, scannedBin, expectedBin });
+    // Back-compat + normalized fields the UI expects
+const found = !!expectedBin;
+return ok(res, {
+  ok: true,
+  match: matched,
+  imei,
+  scannedBin,
+  expectedBin,
+  // New normalized fields:
+  found,
+  location: expectedBin || ""
+});
+
   } catch (e) {
     console.error("[imei] fail:", e);
     return bad(res, e?.message || String(e), 500);
