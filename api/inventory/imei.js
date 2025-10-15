@@ -39,20 +39,32 @@ module.exports = async (req, res) => {
       return { ...b, items, updatedAt: nowISO() };
     });
 
-    // If not matched, find true bin so UI can show it
-    let expectedBin = "";
-    if (!matched) {
-      const all = await Store.listBins();
-      const hit = (all || []).find(x => (x.items || []).some(it => clean(it.systemImei) === imei));
-      expectedBin = hit?.bin || "";
-      try {
-        if (process.env.LOGS_SHEET_ID) {
-          await appendRow(process.env.LOGS_SHEET_ID, "WrongBin", [
-            nowISO(), imei, scannedBin, expectedBin || "—", scannedBy || "—"
-          ]);
-        }
-      } catch (e) { console.error("[imei] audit append fail:", e?.message || e); }
+// If not matched, find true bin so UI can show it (robust across fields)
+let expectedBin = "";
+if (!matched) {
+  const DIGITS = s => String(s ?? "").replace(/\D+/g, "").trim(); // keep digits only
+  const target = DIGITS(imei);
+  const all = await Store.listBins();
+
+  const hit = (all || []).find(bin =>
+    (bin.items || []).some(it => {
+      const a = DIGITS(it.systemImei);
+      const b = DIGITS(it.imei);
+      const c = DIGITS(it.serial);
+      return (a && a === target) || (b && b === target) || (c && c === target);
+    })
+  );
+
+  expectedBin = hit?.bin || "";
+  try {
+    if (process.env.LOGS_SHEET_ID) {
+      await appendRow(process.env.LOGS_SHEET_ID, "WrongBin", [
+        nowISO(), imei, scannedBin, expectedBin || "—", scannedBy || "—"
+      ]);
     }
+  } catch (e) { console.error("[imei] audit append fail:", e?.message || e); }
+}
+
 
     // Back-compat + normalized fields the UI expects
 const found = !!expectedBin;
