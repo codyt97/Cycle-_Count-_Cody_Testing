@@ -782,14 +782,14 @@ return {
 
     }
 
-const data = await res.json(); // {found, location, expectedBin, auditLogged?} (server adds these)
+//const data = await res.json(); // {found, location, expectedBin, auditLogged?} (server adds these)
 if (data && !data.location && data.expectedBin) data.location = data.expectedBin;
 if (data && typeof data.found === "undefined") data.found = !!(data.location && String(data.location).trim());
 return data || null;
 
 
 
-if (!res.ok) throw new Error(await res.text());
+//if (!res.ok) throw new Error(await res.text());
 const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
 return data || null;
     // Normalize for older/newer server responses
