@@ -1,18 +1,5 @@
-/* eslint-disable no-console */
-// api/inventory/drive-sync.js
-const { google } = require("googleapis");
-const XLSX = require("xlsx");
-const { ok, bad, method, withCORS } = require("../_lib/respond");
-const Store = require("../_lib/store");
+const { driveClient } = require("./_drive-cred");
 
-function driveClient() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
-  const keyEsc = process.env.GOOGLE_PRIVATE_KEY || "";
-  if (!email || !keyEsc) throw new Error("Missing Google SA envs");
-  const key = keyEsc.replace(/\\n/g, "\n"); // convert \n to real newlines
-  const auth = new google.auth.JWT(email, null, key, ["https://www.googleapis.com/auth/drive.readonly"]);
-  return google.drive({ version: "v3", auth });
-}
 
 function normalizeWorkbook(wb) {
   const name = wb.SheetNames[0];
@@ -123,8 +110,8 @@ module.exports = async (req, res) => {
   const token = String(req.headers["x-sync-token"] || "");
   if (!token || token !== (process.env.DRIVE_SYNC_TOKEN || "")) return bad(res, "Unauthorized", 401);
 
-  const fileId = process.env.DRIVE_FILE_ID || "";
-  if (!fileId) return bad(res, "Missing DRIVE_FILE_ID", 500);
+  const fileId = process.env.INVENTORY_SHEET_ID || process.env.DRIVE_FILE_ID || "";
+if (!fileId) return bad(res, "Missing INVENTORY_SHEET_ID (or DRIVE_FILE_ID)", 500);
 
   try {
     const t0 = Date.now();
