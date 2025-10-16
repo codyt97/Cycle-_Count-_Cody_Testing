@@ -1323,8 +1323,6 @@ function playFail(){
         // Not in current bin -> ask inventory API for true location (robust: use location or expectedBin)
         const info = await locateImei(imei);
 
-  // Not in current bin -> ask inventory API for true location (robust: use location or expectedBin)
-  const info = await locateImei(imei);
 
   const loc = info && (info.location || info.expectedBin)
     ? String(info.location || info.expectedBin).trim()
