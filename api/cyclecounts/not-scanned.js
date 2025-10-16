@@ -1,145 +1,104 @@
 // api/cyclecounts/not-scanned.js
-/* eslint-disable no-console */
 const { ok, bad, method, withCORS } = require("../_lib/respond");
-const { google } = require("googleapis");
 const Store = require("../_lib/store");
-const { appendRow } = require("../_lib/sheets");
 
-const norm = (s) => String(s ?? "").trim();
-const nowISO = () => new Date().toISOString();
+module.exports = async (req, res) => {
+  if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
+  withCORS(res);
 
-/** Build a Sheets client from GOOGLE_CREDENTIALS_JSON */
-function getSheets() {
-  const raw = process.env.GOOGLE_CREDENTIALS_JSON || "";
-  if (!raw) throw new Error("Missing GOOGLE_CREDENTIALS_JSON");
-  let creds;
-  try { creds = JSON.parse(raw); } catch { throw new Error("GOOGLE_CREDENTIALS_JSON is not valid JSON"); }
-  const key = String(creds.private_key || "").replace(/\r?\n/g, "\n");
-  if (!creds.client_email || !key) throw new Error("Bad GOOGLE_CREDENTIALS_JSON: missing client_email/private_key");
-  const auth = new google.auth.JWT(creds.client_email, null, key, [
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
-    "https://www.googleapis.com/auth/drive.readonly",
-  ]);
-  return google.sheets({ version: "v4", auth });
-}
+  // --------------------------
+  // GET  -> list all not-scanned (serial + non-serial), include counter
+  // DELETE -> remove a specific not-scanned entry from a bin
+  // --------------------------
+  if (req.method === "GET") {
+    const wantUser = String(req.query?.user || "").toLowerCase();
+    const binsAll = await Store.listBins();
+    // Investigator default: show ALL bins unless explicitly filtered
+    const bins = wantUser ? binsAll.filter(b => String(b.user||"").toLowerCase() === wantUser) : binsAll;
+    const records = [];
 
-/**
- * GET: Return not-scanned items across bins.
- * Logic: For each bin in Store, include rows where:
- *  - serial item: qtyEntered < 1
- *  - non-serial:  qtyEntered < systemQty
- */
-async function handleGet(req, res) {
-  try {
-    const bins = await Store.listBins(); // [{ bin, counter, items:[{sku,description,systemImei,systemQty,qtyEntered}]}]
-    const out = [];
-    for (const b of (bins || [])) {
-      const binName = norm(b.bin);
-      const counter = norm(b.counter || "");
-      for (const it of (b.items || [])) {
-        const sku         = norm(it.sku);
-        const description = norm(it.description);
-        const systemImei  = norm(it.systemImei);
-        const systemQty   = Number.isFinite(it.systemQty) ? it.systemQty : (systemImei ? 1 : 0);
-        const qtyEntered  = Number(it.qtyEntered || 0);
-        const isSerial    = !!systemImei;
 
-        const missingQty  = isSerial ? (qtyEntered < 1 ? 1 : 0) : Math.max(0, systemQty - qtyEntered);
-        if (missingQty > 0) {
-          out.push({
-            bin: binName,
-            counter,
-            type: isSerial ? "serial" : "non-serial",
-            sku,
-            description,
-            systemImei,
-            systemQty,
-            qtyEntered,
+
+    for (const b of bins) {
+      // Serial shortages
+      if (Array.isArray(b.missingImeis)) {
+        for (const m of b.missingImeis) {
+          records.push({
+            bin: b.bin,
+            counter: b.counter || "—",   // <-- include who did the cycle count
+            sku: m.sku || "—",
+            description: m.description || "—",
+            systemImei: String(m.systemImei || m.imei || ""),
+            type: "serial"
+          });
+        }
+      }
+
+      // Non-serial shortages
+      if (Array.isArray(b.nonSerialShortages)) {
+        for (const s of b.nonSerialShortages) {
+          records.push({
+            bin: b.bin,
+            counter: b.counter || "—",   // <-- include who did the cycle count
+            sku: s.sku || "—",
+            description: s.description || "—",
+            systemImei: "",
+            systemQty: s.systemQty,
+            qtyEntered: s.qtyEntered,
+            type: "nonserial"
           });
         }
       }
     }
-    return ok(res, { records: out });
-  } catch (e) {
-    console.error("[not-scanned][GET] fail:", e);
-    return bad(res, e?.message || String(e), 500);
+
+    return ok(res, { records });
   }
-}
 
-/**
- * DELETE: Mark a not-scanned item resolved.
- * Accepts body or query:
- *   - { bin, imei }  -> marks that serial as found (qtyEntered = 1)
- *   - { bin, sku, qtyEntered } -> updates entered quantity for non-serial
- */
-async function handleDelete(req, res) {
-  try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-    let bin     = norm(body.bin || req.query?.bin || "");  // let (we may fill it)
-    const imei  = norm(body.systemImei || body.imei || req.query?.imei || "");
-    const sku   = norm(body.sku || req.query?.sku || "");
-    const user  = norm(body.user || req.query?.user || "");
-    const entered = Number(body.qtyEntered ?? req.query?.qtyEntered ?? 0);
-
-    if (!imei && !sku) return bad(res, "systemImei or sku is required", 400);
-    if (!bin && imei) {
-      const all = await Store.listBins();
-      const hit = (all || []).find(x => (x.items || []).some(it => String(it.systemImei || "").trim() === imei));
-      bin = hit?.bin || "";
-    }
-    if (!bin) return bad(res, "bin is required", 400);
-
-
-
-
-    const updated = await Store.upsertBin(bin, (b) => {
-      const items = Array.isArray(b.items) ? [...b.items] : [];
-      let changed = false;
-
-      for (let i = 0; i < items.length; i++) {
-        const it = items[i];
-        const isSerial = !!it.systemImei;
-
-        if (imei && isSerial && String(it.systemImei).trim() === imei) {
-          items[i] = { ...it, qtyEntered: 1, updatedAt: nowISO(), updatedBy: user || (b.counter || "—") };
-          changed = true; break;
-        }
-        if (!imei && sku && !isSerial && String(it.sku).trim() === sku) {
-          const sys = Number.isFinite(it.systemQty) ? it.systemQty : 0;
-          const val = Math.max(0, Math.min(sys, Number(entered || 0)));
-          items[i] = { ...it, qtyEntered: val, updatedAt: nowISO(), updatedBy: user || (b.counter || "—") };
-          changed = true; break;
-        }
-      }
-
-      return changed ? { ...b, items, updatedAt: nowISO() } : b;
-    });
-
-    // Optional audit to Sheets (best-effort, non-blocking)
+  if (req.method === "DELETE") {
     try {
-      if (process.env.LOGS_SHEET_ID) {
-        const ts = nowISO();
-        const values = [
-          ts, bin, (imei || sku || "—"), user || "—",
-          imei ? "serial-resolved" : "nonserial-updated",
-          entered || (imei ? 1 : 0),
-        ];
-        await appendRow(process.env.LOGS_SHEET_ID, "NotScannedAudit", values);
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+      const binCode = String(body.bin || "").trim().toLowerCase();
+      const type = String(body.type || "").trim().toLowerCase(); // "serial" | "nonserial"
+      if (!binCode || !type) return bad(res, "bin and type are required", 400);
+
+      const user = String((typeof req.body === "string" ? JSON.parse(req.body||"{}") : req.body || {}).user || req.query?.user || "").toLowerCase();
+const binsAll = await Store.listBins();
+const bins = user ? binsAll.filter(b => String(b.user||"").toLowerCase() === user) : binsAll;
+const idx = bins.findIndex(x => String(x.bin || "").trim().toLowerCase() === binCode);
+
+      if (idx === -1) return bad(res, "bin not found", 404);
+
+      const bin = { ...bins[idx] };
+
+      if (type === "serial") {
+        const imei = String(body.systemImei || body.imei || "").trim();
+        if (!imei) return bad(res, "systemImei is required for serial delete", 400);
+        bin.missingImeis = (bin.missingImeis || []).filter(x =>
+          String(x.systemImei || x.imei || "").trim() !== imei
+        );
+      } else if (type === "nonserial") {
+        const sku = String(body.sku || "").trim();
+        if (!sku) return bad(res, "sku is required for nonserial delete", 400);
+        bin.nonSerialShortages = (bin.nonSerialShortages || []).filter(x =>
+          String(x.sku || "").trim() !== sku
+        );
+      } else {
+        return bad(res, "invalid type", 400);
       }
+
+      // Recompute missing count for display (not strictly necessary)
+      const serialMissing = (bin.missingImeis || []).length;
+      const nonSerialMissing = (bin.nonSerialShortages || [])
+        .reduce((a, s) => a + Math.max(Number(s.systemQty || 0) - Number(s.qtyEntered || 0), 0), 0);
+      bin.missing = serialMissing + nonSerialMissing;
+
+      // Persist
+      await Store.upsertBin(bin);
+      return ok(res, { ok: true });
     } catch (e) {
-      console.error("[not-scanned][DELETE] audit append fail:", e?.message || e);
+      return bad(res, "delete failed: " + (e?.message || String(e)), 500);
     }
-
-    return ok(res, { ok: true, bin: updated?.bin || bin });
-  } catch (e) {
-    console.error("[not-scanned][DELETE] fail:", e);
-    return bad(res, e?.message || String(e), 500);
   }
-}
 
-module.exports = async (req, res) => {
-  if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
-  if (req.method === "DELETE")  { withCORS(res); return handleDelete(req, res); }
-  if (req.method === "GET")     { withCORS(res); return handleGet(req, res); }
-  return method(res, ["GET","DELETE","OPTIONS"]);
+  return method(res, ["GET", "DELETE", "OPTIONS"]);
 };
