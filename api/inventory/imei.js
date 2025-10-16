@@ -4,12 +4,12 @@ const { ok, bad, method, withCORS } = require("../_lib/respond");
 const Store = require("../_lib/store");
 const { appendRow } = require("../_lib/sheets");
 
-// ---------- utils ----------
+// --------------- utils ---------------
 const clean = (s) => String(s ?? "").trim();
 const nowISO = () => new Date().toISOString();
 const DIGITS = (s) => String(s ?? "").replace(/\D+/g, "").trim();
 
-// tolerant IMEI equality (handles 14 vs 15 digit, minor formatting)
+// tolerant IMEI equality (14 vs 15 digit, formatting)
 function isImeiMatch(a, b) {
   const A = DIGITS(a), B = DIGITS(b);
   if (!A || !B) return false;
@@ -19,12 +19,11 @@ function isImeiMatch(a, b) {
   return false;
 }
 
-// extract all IMEI-like runs from any blob (splits multi-IMEI cells)
+// extract all IMEI-like sequences from any blob (handles multi-IMEI cells)
 function grabAllImeiLike(s) {
   return (String(s ?? "").match(/\d{12,}/g) || []).map(DIGITS);
 }
 
-// best-effort mapping for a location field on raw inventory rows
 function pickLocation(row = {}) {
   return (
     row.location ||
@@ -39,28 +38,26 @@ function pickLocation(row = {}) {
 
 module.exports = async (req, res) => {
   if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
-  if (req.method !== "GET") return method(res, ["GET","OPTIONS"]);
+  if (req.method !== "GET") return method(res, ["GET", "OPTIONS"]);
   withCORS(res);
 
   try {
     const imei = clean(req.query.imei);
-    const scannedBin = clean(req.query.scannedBin || req.query.bin);
+    const scannedBin = clean(req.query.scannedBin || req.query.bin || req.query.location || "");
     const scannedBy = clean(req.query.scannedBy || req.query.user || "");
     const wantDebug = String(req.query.debug || "").toLowerCase() === "1";
 
-    if (!imei || !scannedBin) {
-      return bad(res, "imei and scannedBin are required", 400);
-    }
+    if (!imei) return bad(res, "imei is required", 400);
+    if (!scannedBin) return bad(res, "scannedBin (bin) is required", 400);
 
     let matched = false;
 
-    // --- 1) Try to match inside the CURRENT (scanned) bin; if match -> set qtyEntered=1
+    // 1) Try to match inside the CURRENT (scanned) bin; if match -> qtyEntered=1
     await Store.upsertBin(scannedBin, (b) => {
       if (!b || !Array.isArray(b.items)) return b;
 
       const items = b.items.map((it) => {
-        const cand = it?.systemImei;
-        if (isImeiMatch(cand, imei)) {
+        if (isImeiMatch(it?.systemImei, imei)) {
           matched = true;
           return {
             ...it,
@@ -75,7 +72,7 @@ module.exports = async (req, res) => {
       return { ...b, items, updatedAt: nowISO() };
     });
 
-    // --- 2) If not matched, find TRUE location: search cycle-count bins, then full inventory
+    // 2) If not matched, find TRUE location: CC bins -> full inventory
     let expectedBin = matched ? scannedBin : "";
     let auditLogged = false;
     let debugInfo;
@@ -83,71 +80,60 @@ module.exports = async (req, res) => {
     if (!matched) {
       const target = DIGITS(imei);
       const target14 = target.length === 15 ? target.slice(-14) : target;
+      const FIELDS = [
+        "systemImei", "imei", "serial",
+        "imeis", "imei1", "imei2",
+        "note", "notes", "comment", "description"
+      ];
 
-      // 2a) search all cycle-count bins first (fast path)
+      // 2a) search all cycle-count bins first
       const ccBins = await Store.listBins();
       let hitBin = (ccBins || []).find((bin) => {
         for (const it of (bin.items || [])) {
-          // common fields IMEI may live in
-          const fields = [
-            it.systemImei, it.imei, it.serial,
-            it.imeis, it.imei1, it.imei2,
-            it.note, it.notes, it.comment, it.description
-          ];
-
-          for (const f of fields) {
-            // multi-IMEI cells
-            const many = grabAllImeiLike(f);
-            for (const cand of many) {
+          for (const f of FIELDS) {
+            const v = it[f];
+            // multi-IMEI blobs
+            for (const cand of grabAllImeiLike(v)) {
               if (isImeiMatch(cand, target) || isImeiMatch(cand, target14)) return true;
             }
-            // single value check (after normalization)
-            if (isImeiMatch(f, target) || isImeiMatch(f, target14)) return true;
+            // single value
+            if (isImeiMatch(v, target) || isImeiMatch(v, target14)) return true;
           }
         }
         return false;
       });
 
-      // 2b) fallback: search the FULL inventory snapshot (covers items not assigned to a CC bin)
+      // 2b) fallback: search full inventory snapshot (items not in CC bins)
       if (!hitBin) {
-        const inv = await Store.getInventory(); // array of rows with location + fields
-        const hitRow = (inv || []).find((r) => {
-          const fields = [
-            r.systemImei, r.imei, r.serial,
-            r.imeis, r.imei1, r.imei2,
-            r.notes, r.comment, r.description
-          ];
-          for (const f of fields) {
-            const many = grabAllImeiLike(f);
-            for (const cand of many) {
+        const inv = await Store.getInventory();
+        const row = (inv || []).find((r) => {
+          for (const f of FIELDS) {
+            const v = r[f];
+            for (const cand of grabAllImeiLike(v)) {
               if (isImeiMatch(cand, target) || isImeiMatch(cand, target14)) return true;
             }
-            if (isImeiMatch(f, target) || isImeiMatch(f, target14)) return true;
+            if (isImeiMatch(v, target) || isImeiMatch(v, target14)) return true;
           }
           return false;
         });
 
-        if (hitRow) {
-          expectedBin = pickLocation(hitRow);
+        if (row) {
+          expectedBin = pickLocation(row);
         } else if (wantDebug) {
-          // Build near-match hints (last 8–10 digits) to help diagnose sheet content issues
-          const inv = await Store.getInventory();
+          // near-match hints (last 10 digits) to diagnose data issues
           const suffix = target.slice(-10);
           const close = [];
           for (const r of (inv || [])) {
-            const fields = [
-              r.systemImei, r.imei, r.serial,
-              r.imeis, r.imei1, r.imei2,
-              r.notes, r.comment, r.description
-            ];
+            const loc = pickLocation(r);
             let pushed = false;
-            for (const f of fields) {
-              const raw = String(f ?? "");
-              if (/\d{10,}/.test(raw) && DIGITS(raw).includes(suffix)) {
+            for (const f of FIELDS) {
+              const raw = String(r[f] ?? "");
+              const ds = DIGITS(raw);
+              if (ds.includes(suffix)) {
                 close.push({
-                  location: pickLocation(r),
-                  field: fields.indexOf(f), // simple index; avoids leaking keys variably
-                  sample: raw.length > 120 ? (raw.slice(0,117) + "...") : raw
+                  location: loc,
+                  field: f,
+                  sample: raw.length > 120 ? raw.slice(0, 117) + "..." : raw
                 });
                 pushed = true;
                 break;
@@ -155,13 +141,13 @@ module.exports = async (req, res) => {
             }
             if (pushed && close.length >= 12) break;
           }
-          debugInfo = { nearMatches: close, lookedAt: close.length, suffix };
+          debugInfo = { nearMatches: close, suffix };
         }
       } else {
         expectedBin = hitBin.bin || "";
       }
 
-      // 2c) Audit wrong-bin attempt (even if not found we log the attempt with "—")
+      // 2c) audit wrong-bin attempt (even if we didn’t find a location yet)
       try {
         if (process.env.LOGS_SHEET_ID) {
           await appendRow(process.env.LOGS_SHEET_ID, "WrongBin", [
@@ -174,7 +160,7 @@ module.exports = async (req, res) => {
       }
     }
 
-    // --- response (normalized: include both expectedBin + location for the client)
+    // 3) Response: include both expectedBin + location (normalized)
     const found = !!expectedBin;
     return ok(res, {
       ok: true,
