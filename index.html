@@ -1110,10 +1110,6 @@ refreshInvestigator().catch(()=>{});
 
 // (optional) still read submit response if needed
 // const data = await res.json();
-
-
-
-
         }
 
       }catch(e){
@@ -1336,7 +1332,7 @@ renderTable(); scanInput.value=""; return;
     : "";
 
   if (loc) {
-    // Keep your pending list for Investigator view
+    // Keep pending list for Investigator
     pendingWrongBin.push({
       imei,
       scannedBin: currentBin || "",
