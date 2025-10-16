@@ -1335,15 +1335,15 @@ if (info && info.location){
   const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>. (Will be logged on Submit)`;
   showAlerts(alerts,[{type:"warn",msg}]);
   playFail();
-} else {
-  } else if (info && (info.location || info.expectedBin)) {
+} else if (info && (info.location || info.expectedBin)) {
   const loc = info.location || info.expectedBin;
-  showAlerts(alerts,[{type:"warn",msg:`Wrong bin: IMEI <b>${escapeHTML(imei)}</b> belongs in <b>${escapeHTML(loc)}</b>.`}]);
+  showAlerts(alerts, [{ type:"warn", msg:`Wrong bin: IMEI <b>${escapeHTML(imei)}</b> belongs in <b>${escapeHTML(loc)}</b>.` }]);
   playFail();
 } else {
-  showAlerts(alerts,[{type:"warn",msg:`IMEI <b>${escapeHTML(imei)}</b> not found anywhere in snapshot.`}]);
+  showAlerts(alerts, [{ type:"warn", msg:`IMEI <b>${escapeHTML(imei)}</b> not found anywhere in snapshot.` }]);
   playFail();
 }
+
 
 scanInput.value="";
 
