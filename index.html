@@ -782,37 +782,33 @@ return {
 
     }
 
-async function locateImei(imei){
-  try {
+    async function locateImei(imei){
+  try{
+    if (CONFIG.FORCE_MOCK) return mockLocate(imei, currentBin || "K-01-01");
     const params = new URLSearchParams({
-      user: userId(),
-      scannedBin: currentBin || "",
-      scannedBy: currentUser?.name || "—",
-    });
+  user: userId(),
+  scannedBin: currentBin || "",
+  scannedBy: currentUser?.name || "—",
+});
+const res = await fetch(
+  `${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${params.toString()}`,
+  { cache:"no-store" }
+);
 
-    const res = await fetch(
-      `${CONFIG.IMEI_ENDPOINT}${encodeURIComponent(imei)}&${params.toString()}`,
-      { cache:"no-store" }
-    );
+
     if (!res.ok) throw new Error(await res.text());
+    pendingWrongBin.length = 0;
+showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
+document.getElementById("tab2")?.click();       // jump to Investigator
+refreshInvestigator().catch(()=>{});            // refresh in background (do NOT await)
 
-    const data = await res.json();
-
-// Normalize for both possible field names from the API
-if (data && !data.location && data.expectedBin) data.location = data.expectedBin;
-// Also compute a stable boolean the rest of the UI can rely on
-if (data && typeof data.found === "undefined") {
-  data.found = !!(data.location && String(data.location).trim());
-}
-
-return data || null;
-
-  } catch(e) {
-    showAlerts(alerts,[{type:"warn",msg:`IMEI lookup failed: ${escapeHTML(String(e.message||e))}`}]);
+    const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
+    return data || null;
+  }catch(e){
+    showAlerts(alerts,[{type:"warn",msg:`IMEI lookup failed: <code>${escapeHTML(String(e.message||e))}</code>`}]);
     return null;
   }
 }
-
 
 
 async function logWrongBin(payload) {
@@ -896,31 +892,6 @@ async function fetchNotScanned() {
 
 
 
-function renderInvestigatorWrongImeis(items) {
-  const tb = document.getElementById("investWrongBinBody");
-  if (!tb) return;
-  if (!Array.isArray(items) || !items.length) {
-    tb.innerHTML = `<tr><td colspan="8" class="empty">No wrong-bin items.</td></tr>`;
-    return;
-  }
-  tb.innerHTML = items.map(it => `
-    <tr>
-      <td class="mono">${escapeHTML(it.imei || "")}</td>
-      <td>${escapeHTML(it.scannedBin || "")}</td>
-      <td>${escapeHTML(it.trueLocation || it.expectedBin || "")}</td>
-      <td><span class="badge">${escapeHTML(it.status || "open")}</span></td>
-      <td>${it.status==="moved" ? "Yes" : "No"}</td>
-      <td class="mono">${escapeHTML(it.movedTo || "")}</td>
-      <td>${escapeHTML(it.movedBy || "")}</td>
-      <td class="row-sm">
-        ${it.status==="resolved" ? "" : `
-          <button class="btn primary sm" data-move="${escapeHTML(it.id || it._id || "")}">Yes</button>
-          <button class="btn ghost sm" data-notmove="${escapeHTML(it.id || it._id || "")}">No</button>
-        `}
-      </td>
-    </tr>
-  `).join("");
-}
 
 
 // --- Investigator: render Not-Scanned ---
@@ -1089,14 +1060,8 @@ const res = await fetch(`${CONFIG.SUBMIT_BIN_ENDPOINT}?user=${encodeURIComponent
   headers:{"Content-Type":"application/json"},
   body: JSON.stringify({ user: userId(), ...payload })
 });
-if (!res.ok) throw new Error(await res.text());
-
-// show feedback immediately and switch to Investigator
-showAlerts(alerts,[{type:"ok",msg:`Bin <b>${escapeHTML(currentBin)}</b> submitted to Investigator.`}]);
-document.getElementById("tab2")?.click();
-
-// (optional) post buffered wrong-bin audits once; don't block UI if it fails
-if (pendingWrongBin.length) {
+   
+      if (pendingWrongBin.length) {
   await fetch("/api/audit/wrong-bin", {
     method: "POST",
     headers: { "Content-Type":"application/json" },
@@ -1105,11 +1070,10 @@ if (pendingWrongBin.length) {
   pendingWrongBin.length = 0;
 }
 
-// refresh Investigator without waiting on it
-refreshInvestigator().catch(()=>{});
+          if (!res.ok) throw new Error(await res.text());
+const data = await res.json(); // {found, location, sku, description, auditLogged?, mismatch?}
 
-// (optional) still read submit response if needed
-// const data = await res.json();
+
         }
 
       }catch(e){
@@ -1311,45 +1275,38 @@ function playFail(){
       }
 
       const idx = rows.findIndex(r => r.systemImei===imei);
-            if (idx>=0){
+      if (idx>=0){
         rows[idx] = {...rows[idx], scannedImei: imei};
-        if (rows[idx].hasSerial) rows[idx].qtyEntered = 1;
-        scanned.add(imei);
-
-        showAlerts(alerts,[{type:"ok",msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.`}]);
-        playOk();
-        renderTable(); scanInput.value=""; return;
-      } else {
-        // Not in current bin -> ask inventory API for true location (robust: use location or expectedBin)
-        const info = await locateImei(imei);
+if (rows[idx].hasSerial) rows[idx].qtyEntered = 1;
+scanned.add(imei);
 
 
-  const loc = info && (info.location || info.expectedBin)
-    ? String(info.location || info.expectedBin).trim()
-    : "";
+showAlerts(alerts,[{type:"ok",msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.`}]);
+playOk();
+renderTable(); scanInput.value=""; return;
 
-  if (loc) {
-    // Keep pending list for Investigator
-    pendingWrongBin.push({
-      imei,
-      scannedBin: currentBin || "",
-      trueLocation: loc,
-      status: "open",
-      scannedBy: currentUser?.name || "—",
-      ts: new Date().toISOString()
-    });
+      }
 
-    const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> belongs in <b>${escapeHTML(loc)}</b>. (Will be logged on Submit)`;
-    showAlerts(alerts, [{ type: "warn", msg }]);
-    playFail();
-  } else {
-    showAlerts(alerts, [{ type: "warn", msg: `IMEI <b>${escapeHTML(imei)}</b> not found anywhere in snapshot.` }]);
-    playFail();
-  }
+      // Not in current bin -> ask inventory API for true location (it also auto-logs audit)
+// Not in current bin -> ask inventory API for true location (no server audit yet; we buffer)
+const info = await locateImei(imei);
+if (info && info.location){
+  pendingWrongBin.push({
+    imei,
+    scannedBin: currentBin || "",
+    trueLocation: info.location,
+    status: "open",
+    scannedBy: currentUser?.name || "—",
+    ts: new Date().toISOString()
+  });
+  const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>. (Will be logged on Submit)`;
+  showAlerts(alerts,[{type:"warn",msg}]);
+  playFail();
+} else {
+  showAlerts(alerts,[{type:"warn",msg:`IMEI <b>${escapeHTML(imei)}</b> not found in snapshot.`}]);
+  playFail();
+
 }
-
-
-
 scanInput.value="";
 
 
@@ -1652,8 +1609,7 @@ function playFail(){document.getElementById("snd-bad")?.play().catch(()=>{}); }
 
   </script>
   
-<audio id="snd-ok"  src="/sounds/ok.mp3"  preload="auto"></audio>
-<audio id="snd-bad" src="/sounds/bad.mp3" preload="auto"></audio>
-
+<audio id="snd-ok"  preload="auto"><source src="/sounds/ok.mp3"  type="audio/mpeg"></audio>
+<audio id="snd-bad" preload="auto"><source src="/sounds/bad.mp3" type="audio/mpeg"></audio>
 </body>
 </html>
