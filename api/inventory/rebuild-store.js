@@ -11,7 +11,7 @@
 //   - REDIS_URL                (if set, Store persists to Redis; else in-memory)
 //
 // Usage: GET/POST /api/inventory/rebuild-store
-
+ 
 const { google } = require("googleapis");
 const XLSX = require("xlsx");
 const { ok, bad, method, withCORS } = require("../_lib/respond");
