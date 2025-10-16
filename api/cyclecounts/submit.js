@@ -4,7 +4,7 @@
 // - wrong-bin audits (buffered client-side) into the per-user audit set
 //
 // Also logs to Google Sheets tabs: Bins, NotScanned, WrongBinAudits.
-//
+// 
 const Store = require("../_lib/store");
 const { logBinSummary, logNotScannedMany, logWrongBin } = require("../_lib/logs");
 
