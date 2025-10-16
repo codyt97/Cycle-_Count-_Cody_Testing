@@ -1311,19 +1311,18 @@ function playFail(){
       }
 
       const idx = rows.findIndex(r => r.systemImei===imei);
-      if (idx>=0){
+            if (idx>=0){
         rows[idx] = {...rows[idx], scannedImei: imei};
-if (rows[idx].hasSerial) rows[idx].qtyEntered = 1;
-scanned.add(imei);
+        if (rows[idx].hasSerial) rows[idx].qtyEntered = 1;
+        scanned.add(imei);
 
+        showAlerts(alerts,[{type:"ok",msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.`}]);
+        playOk();
+        renderTable(); scanInput.value=""; return;
+      } else {
+        // Not in current bin -> ask inventory API for true location (robust: use location or expectedBin)
+        const info = await locateImei(imei);
 
-showAlerts(alerts,[{type:"ok",msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.`}]);
-playOk();
-renderTable(); scanInput.value=""; return;
-
-      }
-
-} else {
   // Not in current bin -> ask inventory API for true location (robust: use location or expectedBin)
   const info = await locateImei(imei);
 
