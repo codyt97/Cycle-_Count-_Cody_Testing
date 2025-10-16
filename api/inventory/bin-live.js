@@ -7,31 +7,10 @@ const { ok, bad, method, withCORS } = require("../_lib/respond");
 let cache = { at: 0, rows: [] };
 const TTL_MS = 30_000; // 30s
 
-function drive() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
-  const key = (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
-  if (!email || !key) throw new Error("Missing Google SA envs");
-  const auth = new google.auth.JWT(email, null, key, ["https://www.googleapis.com/auth/drive.readonly"]);
-  return google.drive({ version: "v3", auth });
-}
+const { driveClient } = require("./_drive-cred");
+...
+const d = driveClient();
 
-function pick(row, ...keys) {
-  for (const k of keys) {
-    const hit = Object.keys(row).find(x => x.toLowerCase().trim() === k.toLowerCase());
-    if (hit) return String(row[hit] ?? "").trim();
-  }
-  return "";
-}
-function pickNum(row, ...keys) {
-  const v = pick(row, ...keys);
-  if (v === "") return undefined;
-  const n = Number(String(v).replace(/,/g,""));
-  return Number.isFinite(n) ? n : undefined;
-}
-
-async function loadRowsFromSheet(fileId) {
-  if (Date.now() - cache.at < TTL_MS && cache.rows.length) return cache.rows;
-  const d = drive();
   const meta = await d.files.get({ fileId, fields: "id,mimeType,name" });
   const mime = meta.data.mimeType;
   let wb;
