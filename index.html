@@ -798,24 +798,14 @@ async function locateImei(imei){
 
     const data = await res.json();
 
-// Normalize: prefer explicit location, else expectedBin,
-// else fall back to inventoryLocation / binsLocation (older server payloads)
-if (data) {
-  if (!data.location) {
-    if (data.expectedBin) data.location = data.expectedBin;
-    else if (data.inventoryLocation || data.binsLocation) {
-      data.location = data.inventoryLocation || data.binsLocation;
-    }
-  }
-  // Stable boolean for the rest of the UI
-  if (typeof data.found === "undefined") {
-    const loc = String(data.location || "").trim();
-    data.found = !!loc;
-  }
+// Normalize for both possible field names from the API
+if (data && !data.location && data.expectedBin) data.location = data.expectedBin;
+// Also compute a stable boolean the rest of the UI can rely on
+if (data && typeof data.found === "undefined") {
+  data.found = !!(data.location && String(data.location).trim());
 }
 
 return data || null;
-
 
   } catch(e) {
     showAlerts(alerts,[{type:"warn",msg:`IMEI lookup failed: ${escapeHTML(String(e.message||e))}`}]);
@@ -1311,61 +1301,59 @@ function playFail(){
       showAlerts(alerts,[]); renderTable(); binInput.focus();
     });
 
-    scanForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const imei = (scanInput.value || "").trim();
-  if (!imei) return;
+    scanForm.addEventListener("submit", async e => {
+      e.preventDefault();
+      const imei = scanInput.value.trim(); if (!imei) return;
 
-  // Already scanned?
-  if (scanned.has(imei)) {
-    showAlerts(alerts, [{ type: "warn", msg: `IMEI <b>${escapeHTML(imei)}</b> already scanned.` }]);
+      if (scanned.has(imei)){
+        showAlerts(alerts,[{type:"ok",msg:`IMEI <b>${escapeHTML(imei)}</b> already scanned.`}] );
+        scanInput.value=""; return;
+      }
+
+      const idx = rows.findIndex(r => r.systemImei===imei);
+            if (idx>=0){
+        rows[idx] = {...rows[idx], scannedImei: imei};
+        if (rows[idx].hasSerial) rows[idx].qtyEntered = 1;
+        scanned.add(imei);
+
+        showAlerts(alerts,[{type:"ok",msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.`}]);
+        playOk();
+        renderTable(); scanInput.value=""; return;
+      } else {
+        // Not in current bin -> ask inventory API for true location (robust: use location or expectedBin)
+        const info = await locateImei(imei);
+
+
+  const loc = info && (info.location || info.expectedBin)
+    ? String(info.location || info.expectedBin).trim()
+    : "";
+
+  if (loc) {
+    // Keep pending list for Investigator
+    pendingWrongBin.push({
+      imei,
+      scannedBin: currentBin || "",
+      trueLocation: loc,
+      status: "open",
+      scannedBy: currentUser?.name || "—",
+      ts: new Date().toISOString()
+    });
+
+    const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> belongs in <b>${escapeHTML(loc)}</b>. (Will be logged on Submit)`;
+    showAlerts(alerts, [{ type: "warn", msg }]);
     playFail();
-    scanInput.value = "";
-    return;
+  } else {
+    showAlerts(alerts, [{ type: "warn", msg: `IMEI <b>${escapeHTML(imei)}</b> not found anywhere in snapshot.` }]);
+    playFail();
   }
+}
 
-  // Try to find inside the current bin snapshot first
- const digits = s => String(s||"").replace(/\D+/g,"");
-const sameImei = (a,b) => {
-  const A = digits(a), B = digits(b);
-  if (!A || !B) return false;
-  if (A === B) return true;
-  // treat 14 vs 15 as match if one ends with the other
-  return (A.length>=14 && B.length>=14) && (A.endsWith(B) || B.endsWith(A));
-};
-const idx = rows.findIndex(r => sameImei(r.systemImei, imei));
 
-    // Not in current bin -> ask inventory API for true location (use location or expectedBin)
-    const info = await locateImei(imei);
 
-    const loc = info && (info.location || info.expectedBin)
-      ? String(info.location || info.expectedBin).trim()
-      : "";
+scanInput.value="";
 
-    if (loc) {
-      // keep a local record for the Investigator table; server may also log
-      pendingWrongBin.push({
-        imei,
-        scannedBin: currentBin || "",
-        trueLocation: loc,
-        status: "open",
-        scannedBy: currentUser?.name || "—",
-        ts: new Date().toISOString()
-      });
 
-      const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> belongs in <b>${escapeHTML(loc)}</b>. (Will be logged on Submit)`;
-      showAlerts(alerts, [{ type: "warn", msg }]);
-      playFail();
-    } else {
-      showAlerts(alerts, [{ type: "warn", msg: `IMEI <b>${escapeHTML(imei)}</b> not found anywhere in snapshot.` }]);
-      playFail();
-    }
-
-    scanInput.value = "";
-    return;
-  }
-});
-
+    });
 
     submitBinBtn.addEventListener("click", async ()=>{
       if (!/^(counter|investigator|supervisor)$/i.test(currentUser?.role || "")){
