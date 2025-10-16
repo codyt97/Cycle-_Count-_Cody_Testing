@@ -1,9 +1,7 @@
 // api/audit/wrong-bin.js  (shared audits for Investigator)
-/* eslint-disable no-console */
+// Uses the shared Store audit list so all users see the same records.
 const { withCORS } = require("../_lib/respond");
-const Store = require("../_lib/store");
-const { appendRow } = require("../_lib/sheets");
-
+const Store = require("../_lib/store"); // <— correct shared store
 function json(res, code, obj){
   res.statusCode = code;
   res.setHeader("Content-Type","application/json; charset=utf-8");
@@ -38,7 +36,7 @@ module.exports = async function handler(req, res){
     }
   }
 
-  // POST: create/open an audit
+  // POST: create/open an audit (idempotence handled by UI or left to manual checks)
   if (req.method === "POST"){
     try {
       const body = typeof req.body === "string" ? JSON.parse(req.body||"{}") : (req.body || {});
@@ -49,103 +47,51 @@ module.exports = async function handler(req, res){
       if (!imei || !scannedBin || !trueLocation){
         return json(res,400,{ ok:false, error:"missing_required_fields", need:["imei","scannedBin","trueLocation"]});
       }
-      const ts = now();
       const audit = await Store.appendAudit({
         imei, scannedBin, trueLocation, scannedBy, status: "open"
       });
-
-      // Sheets append (fire-and-forget)
-      (async () => {
-        try {
-          await appendRow("WrongBinAudits", [
-            imei, scannedBin, trueLocation, scannedBy, "open", ts, ts
-          ]);
-        } catch (e) { console.error("[Sheets][Audits][POST] append fail:", e?.message || e); }
-      })();
-
       return json(res,200,{ ok:true, audit });
     } catch (e) {
       return json(res,500,{ ok:false, error:String(e.message||e) });
     }
   }
-  
+
   // PATCH: update (mark moved/closed, etc.)
-// PATCH: update an audit (moved/closed etc.)
-if (req.method === "PATCH") {
-  try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body||"{}") : (req.body || {});
-    const id      = String(body.id || "").trim();         // preferred selector
-    const imei    = String(body.imei || "").trim();       // fallback selector
-    const movedTo = String(body.movedTo || "").trim();
-    const movedBy = String(body.movedBy || "").trim();
-    const status  = String(body.status  || "moved").toLowerCase();
-
-    // Locate the audit by id or by open IMEI
-    const audits = await Store.listAudits();
-    let target = null;
-    if (id) {
-      target = audits.find(a => a.id === id);
-    } else if (imei) {
-      target = audits.find(a => String(a.imei).trim() === imei && String(a.status||"") === "open");
-    }
-    if (!target) return res.status(404).json({ ok:false, error:"audit_not_found" });
-
-    const updated = await Store.patchAudit(target.id, {
-      status,
-      movedTo: movedTo || target.movedTo,
-      movedBy: movedBy || target.movedBy
-    });
-
-    // Optional: append a log row to the "WrongBinAudits" sheet
-    (async () => {
-      try {
-        const { appendRow } = require("../_lib/sheets");
-        const ts = new Date().toISOString();
-        await appendRow("WrongBinAudits", [
-          updated.imei, updated.scannedBin, updated.trueLocation,
-          updated.movedBy || updated.scannedBy || "—",
-          updated.status, updated.createdAt, ts
-        ]);
-      } catch (e) { console.error("[Sheets][Audits][PATCH] append fail:", e?.message || e); }
-    })();
-
-    return res.status(200).json({ ok:true, audit: updated });
-  } catch (e) {
-    return res.status(500).json({ ok:false, error:String(e.message||e) });
-  }
-}
-
-
-  // DELETE: soft-close (no hard delete in Store; mark closed)
-  if (req.method === "DELETE"){
+  if (req.method === "PATCH"){
     try {
       const body = typeof req.body === "string" ? JSON.parse(req.body||"{}") : (req.body || {});
-      const id = norm(req.query?.id || body.id || "");
+      const id = norm(body.id);
       if (!id) return json(res,400,{ ok:false, error:"missing_id" });
 
-      const updated = await Store.patchAudit(id, { status: "closed", updatedAt: now() });
+      const patch = {};
+      if (body.status != null) patch.status = norm(body.status).toLowerCase(); // "open" | "moved" | "closed"
+      if (body.movedTo != null) patch.movedTo = norm(body.movedTo);
+      if (body.movedBy != null) patch.movedBy = norm(body.movedBy);
+      if (patch.status === "moved" && !patch.movedTo && body.trueLocation) patch.movedTo = norm(body.trueLocation);
+      patch.updatedAt = now();
+
+      const updated = await Store.patchAudit(id, patch);
       if (!updated) return json(res,404,{ ok:false, error:"not_found" });
-
-      (async () => {
-        try {
-          await appendRow("WrongBinAudits", [
-            String(updated?.imei || ""),
-            String(updated?.scannedBin || ""),
-            String(updated?.trueLocation || ""),
-            String(updated?.decidedBy || updated?.movedBy || "—"),
-            "closed",
-            String(updated?.createdAt || now()),
-            String(updated?.updatedAt || now()),
-          ]);
-        } catch (e) { console.error("[Sheets][Audits][DELETE] append fail:", e?.message || e); }
-      })();
-
       return json(res,200,{ ok:true, audit: updated });
     } catch (e) {
       return json(res,500,{ ok:false, error:String(e.message||e) });
     }
   }
 
-  // Fallback
+  // DELETE: soft-close (no hard delete function in Store, so mark closed)
+  if (req.method === "DELETE"){
+    try {
+      const body = typeof req.body === "string" ? JSON.parse(req.body||"{}") : (req.body || {});
+      const id = norm(req.query?.id || body.id || "");
+      if (!id) return json(res,400,{ ok:false, error:"missing_id" });
+      const updated = await Store.patchAudit(id, { status:"closed", updatedAt: now() });
+      if (!updated) return json(res,404,{ ok:false, error:"not_found" });
+      return json(res,200,{ ok:true, audit: updated });
+    } catch (e) {
+      return json(res,500,{ ok:false, error:String(e.message||e) });
+    }
+  }
+
+  res.setHeader("Allow","GET,POST,PATCH,DELETE,OPTIONS");
   return json(res,405,{ ok:false, error:"method_not_allowed" });
 };
