@@ -3,19 +3,10 @@
 // - the cycle count summary (user-scoped)
 // - wrong-bin audits (buffered client-side) into the per-user audit set
 //
-// POST /api/cyclecounts/submit?user=<id>
-// Body:
-//  {
-//    bin, counter, total, scanned, missing,
-//    items: [{ location, sku, description, systemImei, scannedImei, qtyEntered?, systemQty? }, ...],
-//    missingImeis: [ ... ],
-//    nonSerialShortages?: [ ... ],
-//    wrongBin?: [{ imei, scannedBin, trueLocation, status:"open", scannedBy, ts }]
-//  }
-
-// Use the shared Store that Investigator pages read from
+// Also logs to Google Sheets tabs: Bins, NotScanned, WrongBinAudits.
+//
 const Store = require("../_lib/store");
-
+const { logBinSummary, logNotScannedMany, logWrongBin } = require("../_lib/logs");
 
 function norm(s){ return String(s ?? "").trim(); }
 function now(){ return new Date().toISOString(); }
@@ -48,9 +39,6 @@ function json(res, code, obj){
   res.end(JSON.stringify(obj));
 }
 
-// No per-user KV; all persistence goes through the shared Store
-
-
 module.exports = async function handler(req, res){
   if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
   if (req.method !== "POST")    { res.setHeader("Allow","POST,OPTIONS"); return json(res,405,{ ok:false, error:"method_not_allowed" }); }
@@ -81,30 +69,45 @@ module.exports = async function handler(req, res){
         }))
         .filter(s => s.qtyEntered < s.systemQty);
 
-
     // client-buffered wrong-bin list (to be persisted now)
     const wrongBin = Array.isArray(body.wrongBin) ? body.wrongBin : [];
 
     if (!bin) return json(res, 400, { ok:false, error:"missing_bin" });
 
     // ------ persist wrong-bin audits into the shared audit log ------
-    if (Array.isArray(wrongBin) && wrongBin.length) {
+    if (wrongBin.length) {
       for (const wb of wrongBin) {
         const imei = norm(wb.imei);
         if (!imei) continue;
+        const scannedBin   = norm(wb.scannedBin);
+        const trueLocation = norm(wb.trueLocation);
+
         await Store.appendAudit({
           imei,
-          scannedBin:  norm(wb.scannedBin),
-          trueLocation:norm(wb.trueLocation),
+          scannedBin,
+          trueLocation,
           scannedBy:   norm(wb.scannedBy || counter || "—"),
           status: "open",
         });
+
+        // Also log to WrongBinAudits sheet
+        try {
+          await logWrongBin({
+            imei,
+            scannedBin,
+            trueLocation,
+            scannedBy:   norm(wb.scannedBy || counter || "—"),
+            status: "open",
+            moved: false
+          });
+        } catch (e) {
+          console.warn("[logs] WrongBin (submit) failed:", e?.message || e);
+        }
       }
     }
 
-
     // ------ persist the cycle count into the shared Store (read by Investigator/Summary) ------
-        // Recompute final missing: serial deficits + non-serial deficits
+    // Recompute final missing: serial deficits + non-serial deficits
     const serialMissing = missingImeis.length;
     const nonSerialMissing = nonSerialShortages.reduce(
       (a, s) => a + Math.max(Number(s.systemQty || 0) - Number(s.qtyEntered || 0), 0), 0);
@@ -123,10 +126,53 @@ module.exports = async function handler(req, res){
 
     await Store.upsertBin(payload);
 
+    // ------ logs to Sheets: Bins + NotScanned ------
+    try {
+      await logBinSummary({
+        bin,
+        counter,
+        started: body.started || "",
+        updated: new Date().toISOString(),
+        total, scanned, missing: finalMissing,
+        state: payload.state
+      });
+    } catch (e) {
+      console.warn("[logs] Bin summary failed:", e?.message || e);
+    }
+
+    try {
+      const notScannedRows = (items || [])
+        .filter(x => !x.systemImei && Number(x.systemQty) > Number(x.qtyEntered || 0))
+        .map(x => ({
+          bin,
+          sku: x.sku || "",
+          description: x.description || "",
+          systemQty: Number(x.systemQty) || 0,
+          qtyEntered: Number(x.qtyEntered) || 0,
+          missing: Math.max(0, (Number(x.systemQty) || 0) - (Number(x.qtyEntered) || 0)),
+          createdAt: new Date().toISOString()
+        }));
+      // If client didn’t send items, attempt to log from computed shortages list
+      if (!notScannedRows.length && nonSerialShortages.length) {
+        await logNotScannedMany(nonSerialShortages.map(s => ({
+          bin,
+          sku: s.sku || "",
+          description: s.description || "",
+          systemQty: Number(s.systemQty) || 0,
+          qtyEntered: Number(s.qtyEntered) || 0,
+          missing: Math.max(0, (Number(s.systemQty) || 0) - (Number(s.qtyEntered) || 0)),
+          createdAt: new Date().toISOString()
+        })));
+      } else {
+        await logNotScannedMany(notScannedRows);
+      }
+    } catch (e) {
+      console.warn("[logs] NotScanned append failed:", e?.message || e);
+    }
+
     return json(res, 200, { ok:true, bin, state: payload.state, submittedAt: payload.submittedAt });
 
   } catch (err) {
-    // never throw raw; return a stable error object
     return json(res, 500, { ok:false, error:"submit_failed", detail: String(err && err.message || err) });
   }
 };
