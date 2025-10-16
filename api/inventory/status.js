@@ -1,13 +1,11 @@
-// api/inventory/status.js
-const { ok, method, withCORS } = require("../_lib/respond");
-const Store = require("../_lib/store");
-
+// api/inventory/sync-now.js
+const driveSync = require("./drive-sync");
 module.exports = async (req, res) => {
-  if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
-  if (req.method !== "GET") return method(res, ["GET","OPTIONS"]);
-  withCORS(res);
-
-  const meta = await Store.getInventoryMeta();
-  const count = (await Store.getInventory()).length;
-  return ok(res, { ok: true, meta: { count, ...(meta || {}) } });
+  // allow GET for convenience
+  req.method = "POST";
+  // allow token via query string (?token=...)
+  if (!req.headers["x-sync-token"] && req.query && req.query.token) {
+    req.headers["x-sync-token"] = String(req.query.token);
+  }
+  return driveSync(req, res);
 };
