@@ -2,6 +2,8 @@
 // Uses the shared Store audit list so all users see the same records.
 const { withCORS } = require("../_lib/respond");
 const Store = require("../_lib/store"); // <— correct shared store
+const { logWrongBin, logFoundImei } = require("../_lib/logs");
+
 function json(res, code, obj){
   res.statusCode = code;
   res.setHeader("Content-Type","application/json; charset=utf-8");
@@ -36,7 +38,7 @@ module.exports = async function handler(req, res){
     }
   }
 
-  // POST: create/open an audit (idempotence handled by UI or left to manual checks)
+  // POST: create/open an audit
   if (req.method === "POST"){
     try {
       const body = typeof req.body === "string" ? JSON.parse(req.body||"{}") : (req.body || {});
@@ -50,6 +52,17 @@ module.exports = async function handler(req, res){
       const audit = await Store.appendAudit({
         imei, scannedBin, trueLocation, scannedBy, status: "open"
       });
+
+      // Log creation
+      try {
+        await logWrongBin({
+          imei, scannedBin, trueLocation, scannedBy,
+          status: "open", moved: false
+        });
+      } catch (e) {
+        console.warn("[logs] WrongBin POST failed:", e?.message || e);
+      }
+
       return json(res,200,{ ok:true, audit });
     } catch (e) {
       return json(res,500,{ ok:false, error:String(e.message||e) });
@@ -72,13 +85,40 @@ module.exports = async function handler(req, res){
 
       const updated = await Store.patchAudit(id, patch);
       if (!updated) return json(res,404,{ ok:false, error:"not_found" });
+
+      // Log updates
+      try {
+        await logWrongBin({
+          imei: updated.imei,
+          scannedBin: updated.scannedBin,
+          trueLocation: updated.trueLocation,
+          scannedBy: updated.scannedBy,
+          status: updated.status || "open",
+          moved: updated.status === "moved" || !!updated.movedTo,
+          movedTo: updated.movedTo || "",
+          movedBy: updated.movedBy || ""
+        });
+
+        // If your workflow treats "closed" as "found in place" you may also record FoundImeis
+        if ((updated.status || "").toLowerCase() === "closed") {
+          await logFoundImei({
+            imei: updated.imei,
+            foundInBin: updated.trueLocation || updated.scannedBin || "",
+            scannedBin: updated.scannedBin || "",
+            foundBy: updated.movedBy || updated.scannedBy || "—"
+          });
+        }
+      } catch (e) {
+        console.warn("[logs] WrongBin PATCH logs failed:", e?.message || e);
+      }
+
       return json(res,200,{ ok:true, audit: updated });
     } catch (e) {
       return json(res,500,{ ok:false, error:String(e.message||e) });
     }
   }
 
-  // DELETE: soft-close (no hard delete function in Store, so mark closed)
+  // DELETE: soft-close (mark closed)
   if (req.method === "DELETE"){
     try {
       const body = typeof req.body === "string" ? JSON.parse(req.body||"{}") : (req.body || {});
@@ -86,6 +126,22 @@ module.exports = async function handler(req, res){
       if (!id) return json(res,400,{ ok:false, error:"missing_id" });
       const updated = await Store.patchAudit(id, { status:"closed", updatedAt: now() });
       if (!updated) return json(res,404,{ ok:false, error:"not_found" });
+
+      try {
+        await logWrongBin({
+          imei: updated.imei,
+          scannedBin: updated.scannedBin,
+          trueLocation: updated.trueLocation,
+          scannedBy: updated.scannedBy,
+          status: "closed",
+          moved: updated.status === "moved" || !!updated.movedTo,
+          movedTo: updated.movedTo || "",
+          movedBy: updated.movedBy || ""
+        });
+      } catch (e) {
+        console.warn("[logs] WrongBin DELETE log failed:", e?.message || e);
+      }
+
       return json(res,200,{ ok:true, audit: updated });
     } catch (e) {
       return json(res,500,{ ok:false, error:String(e.message||e) });
