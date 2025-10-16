@@ -4,17 +4,11 @@ const XLSX = require("xlsx");
 const { ok, bad, method, withCORS } = require("../_lib/respond");
 
 function drive() {
-  const raw = process.env.GOOGLE_CREDENTIALS_JSON || "";
-  if (!raw) throw new Error("Missing GOOGLE_CREDENTIALS_JSON");
-  const creds = JSON.parse(raw);
-  const key = String(creds.private_key || "").replace(/\r?\n/g, "\n");
-  if (!creds.client_email || !key) throw new Error("Bad GOOGLE_CREDENTIALS_JSON");
-  const auth = new google.auth.JWT(creds.client_email, null, key, [
-    "https://www.googleapis.com/auth/drive.readonly",
-  ]);
+  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
+  const key = (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+  const auth = new google.auth.JWT(email, null, key, ["https://www.googleapis.com/auth/drive.readonly"]);
   return google.drive({ version: "v3", auth });
 }
-
 
 module.exports = async (req, res) => {
   if (req.method === "OPTIONS") { withCORS(res); return res.status(204).end(); }
