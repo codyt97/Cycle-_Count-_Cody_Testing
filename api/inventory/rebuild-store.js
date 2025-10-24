@@ -78,7 +78,7 @@ module.exports = async (req, res) => {
     const t0 = Date.now();
     const { wb, source } = await fetchInventoryWorkbook(fileId);
     const sheetName = wb.SheetNames[0];
-    const json = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
+    const json = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
     const rows = normalizeRows(json);
 
     await Store.setInventory(rows);
