@@ -1180,7 +1180,9 @@ scanned.add(imei);
 
 
 showAlerts(alerts,[{type:"ok",msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.`}]);
+try { window.playScanSound && window.playScanSound(true); } catch {}
 renderTable(); scanInput.value=""; return;
+
 
       }
 
@@ -1198,8 +1200,13 @@ if (info && info.location){
   });
   const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>. (Will be logged on Submit)`;
   showAlerts(alerts,[{type:"warn",msg}]);
+  try { window.playScanSound && window.playScanSound(false); } catch {}
+
 } else {
   showAlerts(alerts,[{type:"warn",msg:`IMEI <b>${escapeHTML(imei)}</b> not found in snapshot.`}]);
+  try { window.playScanSound && window.playScanSound(false); } catch {}
+
+  
 }
 scanInput.value="";
 
