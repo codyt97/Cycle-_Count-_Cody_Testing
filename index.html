@@ -1524,5 +1524,45 @@ document.addEventListener("click", async (e)=>{
     }
     init();
   </script>
+<!-- Scan Sounds (ok / bad) + Autoplay Unlock -->
+<script>
+  // Serve from /public/sounds/*
+  const okSound  = new Audio('/sounds/ok.mp3');
+  const badSound = new Audio('/sounds/bad.mp3');
+  okSound.preload = 'auto';
+  badSound.preload = 'auto';
+
+  // Browser autoplay guard: unlock after first user gesture
+  window.audioUnlocked = false;
+  function unlockAudioOnce() {
+    if (window.audioUnlocked) return;
+    try {
+      // prime silently
+      okSound.volume = 0;
+      okSound.play().then(() => {
+        okSound.pause(); okSound.currentTime = 0; okSound.volume = 1;
+        window.audioUnlocked = true;
+      }).catch(() => {/* will retry on next gesture */});
+    } catch(e) {/* noop */}
+  }
+  const _unlock = () => {
+    unlockAudioOnce();
+    document.removeEventListener('click', _unlock);
+    document.removeEventListener('keydown', _unlock);
+    document.removeEventListener('touchstart', _unlock);
+  };
+  document.addEventListener('click', _unlock);
+  document.addEventListener('keydown', _unlock);
+  document.addEventListener('touchstart', _unlock);
+
+  // Helper you can call anywhere
+  window.playScanSound = (isOk) => {
+    const s = isOk ? okSound : badSound;
+    try { s.pause(); s.currentTime = 0; s.play(); } catch(e) {/* noop */}
+  };
+</script>
+</body>
+
+  
 </body>
 </html>
