@@ -38,7 +38,12 @@ function normalizeRows(json) {
     })();
 
     return {
-      location:    pick(r, "bin","location","locationbin","locationbinref.name"),
+      const site = pick(r, "site","warehouse","sitecode","locationref.name");
+const bin  = pick(r, "bin","location","locationbin","locationbinref.name");
+const merged = site && bin ? `${site}:${bin}` : (bin || site || "");
+// ...
+location:    merged,
+
       sku:         pick(r, "sku","item","item ","itemcode","itemref.code"),
       description: pick(r, "description","itemname","itemref.name","desc"),
       systemImei,
