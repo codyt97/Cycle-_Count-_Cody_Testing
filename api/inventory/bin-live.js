@@ -95,7 +95,13 @@ module.exports = async (req, res) => {
   try {
     const rows = await loadRowsFromSheet(fileId);
     const records = rows
-      .filter(r => (r.location || "").trim().toLowerCase() === match)
+      .filter(r => {
+  const loc = String(r.location || "").trim().toLowerCase();
+  if (!loc) return false;
+  const bare = loc.includes(":") ? loc.split(":")[1] : loc;
+  return loc === match || bare === match;
+})
+
       .map(r => ({
         location: r.location,
         sku: r.sku,
