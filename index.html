@@ -1232,7 +1232,12 @@ scanInput.value="";
       try{
         const list = await fetchAuditList();
         auditCount.textContent = `${list.filter(x=>x.status!=="resolved").length} open`;
-        auditBody.innerHTML = list.map(it => `
+        const _rows = Array.isArray(list) ? list : [];
+        auditBody.innerHTML = _rows.map(it => `
+        if (!_rows.length) {
+  auditBody.innerHTML = `<tr><td colspan="10" class="empty">No audit records.</td></tr>`;
+}
+
   <tr>
     <td class="mono">${escapeHTML(it.imei)}</td>
     <td>${escapeHTML(it.scannedBin)}</td>
