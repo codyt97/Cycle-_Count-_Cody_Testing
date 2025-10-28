@@ -1191,17 +1191,22 @@ renderTable(); scanInput.value=""; return;
       // Not in current bin -> ask inventory API for true location (it also auto-logs audit)
 // Not in current bin -> ask inventory API for true location (no server audit yet; we buffer)
 const info = await locateImei(imei);
+// Normalize API variants so we always have values for the UI
+const normSku  = info?.sku || info?.SKU || info?.item || info?.ITEM || '';
+const normDesc = info?.description || info?.desc || info?.DESCRIPTION || info?.model || '';
+
 if (info && info.location){
   pendingWrongBin.push({
   imei,
-  sku: info.sku || "",
-  description: info.description || "",
+  sku: normSku,
+  description: normDesc,
   scannedBin: currentBin || "",
-  trueLocation: info.location,
+  trueLocation: info.location || "",
   status: "open",
   scannedBy: currentUser?.name || "—",
   ts: new Date().toISOString()
 });
+
 
   const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>. (Will be logged on Submit)`;
   showAlerts(alerts,[{type:"warn",msg}]);
