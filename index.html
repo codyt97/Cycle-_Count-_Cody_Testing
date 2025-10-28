@@ -291,20 +291,17 @@
               <table id="investWrongBin">
                 <thead>
                   <tr>
-  <th>IMEI</th>
-  <th>SKU</th>
-  <th>Description</th>
-  <th>Scanned Bin</th>
-  <th>True Location</th>
-  <th>Status</th>
-  <th>Moved?</th>
-  <th>Moved To</th>
-  <th>Moved By</th>
-  <th></th>
-</tr>
-
+                    <th>IMEI</th>
+                    <th>Scanned Bin</th>
+                    <th>True Location</th>
+                    <th>Status</th>
+                    <th>Moved?</th>
+                    <th>Moved To</th>
+                    <th>Moved By</th>
+                    <th></th>
+                  </tr>
                 </thead>
-                <tbody id="investWrongBinBody"><tr><td colspan="10" class="empty">No wrong-bin items.</td></tr></tbody>
+                <tbody id="investWrongBinBody"><tr><td colspan="8" class="empty">No wrong-bin items.</td></tr></tbody>
               </table>
             </div>
             <h3 class="section-title">Not-Scanned Items</h3>
@@ -323,7 +320,7 @@
       </tr>
     </thead>
     <tbody id="invNotScannedBody">
-      <tr><td colspan="7" class="empty">No not-scanned items.</td></tr>
+      <tr><td colspan="6" class="empty">No not-scanned items.</td></tr>
     </tbody>
   </table>
 </div>
@@ -748,24 +745,13 @@ if (subset==="missing") {
       const list = Array.isArray(data.records) ? data.records : [];
       return list.map(r => {
   const sysImei = String(r.systemImei || r.imei || r.serial || "");
-const hasSerial = !!sysImei;
-
-// Prefer explicit system qty; for non-serials fall back to common on-hand fields.
-// Final guard: serial rows default to 1; non-serial rows default to 0.
-const rawQty =
-  r.systemQty ??
-  r.onHand ??
-  r.qtyAvail ??
-  r.qty ??
-  r.QTY ??
-  (hasSerial ? 1 : 0);
-
+  const hasSerial = !!sysImei;
+// Coerce to number safely; if NaN → default (1 for serial, 0 for non-serial)
+const rawQty = r.systemQty ?? (hasSerial ? 1 : 0);
 const systemQty = (() => {
   const n = Number(String(rawQty).replace(/,/g, "").trim());
-  if (Number.isFinite(n) && n >= 0) return n;
-  return hasSerial ? 1 : 0;
+  return Number.isFinite(n) ? n : (hasSerial ? 1 : 0);
 })();
-
 return {
   location: r.location || bin,
   sku: r.sku || r.itemCode || "—",
@@ -1194,9 +1180,7 @@ scanned.add(imei);
 
 
 showAlerts(alerts,[{type:"ok",msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.`}]);
-try { window.playScanSound && window.playScanSound(true); } catch {}
 renderTable(); scanInput.value=""; return;
-
 
       }
 
@@ -1205,26 +1189,17 @@ renderTable(); scanInput.value=""; return;
 const info = await locateImei(imei);
 if (info && info.location){
   pendingWrongBin.push({
-  imei,
-  scannedBin: currentBin || "",
-  trueLocation: info.location,
-  // NEW metadata for investigator view:
-  sku: info.sku || "",
-  description: info.description || "",
-  status: "open",
-  scannedBy: currentUser?.name || "—",
-  ts: new Date().toISOString()
-});
-
+    imei,
+    scannedBin: currentBin || "",
+    trueLocation: info.location,
+    status: "open",
+    scannedBy: currentUser?.name || "—",
+    ts: new Date().toISOString()
+  });
   const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>. (Will be logged on Submit)`;
   showAlerts(alerts,[{type:"warn",msg}]);
-  try { window.playScanSound && window.playScanSound(false); } catch {}
-
 } else {
   showAlerts(alerts,[{type:"warn",msg:`IMEI <b>${escapeHTML(imei)}</b> not found in snapshot.`}]);
-  try { window.playScanSound && window.playScanSound(false); } catch {}
-
-  
 }
 scanInput.value="";
 
@@ -1262,13 +1237,14 @@ scanInput.value="";
             <td class="mono">${escapeHTML(it.imei)}</td>
             <td>${escapeHTML(it.scannedBin)}</td>
             <td>${escapeHTML(it.trueLocation)}</td>
-            <td><span class="badge">${escapeHTML(it.status || 'open')}</span></td>
-${it.status==="moved"
-  ? "Yes"
-  : `<button class="btn primary sm" data-move="${escapeHTML(it.id)}">Yes</button>
-     <button class="btn ghost sm" data-notmove="${escapeHTML(it.id)}">No</button>`}
-<td class="mono">${escapeHTML(it.movedTo||'')}</td>
-
+            <td><span class="badge">${escapeHTML(a.status || 'open')}</span></td>
+<td class="row-sm">
+  ${a.status==="moved"
+    ? "Yes"
+    : `<button class="btn primary sm" data-move="${escapeHTML(a.id)}">Yes</button>
+       <button class="btn ghost sm" data-notmove="${escapeHTML(a.id)}">No</button>`}
+</td>
+<td class="mono">${escapeHTML(a.movedTo||'')}</td>
 
             <td>${escapeHTML(it.movedBy||'')}</td>
             <td>${escapeHTML(it.decision||'')}</td>
@@ -1367,27 +1343,25 @@ async function refreshInvestigator(){
     // 3) Wrong-bin (hide resolved)
     const wrongOpen = (Array.isArray(wrong) ? wrong : []).filter(w => (w.status||"open") !== "resolved");
     investWrongBinBody.innerHTML = (!wrongOpen.length)
-  ? `<tr><td colspan="10" class="empty">No wrong-bin items.</td></tr>`
-  : wrongOpen.map(it => `
-      <tr>
-        <td class="mono">${escapeHTML(it.imei)}</td>
-        <td class="mono">${escapeHTML(it.sku || "—")}</td>
-        <td>${escapeHTML(it.description || "—")}</td>
-        <td>${escapeHTML(it.scannedBin||"—")}</td>
-        <td>${escapeHTML(it.trueLocation||"—")}</td>
-        <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
-        <td class="row-sm">
-          ${it.status==="moved"
-            ? "Yes"
-            : `<button class="btn primary sm" data-move="${escapeHTML(it.id)}">Yes</button>
-               <button class="btn ghost sm" data-notmove="${escapeHTML(it.id)}">No</button>`}
-        </td>
-        <td class="mono">${escapeHTML(it.movedTo||"")}</td>
-        <td>${escapeHTML(it.movedBy||"")}</td>
-        <td></td>
-      </tr>
-    `).join("");
+      ? `<tr><td colspan="7" class="empty">No wrong-bin items.</td></tr>`
+      : wrongOpen.map(it => `
+          <tr>
+            <td class="mono">${escapeHTML(it.imei)}</td>
+            <td>${escapeHTML(it.scannedBin||"—")}</td>
+            <td>${escapeHTML(it.trueLocation||"—")}</td>
+            <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
+<td class="row-sm">
+  ${it.status==="moved"
+    ? "Yes"
+    : `<button class="btn primary sm" data-move="${escapeHTML(it.id)}">Yes</button>
+       <button class="btn ghost sm" data-notmove="${escapeHTML(it.id)}">No</button>`}
+</td>
+<td class="mono">${escapeHTML(it.movedTo||"")}</td>
+<td>${escapeHTML(it.movedBy||"")}</td>
+<td></td>
 
+          </tr>
+        `).join("");
 
     // 4) Not-scanned (serial + non-serial)
     const s = Array.isArray(shorts) ? shorts : [];
@@ -1550,42 +1524,5 @@ document.addEventListener("click", async (e)=>{
     }
     init();
   </script>
-<!-- Scan Sounds (ok / bad) + Autoplay Unlock -->
-<script>
-  // Serve from /public/sounds/*
-  const okSound  = new Audio('/sounds/ok.mp3');
-  const badSound = new Audio('/sounds/bad.mp3');
-  okSound.preload = 'auto';
-  badSound.preload = 'auto';
-
-  // Browser autoplay guard: unlock after first user gesture
-  window.audioUnlocked = false;
-  function unlockAudioOnce() {
-    if (window.audioUnlocked) return;
-    try {
-      // prime silently
-      okSound.volume = 0;
-      okSound.play().then(() => {
-        okSound.pause(); okSound.currentTime = 0; okSound.volume = 1;
-        window.audioUnlocked = true;
-      }).catch(() => {/* will retry on next gesture */});
-    } catch(e) {/* noop */}
-  }
-  const _unlock = () => {
-    unlockAudioOnce();
-    document.removeEventListener('click', _unlock);
-    document.removeEventListener('keydown', _unlock);
-    document.removeEventListener('touchstart', _unlock);
-  };
-  document.addEventListener('click', _unlock);
-  document.addEventListener('keydown', _unlock);
-  document.addEventListener('touchstart', _unlock);
-
-  // Helper you can call anywhere
-  window.playScanSound = (isOk) => {
-    const s = isOk ? okSound : badSound;
-    try { s.pause(); s.currentTime = 0; s.play(); } catch(e) {/* noop */}
-  };
-</script>
 </body>
 </html>
