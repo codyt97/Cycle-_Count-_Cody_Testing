@@ -291,15 +291,18 @@
               <table id="investWrongBin">
                 <thead>
                   <tr>
-                    <th>IMEI</th>
-                    <th>Scanned Bin</th>
-                    <th>True Location</th>
-                    <th>Status</th>
-                    <th>Moved?</th>
-                    <th>Moved To</th>
-                    <th>Moved By</th>
-                    <th></th>
-                  </tr>
+  <th>IMEI</th>
+  <th>SKU</th>
+  <th>Description</th>
+  <th>Scanned Bin</th>
+  <th>True Location</th>
+  <th>Status</th>
+  <th>Moved?</th>
+  <th>Moved To</th>
+  <th>Moved By</th>
+  <th></th>
+</tr>
+
                 </thead>
                 <tbody id="investWrongBinBody"><tr><td colspan="8" class="empty">No wrong-bin items.</td></tr></tbody>
               </table>
@@ -745,13 +748,24 @@ if (subset==="missing") {
       const list = Array.isArray(data.records) ? data.records : [];
       return list.map(r => {
   const sysImei = String(r.systemImei || r.imei || r.serial || "");
-  const hasSerial = !!sysImei;
-// Coerce to number safely; if NaN → default (1 for serial, 0 for non-serial)
-const rawQty = r.systemQty ?? (hasSerial ? 1 : 0);
+const hasSerial = !!sysImei;
+
+// Prefer explicit system qty; for non-serials fall back to common on-hand fields.
+// Final guard: serial rows default to 1; non-serial rows default to 0.
+const rawQty =
+  r.systemQty ??
+  r.onHand ??
+  r.qtyAvail ??
+  r.qty ??
+  r.QTY ??
+  (hasSerial ? 1 : 0);
+
 const systemQty = (() => {
   const n = Number(String(rawQty).replace(/,/g, "").trim());
-  return Number.isFinite(n) ? n : (hasSerial ? 1 : 0);
+  if (Number.isFinite(n) && n >= 0) return n;
+  return hasSerial ? 1 : 0;
 })();
+
 return {
   location: r.location || bin,
   sku: r.sku || r.itemCode || "—",
@@ -1191,13 +1205,17 @@ renderTable(); scanInput.value=""; return;
 const info = await locateImei(imei);
 if (info && info.location){
   pendingWrongBin.push({
-    imei,
-    scannedBin: currentBin || "",
-    trueLocation: info.location,
-    status: "open",
-    scannedBy: currentUser?.name || "—",
-    ts: new Date().toISOString()
-  });
+  imei,
+  scannedBin: currentBin || "",
+  trueLocation: info.location,
+  // NEW metadata for investigator view:
+  sku: info.sku || "",
+  description: info.description || "",
+  status: "open",
+  scannedBy: currentUser?.name || "—",
+  ts: new Date().toISOString()
+});
+
   const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>. (Will be logged on Submit)`;
   showAlerts(alerts,[{type:"warn",msg}]);
   try { window.playScanSound && window.playScanSound(false); } catch {}
@@ -1350,25 +1368,27 @@ async function refreshInvestigator(){
     // 3) Wrong-bin (hide resolved)
     const wrongOpen = (Array.isArray(wrong) ? wrong : []).filter(w => (w.status||"open") !== "resolved");
     investWrongBinBody.innerHTML = (!wrongOpen.length)
-      ? `<tr><td colspan="7" class="empty">No wrong-bin items.</td></tr>`
-      : wrongOpen.map(it => `
-          <tr>
-            <td class="mono">${escapeHTML(it.imei)}</td>
-            <td>${escapeHTML(it.scannedBin||"—")}</td>
-            <td>${escapeHTML(it.trueLocation||"—")}</td>
-            <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
-<td class="row-sm">
-  ${it.status==="moved"
-    ? "Yes"
-    : `<button class="btn primary sm" data-move="${escapeHTML(it.id)}">Yes</button>
-       <button class="btn ghost sm" data-notmove="${escapeHTML(it.id)}">No</button>`}
-</td>
-<td class="mono">${escapeHTML(it.movedTo||"")}</td>
-<td>${escapeHTML(it.movedBy||"")}</td>
-<td></td>
+  ? `<tr><td colspan="10" class="empty">No wrong-bin items.</td></tr>`
+  : wrongOpen.map(it => `
+      <tr>
+        <td class="mono">${escapeHTML(it.imei)}</td>
+        <td class="mono">${escapeHTML(it.sku || "—")}</td>
+        <td>${escapeHTML(it.description || "—")}</td>
+        <td>${escapeHTML(it.scannedBin||"—")}</td>
+        <td>${escapeHTML(it.trueLocation||"—")}</td>
+        <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
+        <td class="row-sm">
+          ${it.status==="moved"
+            ? "Yes"
+            : `<button class="btn primary sm" data-move="${escapeHTML(it.id)}">Yes</button>
+               <button class="btn ghost sm" data-notmove="${escapeHTML(it.id)}">No</button>`}
+        </td>
+        <td class="mono">${escapeHTML(it.movedTo||"")}</td>
+        <td>${escapeHTML(it.movedBy||"")}</td>
+        <td></td>
+      </tr>
+    `).join("");
 
-          </tr>
-        `).join("");
 
     // 4) Not-scanned (serial + non-serial)
     const s = Array.isArray(shorts) ? shorts : [];
