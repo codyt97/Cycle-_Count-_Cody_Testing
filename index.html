@@ -599,36 +599,32 @@ try {
       tbody.innerHTML = rows.map((r, i) => {
   const matched = !!(r.systemImei && r.scannedImei && String(r.scannedImei).trim() === String(r.systemImei).trim());
   const sysQty = Number(String(r.systemQty).replace(/,/g,"").trim()) || (r.systemImei ? 1 : 0);
-  const qtyVal = r.hasSerial ? (matched ? 1 : 0) : Math.max(0, Math.min(sysQty, Number(r.qtyEntered || 0)));
+const qtyVal = r.hasSerial ? (matched ? 1 : 0) : Math.max(0, Number(r.qtyEntered || 0));
 
+return `<tr class="${matched?'ok':''}">
+  ...
+  <td>${sysQty}</td>
+  <td>
+    ${r.hasSerial
+      ? `<input type="number" class="qty-input" value="${qtyVal}" min="0" step="1" disabled>`
+      : `<input type="number" class="qty-input" value="${qtyVal}" min="0" step="1" data-idx="${i}">`
+    }
+  </td>
+</tr>`;
 
-  return `<tr class="${matched?'ok':''}">
-    <td>${escapeHTML(r.location)}</td>
-    <td class="mono">${escapeHTML(r.sku)}</td>
-    <td>${escapeHTML(r.description||'—')}</td>
-    <td class="mono">${escapeHTML(r.systemImei||'—')}</td>
-    <td class="mono">${escapeHTML(r.scannedImei||'—')}</td>
-    <td>${sysQty}</td>
-    <td>
-      ${r.hasSerial
-        ? `<input type="number" class="qty-input" value="${qtyVal}" min="0" max="${sysQty}" step="1" disabled>`
-        : `<input type="number" class="qty-input" value="${qtyVal}" min="0" max="${sysQty}" step="1" data-idx="${i}">`
-      }
-    </td>
-  </tr>`;
 }).join("");
 
 // attach change handlers for non-serial qty inputs
 tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
   inp.addEventListener('input', () => {
     const idx = Number(inp.getAttribute('data-idx'));
-    const sysQty = Number(rows[idx].systemQty || 0);
-    const v = Math.max(0, Math.min(sysQty, Number(inp.value || 0)));
+    const v = Math.max(0, Number(inp.value || 0));
     rows[idx].qtyEntered = v;
     inp.value = v;
     setKPIs();
   });
 });
+
 
 setKPIs();
 
@@ -671,7 +667,7 @@ const csvEscape = (v) => {
     const sysQty = Number(String(r.systemQty).replace(/,/g,"").trim()) || (r.systemImei ? 1 : 0);
     const qtyEnt = r.systemImei
   ? (String(r.scannedImei||"").trim() === String(r.systemImei||"").trim() ? 1 : 0)
-  : Math.max(0, Math.min(sysQty, Number(r.qtyEntered || 0)));
+  : Math.max(0, Number(r.qtyEntered || 0));
 ;
 
     lines.push(
