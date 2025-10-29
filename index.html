@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="en">
 <head> 
@@ -227,8 +228,8 @@
               </caption>
               <thead>
                 <tr>
-                  <th> Location </th>
-                  <th> SKU </th>
+                  <th>Location</th>
+                  <th>SKU</th>
                   <th>Description</th>
                   <th>System IMEI</th>
                   <th>Scanned IMEI</th>
@@ -288,24 +289,21 @@
 
             <h4 style="margin:10px 0;">Wrong IMEIs (Investigator verifies moves)</h4>
             <div class="table-wrap">
-              <table id="investWrongBin" class="table">
-  <thead>
-    <tr>
-      <th>IMEI</th>
-      <th>SKU</th>
-      <th>Description</th>
-      <th>Scanned Bin</th>
-      <th>True Location</th>
-      <th>Status</th>
-      <th>Moved?</th>
-      <th>Moved To</th>
-      <th>Moved By</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody id="investWrongBinBody"><tr><td colspan="10" class="empty">No wrong-bin items.</td></tr></tbody>
-</table>
-
+              <table id="investWrongBin">
+                <thead>
+                  <tr>
+                    <th>IMEI</th>
+                    <th>Scanned Bin</th>
+                    <th>True Location</th>
+                    <th>Status</th>
+                    <th>Moved?</th>
+                    <th>Moved To</th>
+                    <th>Moved By</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="investWrongBinBody"><tr><td colspan="8" class="empty">No wrong-bin items.</td></tr></tbody>
+              </table>
             </div>
             <h3 class="section-title">Not-Scanned Items</h3>
 <div class="table-wrap">
@@ -323,9 +321,8 @@
       </tr>
     </thead>
     <tbody id="invNotScannedBody">
-  <tr><td colspan="7" class="empty">No not-scanned items.</td></tr>
-</tbody>
-
+      <tr><td colspan="6" class="empty">No not-scanned items.</td></tr>
+    </tbody>
   </table>
 </div>
 
@@ -609,7 +606,7 @@ try {
     <td>
       ${r.hasSerial
         ? `<input type="number" class="qty-input" value="${qtyVal}" min="0" max="${sysQty}" step="1" disabled>`
-        : `<input type="number" class="qty-input" value="${qtyVal}" min="0" step="1" data-idx="${i}">`
+        : `<input type="number" class="qty-input" value="${qtyVal}" min="0" max="${sysQty}" step="1" data-idx="${i}">`
       }
     </td>
   </tr>`;
@@ -620,14 +617,10 @@ tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
   inp.addEventListener('input', () => {
     const idx = Number(inp.getAttribute('data-idx'));
     const sysQty = Number(rows[idx].systemQty || 0);
-    let v = Number(inp.value || 0);
-if (!Number.isFinite(v) || v < 0) v = 0;
-// store what the user typed (no cap)
-rows[idx].qtyEntered = v;
-// but keep the *displayed* value as typed too
-inp.value = String(v);
-setKPIs();
-
+    const v = Math.max(0, Math.min(sysQty, Number(inp.value || 0)));
+    rows[idx].qtyEntered = v;
+    inp.value = v;
+    setKPIs();
   });
 });
 
@@ -1112,8 +1105,8 @@ document.addEventListener("click", async (e)=>{
                     : null;
   if (!id) return;
   try{
-    const payload = y ? { status:"moved", movedBy:(currentUser?.name || "—") }
-                  : { status:"open" };
+    const payload = y ? { status:"moved", movedBy:(window.currentUser?.name || "—") }
+                      : { status:"open" };
     await patchAudit(id, payload);
     await refreshInvestigator();
   }catch(err){
@@ -1195,23 +1188,15 @@ renderTable(); scanInput.value=""; return;
       // Not in current bin -> ask inventory API for true location (it also auto-logs audit)
 // Not in current bin -> ask inventory API for true location (no server audit yet; we buffer)
 const info = await locateImei(imei);
-// Normalize API variants so we always have values for the UI
-const normSku  = info?.sku || info?.SKU || info?.item || info?.ITEM || '';
-const normDesc = info?.description || info?.desc || info?.DESCRIPTION || info?.model || '';
-
 if (info && info.location){
   pendingWrongBin.push({
-  imei,
-  sku: normSku,
-  description: normDesc,
-  scannedBin: currentBin || "",
-  trueLocation: info.location || "",
-  status: "open",
-  scannedBy: currentUser?.name || "—",
-  ts: new Date().toISOString()
-});
-
-
+    imei,
+    scannedBin: currentBin || "",
+    trueLocation: info.location,
+    status: "open",
+    scannedBy: currentUser?.name || "—",
+    ts: new Date().toISOString()
+  });
   const msg = `Wrong bin: IMEI <b>${escapeHTML(imei)}</b> is in <b>${escapeHTML(info.location)}</b>. (Will be logged on Submit)`;
   showAlerts(alerts,[{type:"warn",msg}]);
 } else {
@@ -1253,15 +1238,14 @@ scanInput.value="";
             <td class="mono">${escapeHTML(it.imei)}</td>
             <td>${escapeHTML(it.scannedBin)}</td>
             <td>${escapeHTML(it.trueLocation)}</td>
-           <td><span class="badge">${escapeHTML(it.status || 'open')}</span></td>
+            <td><span class="badge">${escapeHTML(a.status || 'open')}</span></td>
 <td class="row-sm">
-  ${it.status==="moved"
+  ${a.status==="moved"
     ? "Yes"
-    : `<button class="btn primary sm" data-move="${escapeHTML(it.id)}">Yes</button>
-       <button class="btn ghost sm" data-notmove="${escapeHTML(it.id)}">No</button>`}
+    : `<button class="btn primary sm" data-move="${escapeHTML(a.id)}">Yes</button>
+       <button class="btn ghost sm" data-notmove="${escapeHTML(a.id)}">No</button>`}
 </td>
-<td class="mono">${escapeHTML(it.movedTo||'')}</td>
-
+<td class="mono">${escapeHTML(a.movedTo||'')}</td>
 
             <td>${escapeHTML(it.movedBy||'')}</td>
             <td>${escapeHTML(it.decision||'')}</td>
@@ -1360,27 +1344,25 @@ async function refreshInvestigator(){
     // 3) Wrong-bin (hide resolved)
     const wrongOpen = (Array.isArray(wrong) ? wrong : []).filter(w => (w.status||"open") !== "resolved");
     investWrongBinBody.innerHTML = (!wrongOpen.length)
-  ? `<tr><td colspan="10" class="empty">No wrong-bin items.</td></tr>`
-  : wrongOpen.map(it => `
-    <tr>
-      <td class="mono">${escapeHTML(it.imei)}</td>
-      <td class="mono">${escapeHTML(it.sku || "—")}</td>
-      <td>${escapeHTML(it.description || "—")}</td>
-      <td>${escapeHTML(it.scannedBin||"—")}</td>
-      <td>${escapeHTML(it.trueLocation||"—")}</td>
-      <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
-      <td class="row-sm">
-        ${it.status==="moved"
-          ? "Yes"
-          : `<button class="btn primary sm" data-move="${escapeHTML(it.id)}">Yes</button>
-             <button class="btn ghost sm" data-notmove="${escapeHTML(it.id)}">No</button>`}
-      </td>
-      <td class="mono">${escapeHTML(it.movedTo||"")}</td>
-      <td>${escapeHTML(it.movedBy||"")}</td>
-      <td></td>
-    </tr>
-  `).join("");
+      ? `<tr><td colspan="7" class="empty">No wrong-bin items.</td></tr>`
+      : wrongOpen.map(it => `
+          <tr>
+            <td class="mono">${escapeHTML(it.imei)}</td>
+            <td>${escapeHTML(it.scannedBin||"—")}</td>
+            <td>${escapeHTML(it.trueLocation||"—")}</td>
+            <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
+<td class="row-sm">
+  ${it.status==="moved"
+    ? "Yes"
+    : `<button class="btn primary sm" data-move="${escapeHTML(it.id)}">Yes</button>
+       <button class="btn ghost sm" data-notmove="${escapeHTML(it.id)}">No</button>`}
+</td>
+<td class="mono">${escapeHTML(it.movedTo||"")}</td>
+<td>${escapeHTML(it.movedBy||"")}</td>
+<td></td>
 
+          </tr>
+        `).join("");
 
     // 4) Not-scanned (serial + non-serial)
     const s = Array.isArray(shorts) ? shorts : [];
@@ -1468,9 +1450,7 @@ supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
       </td>
     </tr>
   `;
-}).join("") : `
-
-<tr><td colspan="6" class="empty">No not-scanned items.</td></tr>`);
+}).join("") : `<tr><td colspan="6" class="empty">No not-scanned items.</td></tr>`);
 
 
 
