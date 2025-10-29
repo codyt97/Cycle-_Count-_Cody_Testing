@@ -569,13 +569,11 @@ try {
   const scannedSerials = rows.filter(r =>
     r.systemImei && String(r.scannedImei||"").trim() === String(r.systemImei||"").trim()
   ).length;
-  const scannedNonSerial = rows
-    .filter(r => !r.systemImei)
-    .reduce((a, b) => {
-      const sys = Number(String(b.systemQty).replace(/,/g, "").trim()) || 0;
-      const ent = Number(b.qtyEntered || 0);
-      return a + Math.min(ent, sys);
-    }, 0);
+  // Non-serial: allow overcount; just add entered qty
+const scannedNonSerial = rows
+  .filter(r => !r.systemImei)
+  .reduce((a, b) => a + (Number(b.qtyEntered || 0)), 0);
+;
 
   const scannedCount = scannedSerials + scannedNonSerial;
   const missing = Math.max(0, total - scannedCount);
@@ -600,8 +598,12 @@ try {
   const matched = !!(r.systemImei && r.scannedImei && String(r.scannedImei).trim() === String(r.systemImei).trim());
   const sysQty = Number(String(r.systemQty).replace(/,/g,"").trim()) || (r.systemImei ? 1 : 0);
 const qtyVal = r.hasSerial ? (matched ? 1 : 0) : Math.max(0, Number(r.qtyEntered || 0));
+let rowClass = "";
+if (r.hasSerial && matched) rowClass = "ok";
+else if (!r.hasSerial && Number(r.qtyEntered || 0) > Number(r.systemQty || 0)) rowClass = "bad";
+else if (!r.hasSerial && Number(r.qtyEntered || 0) < Number(r.systemQty || 0)) rowClass = "warn";
+return `<tr class="${rowClass}">
 
-return `<tr class="${matched?'ok':''}">
   ...
   <td>${sysQty}</td>
   <td>
