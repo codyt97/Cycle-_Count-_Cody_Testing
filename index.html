@@ -304,7 +304,7 @@
                     <th></th>
                   </tr>
                 </thead>
-                <tbody id="investWrongBinBody"><tr><td colspan="8" class="empty">No wrong-bin items.</td></tr></tbody>
+                <tbody id="investWrongBinBody"><tr><td colspan="10" class="empty">No wrong-bin items.</td></tr></tbody>
               </table>
             </div>
             <h3 class="section-title">Not-Scanned Items</h3>
@@ -355,6 +355,8 @@
                 <thead>
                   <tr>
                     <th>IMEI</th>
+                    <th>SKU</th>
+                    <th>Description</th>
                     <th>Scanned Bin</th>
                     <th>True Location</th>
                     <th>Status</th>
@@ -409,6 +411,8 @@
           <thead>
             <tr>
               <th>IMEI</th>
+              <th>SKU</th>
+              <th>Description</th>
               <th>Scanned Bin</th>
               <th>True Location</th>
               <th>Status</th>
@@ -1237,29 +1241,25 @@ scanInput.value="";
       auditDrawer.setAttribute("aria-hidden","false");
       try{
         const list = await fetchAuditList();
-        auditCount.textContent = `${list.filter(x=>x.status!=="resolved").length} open`;
-        auditBody.innerHTML = list.map(it => `
-          <tr>
-            <td class="mono">${escapeHTML(it.imei)}</td>
-            <td>${escapeHTML(it.scannedBin)}</td>
-            <td>${escapeHTML(it.trueLocation)}</td>
-            <td><span class="badge">${escapeHTML(a.status || 'open')}</span></td>
-<td class="row-sm">
-  ${a.status==="moved"
-    ? "Yes"
-    : `<button class="btn primary sm" data-move="${escapeHTML(a.id)}">Yes</button>
-       <button class="btn ghost sm" data-notmove="${escapeHTML(a.id)}">No</button>`}
-</td>
-<td class="mono">${escapeHTML(a.movedTo||'')}</td>
+auditCount.textContent = `${list.filter(x=>x.status!=="resolved").length} open`;
+auditBody.innerHTML = list.map(it => `
+  <tr>
+    <td class="mono">${escapeHTML(it.imei)}</td>
+    <td class="mono">${escapeHTML(it.sku || "—")}</td>
+    <td>${escapeHTML(it.description || "—")}</td>
+    <td>${escapeHTML(it.scannedBin || "—")}</td>
+    <td>${escapeHTML(it.trueLocation || "—")}</td>
+    <td><span class="badge">${escapeHTML(it.status || 'open')}</span></td>
+    <td class="mono">${escapeHTML(it.movedTo || '')}</td>
+    <td>${escapeHTML(it.movedBy || '')}</td>
+    <td>${escapeHTML(it.decision || '')}</td>
+    <td>${escapeHTML(it.decidedBy || '')}</td>
+    <td class="row-sm">
+      ${it.status === "resolved" ? "" : `<button class="btn primary sm" data-resolve="${escapeHTML(it.id)}">Mark Fixed</button>`}
+    </td>
+  </tr>
+`).join("");
 
-            <td>${escapeHTML(it.movedBy||'')}</td>
-            <td>${escapeHTML(it.decision||'')}</td>
-            <td>${escapeHTML(it.decidedBy||'')}</td>
-            <td class="row-sm">
-              ${it.status === "resolved" ? "" : `<button class="btn primary sm" data-resolve="${escapeHTML(it.id)}">Mark Fixed</button>`}
-            </td>
-          </tr>
-        `).join("");
         showAlerts(auditAlerts,[]);
       }catch(err){
         showAlerts(auditAlerts,[{type:"warn",msg:"Failed to load audit list."}]);
@@ -1279,18 +1279,21 @@ scanInput.value="";
         const list = await fetchAuditList();
         auditCount.textContent = `${list.filter(x=>x.status!=="resolved").length} open`;
         auditBody.innerHTML = list.map(it => `
-          <tr>
-            <td class="mono">${escapeHTML(it.imei)}</td>
-            <td>${escapeHTML(it.scannedBin)}</td>
-            <td>${escapeHTML(it.trueLocation)}</td>
-            <td><span class="badge">${escapeHTML(it.status || 'open')}</span></td>
-            <td class="mono">${escapeHTML(it.movedTo||'')}</td>
-            <td>${escapeHTML(it.movedBy||'')}</td>
-            <td>${escapeHTML(it.decision||'')}</td>
-            <td>${escapeHTML(it.decidedBy||'')}</td>
-            <td class="row-sm"></td>
-          </tr>
-        `).join("");
+  <tr>
+    <td class="mono">${escapeHTML(it.imei)}</td>
+    <td class="mono">${escapeHTML(it.sku || "—")}</td>
+    <td>${escapeHTML(it.description || "—")}</td>
+    <td>${escapeHTML(it.scannedBin || "—")}</td>
+    <td>${escapeHTML(it.trueLocation || "—")}</td>
+    <td><span class="badge">${escapeHTML(it.status || 'open')}</span></td>
+    <td class="mono">${escapeHTML(it.movedTo || '')}</td>
+    <td>${escapeHTML(it.movedBy || '')}</td>
+    <td>${escapeHTML(it.decision || '')}</td>
+    <td>${escapeHTML(it.decidedBy || '')}</td>
+    <td class="row-sm"></td>
+  </tr>
+`).join("");
+
       }catch(err){
         showAlerts(auditAlerts,[{type:"warn",msg:"Failed to resolve item."}]);
       }finally{
@@ -1417,22 +1420,25 @@ async function refreshInvestigator(){
         // Wrong-bin logs
         const audits = await fetchAuditList();
         supWrongBinBody.innerHTML = (audits.length ? audits.map(it => `
-          <tr>
-            <td class="mono">${escapeHTML(it.imei)}</td>
-            <td>${escapeHTML(it.scannedBin)}</td>
-            <td>${escapeHTML(it.trueLocation)}</td>
-            <td><span class="badge">${escapeHTML(it.status||"open")}</span></td>
-            <td class="mono">${escapeHTML(it.movedTo||'')}</td>
-            <td>${escapeHTML(it.movedBy||'')}</td>
-            <td>
-              <input class="field" data-decision-input="${escapeHTML(it.id)}" placeholder="Decision note (optional)" style="padding:6px 10px"/>
-            </td>
-            <td>${escapeHTML(it.decidedBy||'')}</td>
-            <td class="row-sm">
-              ${it.status==="resolved" ? "" : `<button class="btn primary sm" data-sup-resolve="${escapeHTML(it.id)}">Resolve</button>`}
-            </td>
-          </tr>
-        `).join("") : `<tr><td colspan="9" class="empty">No wrong-bin logs.</td></tr>`);
+  <tr>
+    <td class="mono">${escapeHTML(it.imei)}</td>
+    <td class="mono">${escapeHTML(it.sku || "—")}</td>
+    <td>${escapeHTML(it.description || "—")}</td>
+    <td>${escapeHTML(it.scannedBin || "—")}</td>
+    <td>${escapeHTML(it.trueLocation || "—")}</td>
+    <td><span class="badge">${escapeHTML(it.status || "open")}</span></td>
+    <td class="mono">${escapeHTML(it.movedTo || '')}</td>
+    <td>${escapeHTML(it.movedBy || '')}</td>
+    <td>
+      <input class="field" data-decision-input="${escapeHTML(it.id)}" placeholder="Decision note (optional)" style="padding:6px 10px"/>
+    </td>
+    <td>${escapeHTML(it.decidedBy || '')}</td>
+    <td class="row-sm">
+      ${it.status === "resolved" ? "" : `<button class="btn primary sm" data-sup-resolve="${escapeHTML(it.id)}">Resolve</button>`}
+    </td>
+  </tr>
+`).join("") : `<tr><td colspan="11" class="empty">No wrong-bin logs.</td></tr>`);
+
 
 // Not-scanned
 // Not-scanned
