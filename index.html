@@ -68,6 +68,8 @@
     tr.ok{background:var(--cu-green-50)}
     tr.warn{background:#fff7ed}  /* amber for deficits (entered < system) */
     tr.bad{ background:#fee2e2}  /* red for overcounts (entered > system) */
+    #investigation-overage .table-wrap, #supervisor-overage .table-wrap{ max-height:280px; overflow:auto; }
+    #investigation-overage thead th, #supervisor-overage thead th{ position:sticky; top:0; background:#fff; z-index:1; }
     .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
     .qty{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;font-weight:800;background:#eef3ea;color:#1f3a1a}
     .qty.is1{background:var(--cu-green);color:#0a0a0a}
@@ -629,6 +631,96 @@ try {
     const pad = n => String(n).padStart(2,"0");
     const ts = () => { const d=new Date(); return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; };
 
+    // --- Overage helpers (non-serial, entered > system) ---
+function computeOveragesFromRows(list){
+  return (Array.isArray(list) ? list : [])
+    .filter(r => !r.systemImei)
+    .map(r => {
+      const sys = Number(String(r.systemQty).replace(/,/g,"").trim()) || 0;
+      const ent = Math.max(0, Number(r.qtyEntered || 0));
+      const over = Math.max(0, ent - sys);
+      return {...r, sysQtyNum: sys, entQtyNum: ent, overBy: over};
+    })
+    .filter(r => r.overBy > 0);
+}
+
+function computeOveragesFromApiList(list){
+  return (Array.isArray(list) ? list : [])
+    .filter(r => !String(r.systemImei||"").trim()) // non-serial only
+    .map(r => {
+      const sys = Number(r.systemQty || 0);
+      const ent = Math.max(0, Number(r.qtyEntered || 0));
+      const over = Math.max(0, ent - sys);
+      return {...r, sysQtyNum: sys, entQtyNum: ent, overBy: over};
+    })
+    .filter(r => r.overBy > 0);
+}
+
+function ensureOverageCard(container, cardId, title){
+  if (!container) return null;
+  let card = document.getElementById(cardId);
+  if (!card){
+    card = document.createElement('section');
+    card.className = 'card';
+    card.id = cardId;
+    card.innerHTML = `
+      <div class="head">
+        <div>
+          <div class="h1">${title}</div>
+          <div class="h2">Non-serial items where Entered &gt; System</div>
+        </div>
+      </div>
+      <div class="body">
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Description</th>
+                <th>System Qty</th>
+                <th>Entered Qty</th>
+                <th>Over by</th>
+                <th>Bin</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <div class="empty" style="display:none">No overages.</div>
+        </div>
+      </div>`;
+    container.appendChild(card);
+  }
+  return card;
+}
+
+function renderOverageTable(cardId, overages){
+  const card = document.getElementById(cardId);
+  if (!card) return;
+  const tbody = card.querySelector('tbody');
+  const empty = card.querySelector('.empty');
+  tbody.innerHTML = '';
+  if (!overages.length){
+    if (empty) empty.style.display = '';
+    card.style.display = 'none';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  card.style.display = '';
+  for (const r of overages){
+    const tr = document.createElement('tr');
+    tr.className = 'bad'; // red for overage
+    tr.innerHTML = `
+      <td class="mono">${escapeHTML(r.sku || r.orderTimeSku || "—")}</td>
+      <td>${escapeHTML(r.description || r.desc || "—")}</td>
+      <td>${r.sysQtyNum}</td>
+      <td>${r.entQtyNum}</td>
+      <td>${r.overBy}</td>
+      <td class="mono">${escapeHTML(r.location || r.bin || "—")}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
     const renderTable = () => {
       if (!rows.length){ resultsCard.style.display="none"; emptyCard.style.display="block"; setKPIs(); submitBinBtn.disabled = true; return; }
       resultsCard.style.display="block"; emptyCard.style.display="none";
@@ -1001,6 +1093,15 @@ const missingList = rows
   .filter(r => r.systemImei && r.scannedImei !== r.systemImei)
   .map(r => ({ sku: r.sku, description: r.description, systemImei: r.systemImei }));
 
+const overages = computeOveragesFromRows(rows).map(r => ({
+  sku: r.sku || "",
+  description: r.description || "",
+  systemQty: r.sysQtyNum,
+  enteredQty: r.entQtyNum,
+  overBy: r.overBy,
+  bin: r.location || currentBin || ""
+}));
+
 const payload = {
   bin: currentBin,
   counter: currentUser?.name || "—",
@@ -1015,10 +1116,11 @@ const payload = {
     scannedImei: r.scannedImei || "",
     ...(r.hasSerial ? {} : { qtyEntered: Number(r.qtyEntered || 0), systemQty: Number(r.systemQty || 0) })
   })),
+  overages,                 // <— NEW
   missingImeis: missingList,
-  // NEW: send buffered wrong-bin audits with the submit
   wrongBin: pendingWrongBin.slice()
 };
+
 
 
 
@@ -1453,6 +1555,12 @@ async function refreshInvestigator(){
     }).join("")
   : `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`;
 
+      // ---- Overage table (Investigator) ----
+    const invContainer = document.querySelector('#page2 .card .body');
+    const invCard = ensureOverageCard(invContainer, 'investigation-overage', 'Overage (Investigator View)');
+    const invOverages = computeOveragesFromApiList(s);
+    renderOverageTable('investigation-overage', invOverages);
+
     showAlerts(investAlerts,[]);
   }catch(e){
     showAlerts(investAlerts,[{type:"warn",msg:`Failed to load investigator data.<br><small>${escapeHTML(String(e.message||e))}</small>`}]);
@@ -1466,6 +1574,12 @@ async function refreshInvestigator(){
 
         // Wrong-bin logs
         const audits = await fetchAuditList();
+        // Also fetch not-scanned items to compute overages for supervisor
+let supShorts = [];
+try {
+  supShorts = await fetchNotScanned();
+} catch {}
+
         supWrongBinBody.innerHTML = (audits.length ? audits.map(it => `
   <tr>
     <td class="mono">${escapeHTML(it.imei)}</td>
@@ -1536,6 +1650,12 @@ supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
         await patchAudit(id, { status:"resolved", decision, decidedBy: currentUser?.name || "—" });
         await refreshSupervisorViews();
       }catch{
+        // ---- Overage table (Supervisor) ----
+const supContainer = document.querySelector('#page3 .card .body');
+const supCard = ensureOverageCard(supContainer, 'supervisor-overage', 'Overage (Supervisor View)');
+const supOverages = computeOveragesFromApiList(Array.isArray(supShorts) ? supShorts : []);
+renderOverageTable('supervisor-overage', supOverages);
+
         showAlerts(supAlerts,[{type:"warn",msg:"Failed to resolve item."}]);
       }finally{
         btn.disabled = false;
