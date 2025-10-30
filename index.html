@@ -722,49 +722,86 @@ function renderOverageTable(cardId, overages){
 }
 
     const renderTable = () => {
-      if (!rows.length){ resultsCard.style.display="none"; emptyCard.style.display="block"; setKPIs(); submitBinBtn.disabled = true; return; }
-      resultsCard.style.display="block"; emptyCard.style.display="none";
-      submitBinBtn.disabled = (currentUser?.role !== ROLES.COUNTER);
-      tbody.innerHTML = rows.map((r, i) => {
-    const matched = !!(r.systemImei && r.scannedImei && String(r.scannedImei).trim() === String(r.systemImei).trim());
-  const sysQty = Number(String(r.systemQty).replace(/,/g,"").trim()) || (r.systemImei ? 1 : 0);
-  const qtyVal = r.hasSerial ? (matched ? 1 : 0) : Math.max(0, Number(r.qtyEntered || 0));
-
-  // Visual state: serial rows → ok if matched else warn; non-serial → ok/equal, bad/over, warn/under
-  let cls = "";
-  if (r.hasSerial) {
-    cls = matched ? "ok" : "warn";
-  } else {
-    if (qtyVal === sysQty) cls = "ok";
-    else if (qtyVal > sysQty) cls = "bad";
-    else cls = "warn";
+  if (!rows.length){
+    resultsCard.style.display = "none";
+    emptyCard.style.display = "block";
+    setKPIs();
+    submitBinBtn.disabled = true;
+    return;
   }
 
-  return `<tr class="${cls}">
+  resultsCard.style.display = "block";
+  emptyCard.style.display = "none";
+  submitBinBtn.disabled = (currentUser?.role !== ROLES.COUNTER);
 
-    <td>${escapeHTML(r.location)}</td>
-    <td class="mono">${escapeHTML(r.sku)}</td>
-    <td>${escapeHTML(r.description||'—')}</td>
-    <td class="mono">${escapeHTML(r.systemImei||'—')}</td>
-    <td class="mono">${escapeHTML(r.scannedImei||'—')}</td>
-    <td>${sysQty}</td>
-    <td>
-      ${r.hasSerial
-  ? `<input type="number" class="qty-input" value="${qtyVal}" min="0" step="1" disabled>`
-  : `<input type="number" class="qty-input" value="${qtyVal}" min="0" step="1" data-idx="${i}">`
-}
-    </td>
-  </tr>`;
-}).join("");
+  tbody.innerHTML = rows.map((r, i) => {
+    const matched = !!(r.systemImei && r.scannedImei && String(r.scannedImei).trim() === String(r.systemImei).trim());
+    const sysQty   = Number(String(r.systemQty).replace(/,/g, "").trim()) || (r.systemImei ? 1 : 0);
 
-// attach change handlers for non-serial qty inputs
-tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
-  inp.addEventListener('input', () => {
-    const idx = Number(inp.getAttribute('data-idx'));
-    const v = Math.max(0, Number(inp.value || 0)); // allow overcounts
-    rows[idx].qtyEntered = v;
-    inp.value = v;
-    setKPIs();
+    // Has the user interacted with this row?
+    const hasEntry = (r.qtyEntered !== null && r.qtyEntered !== undefined && String(r.qtyEntered) !== "");
+    const qtyVal   = r.hasSerial
+      ? (matched ? 1 : 0)
+      : (hasEntry ? Math.max(0, Number(r.qtyEntered || 0)) : 0);
+
+    // Visual state:
+    // - SERIAL: neutral until a scan exists; then green if matched else amber.
+    // - NON-SERIAL: neutral until user typed something; then green/amber/red based on comparison.
+    let cls = "";
+    if (r.hasSerial) {
+      if (r.scannedImei) {
+        cls = matched ? "ok" : "warn";
+      } else {
+        cls = ""; // neutral before any scan
+      }
+    } else {
+      if (!hasEntry) {
+        cls = ""; // neutral before any qty entry
+      } else if (qtyVal === sysQty) {
+        cls = "ok";
+      } else if (qtyVal > sysQty) {
+        cls = "bad";
+      } else {
+        cls = "warn";
+      }
+    }
+
+    const qtyInputValue = r.hasSerial
+      ? (matched ? "1" : "0")
+      : (hasEntry ? String(qtyVal) : ""); // empty input when untouched
+
+    return `<tr class="${cls}">
+      <td>${escapeHTML(r.location)}</td>
+      <td class="mono">${escapeHTML(r.sku)}</td>
+      <td>${escapeHTML(r.description || '—')}</td>
+      <td class="mono">${escapeHTML(r.systemImei || '—')}</td>
+      <td class="mono">${escapeHTML(r.scannedImei || '—')}</td>
+      <td>${sysQty}</td>
+      <td>
+        ${r.hasSerial
+          ? `<input type="number" class="qty-input" value="${qtyInputValue}" min="0" step="1" disabled>`
+          : `<input type="number" class="qty-input" value="${qtyInputValue}" min="0" step="1" data-idx="${i}" placeholder="0">`
+        }
+      </td>
+    </tr>`;
+  }).join("");
+
+  // attach change handlers for non-serial qty inputs
+  tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const idx = Number(inp.getAttribute('data-idx'));
+      const v = inp.value === "" ? null : Math.max(0, Number(inp.value || 0));
+      rows[idx].qtyEntered = v;
+      // normalize display but keep empty when null
+      if (v === null) inp.value = "";
+      setKPIs();
+      renderTable(); // re-apply row classes live
+    });
+  });
+
+  setKPIs();
+};
+
   });
 });
 
@@ -904,9 +941,11 @@ return {
   systemImei: sysImei,
   hasSerial,
   systemQty,
-  qtyEntered: 0,
+  // null means “no user input yet” so we render neutral (no color)
+  qtyEntered: null,
   scannedImei: "",
 };
+
 
 });
 
