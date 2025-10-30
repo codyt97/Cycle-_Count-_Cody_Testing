@@ -569,20 +569,57 @@ try {
   const scannedSerials = rows.filter(r =>
     r.systemImei && String(r.scannedImei||"").trim() === String(r.systemImei||"").trim()
   ).length;
+    // Scanned = matched serials + ENTERED qty for non-serials (no cap)
   const scannedNonSerial = rows
     .filter(r => !r.systemImei)
-    .reduce((a, b) => {
-      const sys = Number(String(b.systemQty).replace(/,/g, "").trim()) || 0;
-      const ent = Number(b.qtyEntered || 0);
-      return a + Math.min(ent, sys);
-    }, 0);
+    .reduce((a, b) => a + Math.max(0, Number(b.qtyEntered || 0)), 0);
 
   const scannedCount = scannedSerials + scannedNonSerial;
+
+  // Missing never goes negative once scanned can exceed system
   const missing = Math.max(0, total - scannedCount);
 
   [kpi.total, kpi.total2].forEach(el => el.textContent = total);
   [kpi.scanned, kpi.scanned2].forEach(el => el.textContent = scannedCount);
   [kpi.missing, kpi.missing2].forEach(el => el.textContent = missing);
+
+  // (Optional) Add an "Over by" chip dynamically for clarity
+  const computeOverBy = () =>
+    rows.filter(r => !r.systemImei).reduce((acc, r) => {
+      const sys = Number(String(r.systemQty).replace(/,/g, "").trim()) || 0;
+      const ent = Math.max(0, Number(r.qtyEntered || 0));
+      return acc + Math.max(0, ent - sys);
+    }, 0);
+
+  function ensureOverChip(containerIdPrefix){
+    const cont = document.getElementById(containerIdPrefix);
+    if (!cont) return;
+    let chip = cont.querySelector('[data-kpi="overby"]');
+    if (!chip){
+      chip = document.createElement('div');
+      chip.className = 'chip';
+      chip.setAttribute('data-kpi','overby');
+      chip.innerHTML = `<span class="dot"></span><span class="lbl">Over by</span><span class="val" id="${containerIdPrefix==='kpis'?'kpi-overby':'kpi2-overby'}">0</span>`;
+      cont.appendChild(chip);
+    }
+  }
+  ensureOverChip('kpis');      // top bar
+  ensureOverChip('');          // no-op safeguard
+  const stickyKpis = document.querySelector('#resultsCard .stickybar .kpis');
+  if (stickyKpis && !stickyKpis.querySelector('[data-kpi="overby"]')){
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.setAttribute('data-kpi','overby');
+    chip.innerHTML = `<span class="dot"></span><span class="lbl">Over by</span><span class="val" id="kpi2-overby">0</span>`;
+    stickyKpis.appendChild(chip);
+  }
+
+  const overBy = computeOverBy();
+  const over1 = document.getElementById('kpi-overby');
+  const over2 = document.getElementById('kpi2-overby');
+  if (over1) over1.textContent = String(overBy);
+  if (over2) over2.textContent = String(overBy);
+
 };
 
 
@@ -597,11 +634,22 @@ try {
       resultsCard.style.display="block"; emptyCard.style.display="none";
       submitBinBtn.disabled = (currentUser?.role !== ROLES.COUNTER);
       tbody.innerHTML = rows.map((r, i) => {
-  const matched = !!(r.systemImei && r.scannedImei && String(r.scannedImei).trim() === String(r.systemImei).trim());
+    const matched = !!(r.systemImei && r.scannedImei && String(r.scannedImei).trim() === String(r.systemImei).trim());
   const sysQty = Number(String(r.systemQty).replace(/,/g,"").trim()) || (r.systemImei ? 1 : 0);
   const qtyVal = r.hasSerial ? (matched ? 1 : 0) : Math.max(0, Number(r.qtyEntered || 0));
 
-  return `<tr class="${matched?'ok':''}">
+  // Visual state: serial rows → ok if matched else warn; non-serial → ok/equal, bad/over, warn/under
+  let cls = "";
+  if (r.hasSerial) {
+    cls = matched ? "ok" : "warn";
+  } else {
+    if (qtyVal === sysQty) cls = "ok";
+    else if (qtyVal > sysQty) cls = "bad";
+    else cls = "warn";
+  }
+
+  return `<tr class="${cls}">
+
     <td>${escapeHTML(r.location)}</td>
     <td class="mono">${escapeHTML(r.sku)}</td>
     <td>${escapeHTML(r.description||'—')}</td>
@@ -945,7 +993,8 @@ const totalExpected = serialExpected + nonSerialExpected;
 
 const scannedSerials = rows.filter(r => r.systemImei && r.scannedImei === r.systemImei).length;
 const scannedNonSerial = rows.filter(r => !r.systemImei)
-  .reduce((a,b)=> a + Math.min(Number(b.qtyEntered||0), Number(b.systemQty||0)), 0);
+  .reduce((a,b)=> a + Math.max(0, Number(b.qtyEntered||0)), 0);
+
 const scannedTotal = scannedSerials + scannedNonSerial;
 
 const missingList = rows
