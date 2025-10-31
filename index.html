@@ -791,8 +791,10 @@ tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
   inp.addEventListener('input', () => {
     const idx = Number(inp.getAttribute('data-idx'));
     const raw = inp.value;
+
     // Store state
     rows[idx].qtyEntered = (raw === '' ? null : Math.max(0, Number(raw)));
+
     // Live row color update without nuking focus
     const tr = inp.closest('tr');
     if (tr) {
@@ -805,9 +807,11 @@ tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
       else cls = 'warn';                                 // under
       tr.className = cls;
     }
-    setKPIs(); // updates chips (Total/Scanned/Missing/Over by)
-    });// No renderTable() here on input
-  });
+
+    // Update KPIs without re-rendering (keeps caret in place)
+    setKPIs();
+  }); // ← closes the addEventListener
+});   // ← closes the forEach
 
 
 function flashNote(msg, ms = 2500) {
