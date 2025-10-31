@@ -1563,118 +1563,69 @@ async function refreshInvestigator() {
   }
 }
 
-// --- Events: Page 3 (supervisor) ----------------------------
-async function refreshSupervisorViews() {
-  try {
-    const audits = await fetchAuditList();
+    // --- Events: Page 3 (supervisor) ------------------------------
+async function refreshSupervisorViews(){
+  try{
+    showAlerts(supAlerts,[{type:"ok",msg:"Loading supervisor feeds…"}]);
 
     // Wrong-bin logs
-    supWrongBinBody.innerHTML = (!Array.isArray(audits) || !audits.length)
-      ? `<tr><td colspan="9" class="empty">No data loaded yet.</td></tr>`
-      : audits.map(it => `
-          <tr>
-            <td class="mono">${escapeHTML(it.imei || "—")}</td>
-            <td class="mono">${escapeHTML(it.sku || "—")}</td>
-            <td>${escapeHTML(it.description || "—")}</td>
-            <td>${escapeHTML(it.scannedBin || "—")}</td>
-            <td>${escapeHTML(it.trueLocation || "—")}</td>
-            <td><span class="badge">${escapeHTML(it.status || "open")}</span></td>
-            <td class="mono">${escapeHTML(it.movedTo || "")}</td>
-            <td>${escapeHTML(it.movedBy || "")}</td>
-            <td>${escapeHTML(it.decision || "")}</td>
-            <td>${escapeHTML(it.decidedBy || "")}</td>
-            <td></td>
-          </tr>
-        `).join("");
+    const audits = await fetchAuditList();
+    supWrongBinBody.innerHTML = (Array.isArray(audits) && audits.length ? audits.map(it => `
+      <tr>
+        <td class="mono">${escapeHTML(it.imei)}</td>
+        <td class="mono">${escapeHTML(it.sku || "—")}</td>
+        <td>${escapeHTML(it.description || "—")}</td>
+        <td>${escapeHTML(it.scannedBin || "—")}</td>
+        <td>${escapeHTML(it.trueLocation || "—")}</td>
+        <td><span class="badge">${escapeHTML(it.status || "open")}</span></td>
+        <td class="mono">${escapeHTML(it.movedTo || '')}</td>
+        <td>${escapeHTML(it.movedBy || '')}</td>
+        <td>
+          <input class="field" data-decision-input="${escapeHTML(it.id)}" placeholder="Decision note (optional)" style="padding:6px 10px"/>
+        </td>
+        <td>${escapeHTML(it.decidedBy || '')}</td>
+        <td class="row-sm">
+          ${it.status === "resolved" ? "" : `<button class="btn primary sm" data-sup-resolve="${escapeHTML(it.id)}">Resolve</button>`}
+        </td>
+      </tr>
+    `).join("") : `<tr><td colspan="11" class="empty">No wrong-bin logs.</td></tr>`);
 
-    // Not-Scanned for Supervisor (reuse investigator list)
-    const items = await fetchNotScanned();
-    supNotScannedBody.innerHTML = (!Array.isArray(items) || !items.length)
-      ? `<tr><td colspan="6" class="empty">No not-scanned items.</td></tr>`
-      : items.map(row => `
-          <tr>
-            <td class="mono">${escapeHTML(row.bin || "—")}</td>
-            <td>${escapeHTML(row.counter || "—")}</td>
-            <td class="mono">${escapeHTML(row.sku || "—")}</td>
-            <td>${escapeHTML(row.description || "—")}</td>
-            <td class="mono">${escapeHTML(row.systemImei || "")}</td>
-            <td></td>
-          </tr>
-        `).join("");
+    // Not-scanned list (used for both table and overage calc)
+    const missing = await fetchNotScanned();
+    supNotScannedBody.innerHTML = (Array.isArray(missing) && missing.length ? missing.map(it => {
+      const isSerial = !!(it.systemImei && String(it.systemImei).trim());
+      return `
+        <tr>
+          <td>${escapeHTML(it.bin||"—")}</td>
+          <td>${escapeHTML(it.counter||"—")}</td>
+          <td class="mono">${escapeHTML(it.sku||"—")}</td>
+          <td>${escapeHTML(it.description||"—")}</td>
+          <td class="mono">${escapeHTML(it.systemImei||"—")}</td>
+          <td class="row-sm">
+            <button class="btn ghost sm"
+              data-sup-del
+              data-bin="${escapeHTML(it.bin||"")}"
+              data-type="${isSerial ? "serial" : "nonserial"}"
+              ${isSerial ? `data-systemImei="${escapeHTML(String(it.systemImei||""))}"` : ""}
+              ${!isSerial ? `data-sku="${escapeHTML(String(it.sku||""))}"` : ""}
+            >🗑️ Delete</button>
+          </td>
+        </tr>
+      `;
+    }).join("") : `<tr><td colspan="6" class="empty">No not-scanned items.</td></tr>`);
 
-    showAlerts(supAlerts, []);
-  } catch (e) {
-    showAlerts(supAlerts, [{ type: "warn", msg: `Supervisor refresh failed: <code>${escapeHTML(String(e.message || e))}</code>` }]);
+    // ---- Overage table (Supervisor) ----
+    const supContainer = document.querySelector('#page3 .card .body');
+    const supCard = ensureOverageCard(supContainer, 'supervisor-overage', 'Overage (Supervisor View)');
+    const supOverages = computeOveragesFromApiList(Array.isArray(missing) ? missing : []);
+    renderOverageTable('supervisor-overage', supOverages);
+
+    showAlerts(supAlerts,[]);
+  }catch(e){
+    showAlerts(supAlerts,[{type:"warn",msg:`Failed to load supervisor data: <code>${escapeHTML(String(e.message||e))}</code>`}]);
   }
 }
 
-
-    // --- Events: Page 3 (supervisor) ------------------------------
-    async function refreshSupervisorViews(){
-      try{
-        showAlerts(supAlerts,[{type:"ok",msg:"Loading supervisor feeds…"}]);
-
-        // Wrong-bin logs
-        const audits = await fetchAuditList();
-        // Also fetch not-scanned items to compute overages for supervisor
-let supShorts = [];
-try {
-  supShorts = await fetchNotScanned();
-} catch {}
-
-        supWrongBinBody.innerHTML = (audits.length ? audits.map(it => `
-  <tr>
-    <td class="mono">${escapeHTML(it.imei)}</td>
-    <td class="mono">${escapeHTML(it.sku || "—")}</td>
-    <td>${escapeHTML(it.description || "—")}</td>
-    <td>${escapeHTML(it.scannedBin || "—")}</td>
-    <td>${escapeHTML(it.trueLocation || "—")}</td>
-    <td><span class="badge">${escapeHTML(it.status || "open")}</span></td>
-    <td class="mono">${escapeHTML(it.movedTo || '')}</td>
-    <td>${escapeHTML(it.movedBy || '')}</td>
-    <td>
-      <input class="field" data-decision-input="${escapeHTML(it.id)}" placeholder="Decision note (optional)" style="padding:6px 10px"/>
-    </td>
-    <td>${escapeHTML(it.decidedBy || '')}</td>
-    <td class="row-sm">
-      ${it.status === "resolved" ? "" : `<button class="btn primary sm" data-sup-resolve="${escapeHTML(it.id)}">Resolve</button>`}
-    </td>
-  </tr>
-`).join("") : `<tr><td colspan="11" class="empty">No wrong-bin logs.</td></tr>`);
-
-
-// Not-scanned
-// Not-scanned
-const missing = await fetchNotScanned();
-supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
-  const isSerial = !!(it.systemImei && String(it.systemImei).trim());
-  return `
-    <tr>
-      <td>${escapeHTML(it.bin||"—")}</td>
-      <td>${escapeHTML(it.counter||"—")}</td>
-      <td class="mono">${escapeHTML(it.sku||"—")}</td>
-      <td>${escapeHTML(it.description||"—")}</td>
-      <td class="mono">${escapeHTML(it.systemImei||"—")}</td>
-      <td class="row-sm">
-        <button class="btn ghost sm"
-          data-sup-del
-          data-bin="${escapeHTML(it.bin||"")}"
-          data-type="${isSerial ? "serial" : "nonserial"}"
-          ${isSerial ? `data-systemImei="${escapeHTML(String(it.systemImei||""))}"` : ""}
-          ${!isSerial ? `data-sku="${escapeHTML(String(it.sku||""))}"` : ""}
-        >🗑️ Delete</button>
-      </td>
-    </tr>
-  `;
-}).join("") : `<tr><td colspan="6" class="empty">No not-scanned items.</td></tr>`);
-
-
-
-        showAlerts(supAlerts,[]);
-      }catch(e){
-        showAlerts(supAlerts,[{type:"warn",msg:"Failed to load supervisor data."}]);
-      }
-    }
     refreshSupervisor.addEventListener("click", refreshSupervisorViews);
 
     // Inline supervisor resolve with decision attribution
@@ -1691,15 +1642,10 @@ supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
       try{
         await patchAudit(id, { status:"resolved", decision, decidedBy: currentUser?.name || "—" });
         await refreshSupervisorViews();
-      }catch{
-        // ---- Overage table (Supervisor) ----
-const supContainer = document.querySelector('#page3 .card .body');
-const supCard = ensureOverageCard(supContainer, 'supervisor-overage', 'Overage (Supervisor View)');
-const supOverages = computeOveragesFromApiList(Array.isArray(supShorts) ? supShorts : []);
-renderOverageTable('supervisor-overage', supOverages);
+} catch(err){
+  showAlerts(supAlerts,[{type:"warn",msg:`Failed to resolve item: <code>${escapeHTML(String(err?.message||err))}</code>`}]);
+} finally {
 
-        showAlerts(supAlerts,[{type:"warn",msg:"Failed to resolve item."}]);
-      }finally{
         btn.disabled = false;
       }
     });
