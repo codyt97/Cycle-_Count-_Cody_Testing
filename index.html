@@ -788,44 +788,19 @@ function renderOverageTable(cardId, overages){
 
   // attach change handlers for non-serial qty inputs
   tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
-  // While typing: don't rebuild the table; just update state + row class + KPIs
-  inp.addEventListener('input', () => {
-    const idx = Number(inp.getAttribute('data-idx'));
-    // Allow empty while typing; commit number when we blur/enter
-    const raw = inp.value;
-    rows[idx].qtyEntered = (raw === '' ? null : Math.max(0, Number(raw)));
-    // live row color update without nuking focus
-    const tr = inp.closest('tr');
-    if (tr) {
-      const r = rows[idx];
-      const sys = Number(String(r.systemQty).replace(/,/g,'').trim()) || 0;
-      let cls = '';
-      if (r.qtyEntered === null) cls = '';               // neutral
-      else if (r.qtyEntered === sys) cls = 'ok';         // equal
-      else if (r.qtyEntered > sys) cls = 'bad';          // over
-      else cls = 'warn';                                 // under
-      tr.className = cls;
-    }
-    setKPIs();
+    inp.addEventListener('input', () => {
+      const idx = Number(inp.getAttribute('data-idx'));
+      const v = inp.value === "" ? null : Math.max(0, Number(inp.value || 0));
+      rows[idx].qtyEntered = v;
+      // normalize display but keep empty when null
+      if (v === null) inp.value = "";
+      setKPIs();
+      renderTable(); // re-apply row classes live
+    });
   });
 
-  // On blur or Enter: normalize and (optionally) re-render once
-  inp.addEventListener('blur', () => {
-    if (inp.value === '') return; // leave empty as "no entry" state
-    const idx = Number(inp.getAttribute('data-idx'));
-    const v = Math.max(0, Number(inp.value || 0));
-    rows[idx].qtyEntered = v;
-    // keep current focus position; no full render needed
-  });
-
-  inp.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      inp.blur(); // triggers the blur-normalize above
-    }
-  });
-});
-
+  setKPIs();
+}; // end renderTable
 
 
 function flashNote(msg, ms = 2500) {
