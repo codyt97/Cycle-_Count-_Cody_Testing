@@ -801,17 +801,17 @@ tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
       const r = rows[idx];
       const sys = Number(String(r.systemQty).replace(/,/g,'').trim()) || 0;
       let cls = '';
-      if (r.qtyEntered === null) cls = '';               // neutral
-      else if (r.qtyEntered === sys) cls = 'ok';         // equal
-      else if (r.qtyEntered > sys) cls = 'bad';          // over
-      else cls = 'warn';                                 // under
+      if (r.qtyEntered === null) cls = '';     // neutral
+      else if (r.qtyEntered === sys) cls = 'ok';
+      else if (r.qtyEntered > sys) cls = 'bad';
+      else cls = 'warn';
       tr.className = cls;
     }
 
     // Update KPIs without re-rendering (keeps caret in place)
     setKPIs();
-  }); // ← closes the addEventListener
-});   // ← closes the forEach
+  }); // closes addEventListener
+});   // closes forEach
 
 
 function flashNote(msg, ms = 2500) {
@@ -1495,121 +1495,119 @@ auditBody.innerHTML = list.map(it => `
     });
 
     // --- Events: Page 2 (investigator) ----------------------------
+
 // Escalate button inside Bin Status table
 investBody.addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-escalate]");
   if (!btn) return;
   const bin = btn.getAttribute("data-escalate") || "";
   btn.disabled = true;
-  try{
+  try {
     await escalateBinToSupervisor(bin);
-  }finally{
+  } finally {
     btn.disabled = false;
   }
 });
 
-async function refreshInvestigator(){
-  try{
-    showAlerts(investAlerts,[{type:"ok",msg:"Loading investigator data…"}]);
+async function refreshInvestigator() {
+  try {
+    // Load bins summary and wrong-bin list in parallel
+    const [bins, audits] = await Promise.all([fetchSummary(), fetchAuditList()]);
 
-    // 1) fetch per-user data
-    const [bins, wrong, shorts] = await Promise.all([
-      fetchSummary(),
-      fetchAuditList(),
-      fetchNotScanned(),
-    ]);
-
-    // 2) Bin Status
-    investBody.innerHTML = (!bins.length)
-      ? `<tr><td colspan="9" class="empty">No data.</td></tr>`
-      : bins.map(r => {
-          const state = r.state || r.status || "investigation";
-          const canEscalate = (state !== "supervisor");
-          return `
-            <tr>
-              <td>${escapeHTML(r.bin||"—")}</td>
-              <td>${escapeHTML(r.counter||"—")}</td>
-              <td class="mono">${escapeHTML(r.started||"—")}</td>
-              <td class="mono">${escapeHTML(r.updated||"—")}</td>
-              <td>${Number(r.total||0)}</td>
-              <td>${Number(r.scanned||0)}</td>
-              <td>${Number(r.missing||0)}</td>
-              <td><span class="badge">${escapeHTML(state)}</span></td>
-              <td class="row-sm">
-                ${canEscalate ? `<button class="btn primary sm" data-escalate="${escapeHTML(r.bin)}">Escalate → Supervisor</button>` : ""}
-              </td>
-            </tr>
-          `;
-        }).join("");
-
-    // 3) Wrong-bin (hide resolved)
-    const wrongOpen = (Array.isArray(wrong) ? wrong : []).filter(w => (w.status||"open") !== "resolved");
-    investWrongBinBody.innerHTML = (!wrongOpen.length)
-  ? `<tr><td colspan="10" class="empty">No wrong-bin items.</td></tr>`
-  : wrongOpen.map(it => `
-      <tr>
-        <td class="mono">${escapeHTML(it.imei)}</td>
-        <td class="mono">${escapeHTML(it.sku || "—")}</td>
-        <td>${escapeHTML(it.description || "—")}</td>
-        <td>${escapeHTML(it.scannedBin || "—")}</td>
-        <td>${escapeHTML(it.trueLocation || "—")}</td>
-        <td><span class="badge">${escapeHTML(it.status || "open")}</span></td>
-        <td class="row-sm">
-          ${it.status === "moved"
-            ? "Yes"
-            : `<button class="btn primary sm" data-move="${escapeHTML(it.id)}">Yes</button>
-               <button class="btn ghost sm" data-notmove="${escapeHTML(it.id)}">No</button>`}
-        </td>
-        <td class="mono">${escapeHTML(it.movedTo || "")}</td>
-        <td>${escapeHTML(it.movedBy || "")}</td>
-        <td></td>
-      </tr>
-    `).join("");
-
-
-    // 4) Not-scanned (serial + non-serial)
-    const s = Array.isArray(shorts) ? shorts : [];
-    const invNS = document.getElementById("invNotScannedBody");
-    invNS.innerHTML = s.length
-  ? s.map(row => {
-      const isSerial = !!String(row.systemImei||"").trim();
-      const sys = Number(row.systemQty || (isSerial ? 1 : 0));
-      const ent = Number(row.qtyEntered || 0);
-      let cls = "";
-      if (!isSerial){
-        if (ent === sys) cls = "ok";      // green matched
-        else if (ent > sys) cls = "bad";  // red overcount
-        else cls = "warn";                // amber deficit
-      }
-      const invCell = isSerial
-        ? `<input class="field mono" placeholder="scan IMEI" data-invscan="${escapeHTML(row.systemImei)}" style="width:160px" />`
-        : ``;
-
-      return `
-        <tr class="${cls}">
-          <td>${escapeHTML(row.type || (isSerial ? "serial" : "nonserial"))}</td>
-          <td class="mono">${escapeHTML(row.sku || "—")}</td>
-          <td>${escapeHTML(row.description || "—")}</td>
-          <td class="mono">${escapeHTML(row.systemImei || "")}</td>
-          <td>${sys}</td>
-          <td>${ent}</td>
-          <td class="row-sm">${invCell}</td>
+    // Render Bin Status table
+    if (!Array.isArray(bins) || !bins.length) {
+      investBody.innerHTML = `<tr><td colspan="9" class="empty">No data loaded yet.</td></tr>`;
+    } else {
+      investBody.innerHTML = bins.map(b => `
+        <tr>
+          <td class="mono">${escapeHTML(b.bin || "—")}</td>
+          <td>${escapeHTML(b.counter || "—")}</td>
+          <td>${escapeHTML(b.started || "—")}</td>
+          <td>${escapeHTML(b.updated || "—")}</td>
+          <td>${Number(b.total || 0)}</td>
+          <td>${Number(b.scanned || 0)}</td>
+          <td>${Number(b.missing || 0)}</td>
+          <td><span class="badge">${escapeHTML(b.state || "open")}</span></td>
+          <td><button class="btn sm ghost" data-escalate="${escapeHTML(b.bin || "")}">Escalate →</button></td>
         </tr>
-      `;
-    }).join("")
-  : `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`;
+      `).join("");
+    }
 
-      // ---- Overage table (Investigator) ----
-    const invContainer = document.querySelector('#page2 .card .body');
-    const invCard = ensureOverageCard(invContainer, 'investigation-overage', 'Overage (Investigator View)');
-    const invOverages = computeOveragesFromApiList(s);
-    renderOverageTable('investigation-overage', invOverages);
+    // Render Wrong IMEIs table
+    investWrongBinBody.innerHTML = (!Array.isArray(audits) || !audits.length)
+      ? `<tr><td colspan="10" class="empty">No wrong-bin items.</td></tr>`
+      : audits.map(a => `
+          <tr>
+            <td class="mono">${escapeHTML(a.imei || "—")}</td>
+            <td class="mono">${escapeHTML(a.sku || "—")}</td>
+            <td>${escapeHTML(a.description || "—")}</td>
+            <td>${escapeHTML(a.scannedBin || "—")}</td>
+            <td>${escapeHTML(a.trueLocation || "—")}</td>
+            <td><span class="badge">${escapeHTML(a.status || "open")}</span></td>
+            <td>
+              <button class="btn sm primary" data-move="${escapeHTML(a.id || "")}">Moved</button>
+              <button class="btn sm ghost" data-notmove="${escapeHTML(a.id || "")}">Not Moved</button>
+            </td>
+            <td class="mono">${escapeHTML(a.movedTo || "")}</td>
+            <td>${escapeHTML(a.movedBy || "")}</td>
+            <td></td>
+          </tr>
+        `).join("");
 
-    showAlerts(investAlerts,[]);
-  }catch(e){
-    showAlerts(investAlerts,[{type:"warn",msg:`Failed to load investigator data.<br><small>${escapeHTML(String(e.message||e))}</small>`}]);
+    // Render Not-Scanned table (already has its own renderer)
+    await renderInvestigatorNotScanned();
+
+    showAlerts(investAlerts, []);
+  } catch (e) {
+    showAlerts(investAlerts, [{ type: "warn", msg: `Refresh failed: <code>${escapeHTML(String(e.message || e))}</code>` }]);
   }
 }
+
+// --- Events: Page 3 (supervisor) ----------------------------
+async function refreshSupervisorViews() {
+  try {
+    const audits = await fetchAuditList();
+
+    // Wrong-bin logs
+    supWrongBinBody.innerHTML = (!Array.isArray(audits) || !audits.length)
+      ? `<tr><td colspan="9" class="empty">No data loaded yet.</td></tr>`
+      : audits.map(it => `
+          <tr>
+            <td class="mono">${escapeHTML(it.imei || "—")}</td>
+            <td class="mono">${escapeHTML(it.sku || "—")}</td>
+            <td>${escapeHTML(it.description || "—")}</td>
+            <td>${escapeHTML(it.scannedBin || "—")}</td>
+            <td>${escapeHTML(it.trueLocation || "—")}</td>
+            <td><span class="badge">${escapeHTML(it.status || "open")}</span></td>
+            <td class="mono">${escapeHTML(it.movedTo || "")}</td>
+            <td>${escapeHTML(it.movedBy || "")}</td>
+            <td>${escapeHTML(it.decision || "")}</td>
+            <td>${escapeHTML(it.decidedBy || "")}</td>
+            <td></td>
+          </tr>
+        `).join("");
+
+    // Not-Scanned for Supervisor (reuse investigator list)
+    const items = await fetchNotScanned();
+    supNotScannedBody.innerHTML = (!Array.isArray(items) || !items.length)
+      ? `<tr><td colspan="6" class="empty">No not-scanned items.</td></tr>`
+      : items.map(row => `
+          <tr>
+            <td class="mono">${escapeHTML(row.bin || "—")}</td>
+            <td>${escapeHTML(row.counter || "—")}</td>
+            <td class="mono">${escapeHTML(row.sku || "—")}</td>
+            <td>${escapeHTML(row.description || "—")}</td>
+            <td class="mono">${escapeHTML(row.systemImei || "")}</td>
+            <td></td>
+          </tr>
+        `).join("");
+
+    showAlerts(supAlerts, []);
+  } catch (e) {
+    showAlerts(supAlerts, [{ type: "warn", msg: `Supervisor refresh failed: <code>${escapeHTML(String(e.message || e))}</code>` }]);
+  }
+}
+
 
     // --- Events: Page 3 (supervisor) ------------------------------
     async function refreshSupervisorViews(){
