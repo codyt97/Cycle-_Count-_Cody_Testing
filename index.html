@@ -787,20 +787,29 @@ function renderOverageTable(cardId, overages){
   }).join("");
 
   // attach change handlers for non-serial qty inputs
-  tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
-    inp.addEventListener('input', () => {
-      const idx = Number(inp.getAttribute('data-idx'));
-      const v = inp.value === "" ? null : Math.max(0, Number(inp.value || 0));
-      rows[idx].qtyEntered = v;
-      // normalize display but keep empty when null
-      if (v === null) inp.value = "";
-      setKPIs();
-      renderTable(); // re-apply row classes live
-    });
+tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
+  inp.addEventListener('input', () => {
+    const idx = Number(inp.getAttribute('data-idx'));
+    const raw = inp.value;
+    // Store state
+    rows[idx].qtyEntered = (raw === '' ? null : Math.max(0, Number(raw)));
+    // Live row color update without nuking focus
+    const tr = inp.closest('tr');
+    if (tr) {
+      const r = rows[idx];
+      const sys = Number(String(r.systemQty).replace(/,/g,'').trim()) || 0;
+      let cls = '';
+      if (r.qtyEntered === null) cls = '';               // neutral
+      else if (r.qtyEntered === sys) cls = 'ok';         // equal
+      else if (r.qtyEntered > sys) cls = 'bad';          // over
+      else cls = 'warn';                                 // under
+      tr.className = cls;
+    }
+    setKPIs(); // updates chips (Total/Scanned/Missing/Over by)
+    // No renderTable() here on input
   });
+});
 
-  setKPIs();
-}; // end renderTable
 
 
 function flashNote(msg, ms = 2500) {
