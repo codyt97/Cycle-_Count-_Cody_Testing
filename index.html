@@ -1,4 +1,5 @@
 
+
 <!doctype html>
 <html lang="en">
 <head> 
@@ -722,97 +723,55 @@ function renderOverageTable(cardId, overages){
 }
 
     const renderTable = () => {
-  if (!rows.length){
-    resultsCard.style.display = "none";
-    emptyCard.style.display = "block";
-    setKPIs();
-    submitBinBtn.disabled = true;
-    return;
+      if (!rows.length){ resultsCard.style.display="none"; emptyCard.style.display="block"; setKPIs(); submitBinBtn.disabled = true; return; }
+      resultsCard.style.display="block"; emptyCard.style.display="none";
+      submitBinBtn.disabled = (currentUser?.role !== ROLES.COUNTER);
+      tbody.innerHTML = rows.map((r, i) => {
+    const matched = !!(r.systemImei && r.scannedImei && String(r.scannedImei).trim() === String(r.systemImei).trim());
+  const sysQty = Number(String(r.systemQty).replace(/,/g,"").trim()) || (r.systemImei ? 1 : 0);
+  const qtyVal = r.hasSerial ? (matched ? 1 : 0) : Math.max(0, Number(r.qtyEntered || 0));
+
+  // Visual state: serial rows → ok if matched else warn; non-serial → ok/equal, bad/over, warn/under
+  let cls = "";
+  if (r.hasSerial) {
+    cls = matched ? "ok" : "warn";
+  } else {
+    if (qtyVal === sysQty) cls = "ok";
+    else if (qtyVal > sysQty) cls = "bad";
+    else cls = "warn";
   }
 
-  resultsCard.style.display = "block";
-  emptyCard.style.display = "none";
-  submitBinBtn.disabled = (currentUser?.role !== ROLES.COUNTER);
+  return `<tr class="${cls}">
 
-  tbody.innerHTML = rows.map((r, i) => {
-    const matched = !!(r.systemImei && r.scannedImei && String(r.scannedImei).trim() === String(r.systemImei).trim());
-    const sysQty   = Number(String(r.systemQty).replace(/,/g, "").trim()) || (r.systemImei ? 1 : 0);
+    <td>${escapeHTML(r.location)}</td>
+    <td class="mono">${escapeHTML(r.sku)}</td>
+    <td>${escapeHTML(r.description||'—')}</td>
+    <td class="mono">${escapeHTML(r.systemImei||'—')}</td>
+    <td class="mono">${escapeHTML(r.scannedImei||'—')}</td>
+    <td>${sysQty}</td>
+    <td>
+      ${r.hasSerial
+  ? `<input type="number" class="qty-input" value="${qtyVal}" min="0" step="1" disabled>`
+  : `<input type="number" class="qty-input" value="${qtyVal}" min="0" step="1" data-idx="${i}">`
+}
+    </td>
+  </tr>`;
+}).join("");
 
-    // Has the user interacted with this row?
-    const hasEntry = (r.qtyEntered !== null && r.qtyEntered !== undefined && String(r.qtyEntered) !== "");
-    const qtyVal   = r.hasSerial
-      ? (matched ? 1 : 0)
-      : (hasEntry ? Math.max(0, Number(r.qtyEntered || 0)) : 0);
-
-    // Visual state:
-    // - SERIAL: neutral until a scan exists; then green if matched else amber.
-    // - NON-SERIAL: neutral until user typed something; then green/amber/red based on comparison.
-    let cls = "";
-    if (r.hasSerial) {
-      if (r.scannedImei) {
-        cls = matched ? "ok" : "warn";
-      } else {
-        cls = ""; // neutral before any scan
-      }
-    } else {
-      if (!hasEntry) {
-        cls = ""; // neutral before any qty entry
-      } else if (qtyVal === sysQty) {
-        cls = "ok";
-      } else if (qtyVal > sysQty) {
-        cls = "bad";
-      } else {
-        cls = "warn";
-      }
-    }
-
-    const qtyInputValue = r.hasSerial
-      ? (matched ? "1" : "0")
-      : (hasEntry ? String(qtyVal) : ""); // empty input when untouched
-
-    return `<tr class="${cls}">
-      <td>${escapeHTML(r.location)}</td>
-      <td class="mono">${escapeHTML(r.sku)}</td>
-      <td>${escapeHTML(r.description || '—')}</td>
-      <td class="mono">${escapeHTML(r.systemImei || '—')}</td>
-      <td class="mono">${escapeHTML(r.scannedImei || '—')}</td>
-      <td>${sysQty}</td>
-      <td>
-        ${r.hasSerial
-          ? `<input type="number" class="qty-input" value="${qtyInputValue}" min="0" step="1" disabled>`
-          : `<input type="number" class="qty-input" value="${qtyInputValue}" min="0" step="1" data-idx="${i}" placeholder="0">`
-        }
-      </td>
-    </tr>`;
-  }).join("");
-
-  // attach change handlers for non-serial qty inputs
+// attach change handlers for non-serial qty inputs
 tbody.querySelectorAll('.qty-input[data-idx]').forEach(inp => {
   inp.addEventListener('input', () => {
     const idx = Number(inp.getAttribute('data-idx'));
-    const raw = inp.value;
-
-    // Store state
-    rows[idx].qtyEntered = (raw === '' ? null : Math.max(0, Number(raw)));
-
-    // Live row color update without nuking focus
-    const tr = inp.closest('tr');
-    if (tr) {
-      const r = rows[idx];
-      const sys = Number(String(r.systemQty).replace(/,/g,'').trim()) || 0;
-      let cls = '';
-      if (r.qtyEntered === null) cls = '';     // neutral
-      else if (r.qtyEntered === sys) cls = 'ok';
-      else if (r.qtyEntered > sys) cls = 'bad';
-      else cls = 'warn';
-      tr.className = cls;
-    }
-
-    // Update KPIs without re-rendering (keeps caret in place)
+    const v = Math.max(0, Number(inp.value || 0)); // allow overcounts
+    rows[idx].qtyEntered = v;
+    inp.value = v;
     setKPIs();
-  }); // closes addEventListener
-});   // closes forEach
+  });
+});
 
+setKPIs();
+
+    };
 
 function flashNote(msg, ms = 2500) {
   let el = document.getElementById("dlToast");
@@ -946,11 +905,9 @@ return {
   systemImei: sysImei,
   hasSerial,
   systemQty,
-  // null means “no user input yet” so we render neutral (no color)
-  qtyEntered: null,
+  qtyEntered: 0,
   scannedImei: "",
 };
-
 
 });
 
@@ -1495,82 +1452,58 @@ auditBody.innerHTML = list.map(it => `
     });
 
     // --- Events: Page 2 (investigator) ----------------------------
-
 // Escalate button inside Bin Status table
 investBody.addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-escalate]");
   if (!btn) return;
   const bin = btn.getAttribute("data-escalate") || "";
   btn.disabled = true;
-  try {
+  try{
     await escalateBinToSupervisor(bin);
-  } finally {
+  }finally{
     btn.disabled = false;
   }
 });
 
-async function refreshInvestigator() {
-  try {
-    // Load bins summary and wrong-bin list in parallel
-    const [bins, audits] = await Promise.all([fetchSummary(), fetchAuditList()]);
-
-    // Render Bin Status table
-    if (!Array.isArray(bins) || !bins.length) {
-      investBody.innerHTML = `<tr><td colspan="9" class="empty">No data loaded yet.</td></tr>`;
-    } else {
-      investBody.innerHTML = bins.map(b => `
-        <tr>
-          <td class="mono">${escapeHTML(b.bin || "—")}</td>
-          <td>${escapeHTML(b.counter || "—")}</td>
-          <td>${escapeHTML(b.started || "—")}</td>
-          <td>${escapeHTML(b.updated || "—")}</td>
-          <td>${Number(b.total || 0)}</td>
-          <td>${Number(b.scanned || 0)}</td>
-          <td>${Number(b.missing || 0)}</td>
-          <td><span class="badge">${escapeHTML(b.state || "open")}</span></td>
-          <td><button class="btn sm ghost" data-escalate="${escapeHTML(b.bin || "")}">Escalate →</button></td>
-        </tr>
-      `).join("");
-    }
-
-    // Render Wrong IMEIs table
-    investWrongBinBody.innerHTML = (!Array.isArray(audits) || !audits.length)
-      ? `<tr><td colspan="10" class="empty">No wrong-bin items.</td></tr>`
-      : audits.map(a => `
-          <tr>
-            <td class="mono">${escapeHTML(a.imei || "—")}</td>
-            <td class="mono">${escapeHTML(a.sku || "—")}</td>
-            <td>${escapeHTML(a.description || "—")}</td>
-            <td>${escapeHTML(a.scannedBin || "—")}</td>
-            <td>${escapeHTML(a.trueLocation || "—")}</td>
-            <td><span class="badge">${escapeHTML(a.status || "open")}</span></td>
-            <td>
-              <button class="btn sm primary" data-move="${escapeHTML(a.id || "")}">Moved</button>
-              <button class="btn sm ghost" data-notmove="${escapeHTML(a.id || "")}">Not Moved</button>
-            </td>
-            <td class="mono">${escapeHTML(a.movedTo || "")}</td>
-            <td>${escapeHTML(a.movedBy || "")}</td>
-            <td></td>
-          </tr>
-        `).join("");
-
-    // Render Not-Scanned table (already has its own renderer)
-    await renderInvestigatorNotScanned();
-
-    showAlerts(investAlerts, []);
-  } catch (e) {
-    showAlerts(investAlerts, [{ type: "warn", msg: `Refresh failed: <code>${escapeHTML(String(e.message || e))}</code>` }]);
-  }
-}
-
-    // --- Events: Page 3 (supervisor) ------------------------------
-async function refreshSupervisorViews(){
+async function refreshInvestigator(){
   try{
-    showAlerts(supAlerts,[{type:"ok",msg:"Loading supervisor feeds…"}]);
+    showAlerts(investAlerts,[{type:"ok",msg:"Loading investigator data…"}]);
 
-    // Wrong-bin logs
-    const audits = await fetchAuditList();
-    supWrongBinBody.innerHTML = (Array.isArray(audits) && audits.length ? audits.map(it => `
+    // 1) fetch per-user data
+    const [bins, wrong, shorts] = await Promise.all([
+      fetchSummary(),
+      fetchAuditList(),
+      fetchNotScanned(),
+    ]);
+
+    // 2) Bin Status
+    investBody.innerHTML = (!bins.length)
+      ? `<tr><td colspan="9" class="empty">No data.</td></tr>`
+      : bins.map(r => {
+          const state = r.state || r.status || "investigation";
+          const canEscalate = (state !== "supervisor");
+          return `
+            <tr>
+              <td>${escapeHTML(r.bin||"—")}</td>
+              <td>${escapeHTML(r.counter||"—")}</td>
+              <td class="mono">${escapeHTML(r.started||"—")}</td>
+              <td class="mono">${escapeHTML(r.updated||"—")}</td>
+              <td>${Number(r.total||0)}</td>
+              <td>${Number(r.scanned||0)}</td>
+              <td>${Number(r.missing||0)}</td>
+              <td><span class="badge">${escapeHTML(state)}</span></td>
+              <td class="row-sm">
+                ${canEscalate ? `<button class="btn primary sm" data-escalate="${escapeHTML(r.bin)}">Escalate → Supervisor</button>` : ""}
+              </td>
+            </tr>
+          `;
+        }).join("");
+
+    // 3) Wrong-bin (hide resolved)
+    const wrongOpen = (Array.isArray(wrong) ? wrong : []).filter(w => (w.status||"open") !== "resolved");
+    investWrongBinBody.innerHTML = (!wrongOpen.length)
+  ? `<tr><td colspan="10" class="empty">No wrong-bin items.</td></tr>`
+  : wrongOpen.map(it => `
       <tr>
         <td class="mono">${escapeHTML(it.imei)}</td>
         <td class="mono">${escapeHTML(it.sku || "—")}</td>
@@ -1578,54 +1511,129 @@ async function refreshSupervisorViews(){
         <td>${escapeHTML(it.scannedBin || "—")}</td>
         <td>${escapeHTML(it.trueLocation || "—")}</td>
         <td><span class="badge">${escapeHTML(it.status || "open")}</span></td>
-        <td class="mono">${escapeHTML(it.movedTo || '')}</td>
-        <td>${escapeHTML(it.movedBy || '')}</td>
-        <td>
-          <input class="field" data-decision-input="${escapeHTML(it.id)}" placeholder="Decision note (optional)" style="padding:6px 10px"/>
-        </td>
-        <td>${escapeHTML(it.decidedBy || '')}</td>
         <td class="row-sm">
-          ${it.status === "resolved" ? "" : `<button class="btn primary sm" data-sup-resolve="${escapeHTML(it.id)}">Resolve</button>`}
+          ${it.status === "moved"
+            ? "Yes"
+            : `<button class="btn primary sm" data-move="${escapeHTML(it.id)}">Yes</button>
+               <button class="btn ghost sm" data-notmove="${escapeHTML(it.id)}">No</button>`}
         </td>
+        <td class="mono">${escapeHTML(it.movedTo || "")}</td>
+        <td>${escapeHTML(it.movedBy || "")}</td>
+        <td></td>
       </tr>
-    `).join("") : `<tr><td colspan="11" class="empty">No wrong-bin logs.</td></tr>`);
+    `).join("");
 
-    // Not-scanned list (used for both table and overage calc)
-    const missing = await fetchNotScanned();
-    supNotScannedBody.innerHTML = (Array.isArray(missing) && missing.length ? missing.map(it => {
-      const isSerial = !!(it.systemImei && String(it.systemImei).trim());
+
+    // 4) Not-scanned (serial + non-serial)
+    const s = Array.isArray(shorts) ? shorts : [];
+    const invNS = document.getElementById("invNotScannedBody");
+    invNS.innerHTML = s.length
+  ? s.map(row => {
+      const isSerial = !!String(row.systemImei||"").trim();
+      const sys = Number(row.systemQty || (isSerial ? 1 : 0));
+      const ent = Number(row.qtyEntered || 0);
+      let cls = "";
+      if (!isSerial){
+        if (ent === sys) cls = "ok";      // green matched
+        else if (ent > sys) cls = "bad";  // red overcount
+        else cls = "warn";                // amber deficit
+      }
+      const invCell = isSerial
+        ? `<input class="field mono" placeholder="scan IMEI" data-invscan="${escapeHTML(row.systemImei)}" style="width:160px" />`
+        : ``;
+
       return `
-        <tr>
-          <td>${escapeHTML(it.bin||"—")}</td>
-          <td>${escapeHTML(it.counter||"—")}</td>
-          <td class="mono">${escapeHTML(it.sku||"—")}</td>
-          <td>${escapeHTML(it.description||"—")}</td>
-          <td class="mono">${escapeHTML(it.systemImei||"—")}</td>
-          <td class="row-sm">
-            <button class="btn ghost sm"
-              data-sup-del
-              data-bin="${escapeHTML(it.bin||"")}"
-              data-type="${isSerial ? "serial" : "nonserial"}"
-              ${isSerial ? `data-systemImei="${escapeHTML(String(it.systemImei||""))}"` : ""}
-              ${!isSerial ? `data-sku="${escapeHTML(String(it.sku||""))}"` : ""}
-            >🗑️ Delete</button>
-          </td>
+        <tr class="${cls}">
+          <td>${escapeHTML(row.type || (isSerial ? "serial" : "nonserial"))}</td>
+          <td class="mono">${escapeHTML(row.sku || "—")}</td>
+          <td>${escapeHTML(row.description || "—")}</td>
+          <td class="mono">${escapeHTML(row.systemImei || "")}</td>
+          <td>${sys}</td>
+          <td>${ent}</td>
+          <td class="row-sm">${invCell}</td>
         </tr>
       `;
-    }).join("") : `<tr><td colspan="6" class="empty">No not-scanned items.</td></tr>`);
+    }).join("")
+  : `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`;
 
-    // ---- Overage table (Supervisor) ----
-    const supContainer = document.querySelector('#page3 .card .body');
-    const supCard = ensureOverageCard(supContainer, 'supervisor-overage', 'Overage (Supervisor View)');
-    const supOverages = computeOveragesFromApiList(Array.isArray(missing) ? missing : []);
-    renderOverageTable('supervisor-overage', supOverages);
+      // ---- Overage table (Investigator) ----
+    const invContainer = document.querySelector('#page2 .card .body');
+    const invCard = ensureOverageCard(invContainer, 'investigation-overage', 'Overage (Investigator View)');
+    const invOverages = computeOveragesFromApiList(s);
+    renderOverageTable('investigation-overage', invOverages);
 
-    showAlerts(supAlerts,[]);
+    showAlerts(investAlerts,[]);
   }catch(e){
-    showAlerts(supAlerts,[{type:"warn",msg:`Failed to load supervisor data: <code>${escapeHTML(String(e.message||e))}</code>`}]);
+    showAlerts(investAlerts,[{type:"warn",msg:`Failed to load investigator data.<br><small>${escapeHTML(String(e.message||e))}</small>`}]);
   }
 }
 
+    // --- Events: Page 3 (supervisor) ------------------------------
+    async function refreshSupervisorViews(){
+      try{
+        showAlerts(supAlerts,[{type:"ok",msg:"Loading supervisor feeds…"}]);
+
+        // Wrong-bin logs
+        const audits = await fetchAuditList();
+        // Also fetch not-scanned items to compute overages for supervisor
+let supShorts = [];
+try {
+  supShorts = await fetchNotScanned();
+} catch {}
+
+        supWrongBinBody.innerHTML = (audits.length ? audits.map(it => `
+  <tr>
+    <td class="mono">${escapeHTML(it.imei)}</td>
+    <td class="mono">${escapeHTML(it.sku || "—")}</td>
+    <td>${escapeHTML(it.description || "—")}</td>
+    <td>${escapeHTML(it.scannedBin || "—")}</td>
+    <td>${escapeHTML(it.trueLocation || "—")}</td>
+    <td><span class="badge">${escapeHTML(it.status || "open")}</span></td>
+    <td class="mono">${escapeHTML(it.movedTo || '')}</td>
+    <td>${escapeHTML(it.movedBy || '')}</td>
+    <td>
+      <input class="field" data-decision-input="${escapeHTML(it.id)}" placeholder="Decision note (optional)" style="padding:6px 10px"/>
+    </td>
+    <td>${escapeHTML(it.decidedBy || '')}</td>
+    <td class="row-sm">
+      ${it.status === "resolved" ? "" : `<button class="btn primary sm" data-sup-resolve="${escapeHTML(it.id)}">Resolve</button>`}
+    </td>
+  </tr>
+`).join("") : `<tr><td colspan="11" class="empty">No wrong-bin logs.</td></tr>`);
+
+
+// Not-scanned
+// Not-scanned
+const missing = await fetchNotScanned();
+supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
+  const isSerial = !!(it.systemImei && String(it.systemImei).trim());
+  return `
+    <tr>
+      <td>${escapeHTML(it.bin||"—")}</td>
+      <td>${escapeHTML(it.counter||"—")}</td>
+      <td class="mono">${escapeHTML(it.sku||"—")}</td>
+      <td>${escapeHTML(it.description||"—")}</td>
+      <td class="mono">${escapeHTML(it.systemImei||"—")}</td>
+      <td class="row-sm">
+        <button class="btn ghost sm"
+          data-sup-del
+          data-bin="${escapeHTML(it.bin||"")}"
+          data-type="${isSerial ? "serial" : "nonserial"}"
+          ${isSerial ? `data-systemImei="${escapeHTML(String(it.systemImei||""))}"` : ""}
+          ${!isSerial ? `data-sku="${escapeHTML(String(it.sku||""))}"` : ""}
+        >🗑️ Delete</button>
+      </td>
+    </tr>
+  `;
+}).join("") : `<tr><td colspan="6" class="empty">No not-scanned items.</td></tr>`);
+
+
+
+        showAlerts(supAlerts,[]);
+      }catch(e){
+        showAlerts(supAlerts,[{type:"warn",msg:"Failed to load supervisor data."}]);
+      }
+    }
     refreshSupervisor.addEventListener("click", refreshSupervisorViews);
 
     // Inline supervisor resolve with decision attribution
@@ -1642,10 +1650,15 @@ async function refreshSupervisorViews(){
       try{
         await patchAudit(id, { status:"resolved", decision, decidedBy: currentUser?.name || "—" });
         await refreshSupervisorViews();
-} catch(err){
-  showAlerts(supAlerts,[{type:"warn",msg:`Failed to resolve item: <code>${escapeHTML(String(err?.message||err))}</code>`}]);
-} finally {
+      }catch{
+        // ---- Overage table (Supervisor) ----
+const supContainer = document.querySelector('#page3 .card .body');
+const supCard = ensureOverageCard(supContainer, 'supervisor-overage', 'Overage (Supervisor View)');
+const supOverages = computeOveragesFromApiList(Array.isArray(supShorts) ? supShorts : []);
+renderOverageTable('supervisor-overage', supOverages);
 
+        showAlerts(supAlerts,[{type:"warn",msg:"Failed to resolve item."}]);
+      }finally{
         btn.disabled = false;
       }
     });
