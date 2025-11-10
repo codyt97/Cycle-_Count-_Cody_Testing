@@ -1012,9 +1012,11 @@ async function fetchNotScanned() {
   );
   if (!res.ok) throw new Error(await res.text());
   const j = await res.json();
-  const items = j.items || j.records || [];
+  // Accept any of these keys to be future-proof:
+  const items = j.rows || j.items || j.records || [];
   return Array.isArray(items) ? items : [];
 }
+
 
 // --- Investigator: render Not-Scanned ---
 async function renderInvestigatorNotScanned(){
