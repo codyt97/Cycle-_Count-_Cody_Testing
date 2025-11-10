@@ -154,6 +154,22 @@ module.exports = async function handler(req, res){
         }));
       // If client didn’t send items, attempt to log from computed shortages list
       if (!notScannedRows.length && nonSerialShortages.length) {
+       // Include serial “missing IMEIs” as NotScanned rows too
+const serialAsNotScanned = (Array.isArray(missingImeis) ? missingImeis : []).map(m => ({
+  bin,
+  sku: "",               // optional: enrich by matching items[] on systemImei
+  description: "",
+  systemQty: 1,
+  qtyEntered: 0,
+  missing: 1,
+  createdAt: new Date().toISOString()
+}));
+
+const combinedNotScanned =
+  [...serialAsNotScanned, ...notScannedRows];
+
+await logNotScannedMany(combinedNotScanned);
+
         await logNotScannedMany(nonSerialShortages.map(s => ({
           bin,
           sku: s.sku || "",
