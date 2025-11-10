@@ -1,8 +1,9 @@
 // api/cyclecounts/submit.js
-// Accepts a bin submission and persists:
-// - the cycle count summary (for Investigator/Supervisor views)
-// - wrong-bin audits
-// - Google Sheets logs: Bins, NotScanned, WrongBinAudits
+// Persists a bin submission and logs to Google Sheets:
+// - Bins (summary)
+// - WrongBinAudits
+// - NotScanned (now includes BOTH non-serial shortages and serial missing IMEIs,
+//   with serial rows enriched using items[] → SKU/Description)
 
 const Store = require("../_lib/store");
 const { logBinSummary, logNotScannedMany, logWrongBin } = require("../_lib/logs");
@@ -48,13 +49,13 @@ module.exports = async function handler(req, res){
     const total   = Number.isFinite(+body.total)   ? +body.total   : 0;
     const scanned = Number.isFinite(+body.scanned) ? +body.scanned : 0;
 
-    // Items & deltas
+    // Items & deficits
     const items = Array.isArray(body.items) ? body.items : [];
 
-    // Serial misses from client (IMEIs known to be in system but not scanned)
+    // Serial “missing IMEIs” reported by the client
     const missingImeis = Array.isArray(body.missingImeis) ? body.missingImeis : [];
 
-    // Non-serial shortages (derive if not sent)
+    // Non-serial shortages (derive if not present)
     const nonSerialShortages = Array.isArray(body.nonSerialShortages) ? body.nonSerialShortages :
       items
         .filter(it => !String(it.systemImei || "").trim()) // non-serial rows only
@@ -66,10 +67,8 @@ module.exports = async function handler(req, res){
         }))
         .filter(s => s.qtyEntered < s.systemQty);
 
-    // Client-buffered wrong-bin list (persist now)
+    // Client-buffered wrong-bin list (persist + log)
     const wrongBin = Array.isArray(body.wrongBin) ? body.wrongBin : [];
-
-    // Persist wrong-bin audits + log to sheet
     if (wrongBin.length) {
       for (const wb of wrongBin) {
         const imei         = norm(wb.imei);
@@ -100,15 +99,15 @@ module.exports = async function handler(req, res){
       }
     }
 
-    // Final missing = serial deficits + non-serial deficits (if client missing not provided)
-    const serialMissing = missingImeis.length;
-    const nonSerialMissing = nonSerialShortages.reduce(
+    // Compute missing counts
+    const serialMissing = (missingImeis || []).length;
+    const nonSerialMissing = (nonSerialShortages || []).reduce(
       (a, s) => a + Math.max(Number(s.systemQty || 0) - Number(s.qtyEntered || 0), 0), 0
     );
     const providedMissing = Number.isFinite(+body.missing) ? +body.missing : null;
     const finalMissing = providedMissing ?? (serialMissing + nonSerialMissing);
 
-    // Persist the bin summary for app views
+    // Persist bin for Investigator/Supervisor views
     const payload = {
       user, bin, counter,
       total, scanned, missing: finalMissing,
@@ -121,7 +120,7 @@ module.exports = async function handler(req, res){
     };
     await Store.upsertBin(payload);
 
-    // Google Sheets: Bins
+    // Google Sheets: Bins summary
     try {
       await logBinSummary({
         bin,
@@ -137,7 +136,35 @@ module.exports = async function handler(req, res){
 
     // Google Sheets: NotScanned (serial + non-serial)
     try {
-      // Non-serial shortages from items (prefer items if present)
+      // Map by normalized IMEI for enrichment
+      const normImei = s => String(s || "").trim();
+      const itemsByImei = new Map();
+      for (const it of (items || [])) {
+        const key = normImei(it.systemImei);
+        if (key) itemsByImei.set(key, it);
+      }
+
+      // Serial rows — join to items for SKU/Description when possible
+      const seenImeis = new Set();
+      const serialRows = [];
+      for (const m of (missingImeis || [])) {
+        const key = normImei(m.systemImei || m.imei || m.serial);
+        if (!key || seenImeis.has(key)) continue;
+        seenImeis.add(key);
+
+        const hit = itemsByImei.get(key);
+        serialRows.push({
+          bin,
+          sku: (hit?.sku) || "",
+          description: (hit?.description) || "",
+          systemQty: 1,
+          qtyEntered: 0,
+          missing: 1,
+          createdAt: new Date().toISOString(),
+        });
+      }
+
+      // Non-serial rows — prefer from items; fallback to derived array
       const nonSerialFromItems = (items || [])
         .filter(x => !x.systemImei && Number(x.systemQty) > Number(x.qtyEntered || 0))
         .map(x => ({
@@ -150,7 +177,6 @@ module.exports = async function handler(req, res){
           createdAt: new Date().toISOString(),
         }));
 
-      // Fallback to computed non-serial shortages if items weren’t sent
       const nonSerialRows = nonSerialFromItems.length
         ? nonSerialFromItems
         : (nonSerialShortages || []).map(s => ({
@@ -163,20 +189,9 @@ module.exports = async function handler(req, res){
             createdAt: new Date().toISOString(),
           }));
 
-      // Serial misses → 1 deficit each
-      const serialRows = (Array.isArray(missingImeis) ? missingImeis : []).map(() => ({
-        bin,
-        sku: "",
-        description: "",
-        systemQty: 1,
-        qtyEntered: 0,
-        missing: 1,
-        createdAt: new Date().toISOString(),
-      }));
-
       const combined = [...serialRows, ...nonSerialRows];
       if (combined.length) {
-        await logNotScannedMany(combined); // single write, no duplicates
+        await logNotScannedMany(combined);
       }
     } catch (e) {
       console.warn("[logs] NotScanned append failed:", e?.message || e);
