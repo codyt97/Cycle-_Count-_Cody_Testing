@@ -1011,9 +1011,11 @@ async function fetchNotScanned() {
   );
   if (!res.ok) throw new Error(await res.text());
   const j = await res.json();
-  const items = j.items || j.records || [];
+  // API returns { ok:true, rows:[...] } → accept rows too
+  const items = j.items || j.records || j.rows || [];
   return Array.isArray(items) ? items : [];
 }
+
 
 // --- Investigator: render Not-Scanned ---
 async function renderInvestigatorNotScanned(){
