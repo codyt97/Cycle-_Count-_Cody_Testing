@@ -1498,9 +1498,11 @@ async function refreshInvestigator(){
           `;
         }).join("");
 
-    // 3) Wrong-bin (hide resolved)
-    const wrongOpen = (Array.isArray(wrong) ? wrong : []).filter(w => (w.status||"open") !== "resolved");
-    investWrongBinBody.innerHTML = (!wrongOpen.length)
+   
+    // 3) Wrong-bin (hide moved or resolved) → show only open
+const wrongOpen = (Array.isArray(wrong) ? wrong : []).filter(w => (w.status||"open") === "open");
+investWrongBinBody.innerHTML = (!wrongOpen.length)
+
   ? `<tr><td colspan="10" class="empty">No wrong-bin items.</td></tr>`
   : wrongOpen.map(it => `
       <tr>
