@@ -1303,6 +1303,7 @@ document.getElementById("refreshInvestigations")?.addEventListener("click", ()=>
       try{
         currentBin = bin; scanned.clear();
         rows = await fetchBinSnapshot(bin);
+         rebuildImeiIndexFromRows();
         showAlerts(alerts,[{type:"ok",msg:`Loaded <b>${rows.length}</b> IMEIs for bin <b>${escapeHTML(bin)}</b>.`}]);
         renderTable(); scanInput.focus();
       }catch(err){
@@ -1391,7 +1392,9 @@ scanInput.value="";
       try{
         const list = await fetchAuditList();
 auditCount.textContent = `${list.filter(x=>x.status!=="resolved").length} open`;
-auditBody.innerHTML = list.map(it => `
+const listEnriched = (Array.isArray(list) ? list : []).map(enrichSkuDesc);
+auditBody.innerHTML = listEnriched.map(it => `
+
   <tr>
     <td class="mono">${escapeHTML(it.imei)}</td>
     <td class="mono">${escapeHTML(it.sku || "—")}</td>
@@ -1507,8 +1510,13 @@ investBody.innerHTML = (!binsFiltered.length)
 
    
     // 3) Wrong-bin (hide moved or resolved) → show only open
-const wrongOpen = (Array.isArray(wrong) ? wrong : []).filter(w => (w.status||"open") === "open");
-investWrongBinBody.innerHTML = (!wrongOpen.length)
+const wrongOpen = (Array.isArray(wrong) ? wrong : []).filter(w => (w.status || "open") === "open");
+
+// Enrich from inventory index
+const wrongOpenEnriched = wrongOpen.map(enrichSkuDesc);
+
+investWrongBinBody.innerHTML = (!wrongOpenEnriched.length)
+
 
   ? `<tr><td colspan="10" class="empty">No wrong-bin items.</td></tr>`
   : wrongOpen.map(it => `
@@ -1589,7 +1597,9 @@ try {
   supShorts = await fetchNotScanned();
 } catch {}
 
-        supWrongBinBody.innerHTML = (audits.length ? audits.map(it => `
+const auditsEnriched = (Array.isArray(audits) ? audits : []).map(enrichSkuDesc);
+supWrongBinBody.innerHTML = (auditsEnriched.length ? auditsEnriched.map(it => `
+
   <tr>
     <td class="mono">${escapeHTML(it.imei)}</td>
     <td class="mono">${escapeHTML(it.sku || "—")}</td>
