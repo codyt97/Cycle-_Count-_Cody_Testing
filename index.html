@@ -326,8 +326,9 @@
       </tr>
     </thead>
     <tbody id="invNotScannedBody">
-      <tr><td colspan="6" class="empty">No not-scanned items.</td></tr>
-    </tbody>
+     <tr><td colspan="8" class="empty">No not-scanned items.</td></tr>
+   </tbody>
+
   </table>
 </div>
 
@@ -376,7 +377,7 @@
 
             <h4 style="margin:18px 0 10px 0;">Not-Scanned Items</h4>
             <div class="table-wrap">
-              <table id="supNotScanned">
+<table id="supNotScanned">
   <thead>
     <tr>
       <th>Bin</th>
@@ -388,9 +389,11 @@
       <th></th>
     </tr>
   </thead>
-  `).join("") : `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`);
-
+  <tbody id="supNotScannedBody">
+    <tr><td colspan="7" class="empty">No not-scanned items.</td></tr>
+  </tbody>
 </table>
+
 
 
             </div>
@@ -1573,16 +1576,18 @@ investWrongBinBody.innerHTML = (!wrongOpen.length)
         : ``;
 
       return `
-        <tr class="${cls}">
-          <td>${escapeHTML(row.type || (isSerial ? "serial" : "nonserial"))}</td>
-          <td class="mono">${escapeHTML(row.sku || "—")}</td>
-          <td>${escapeHTML(row.description || "—")}</td>
-          <td class="mono">${escapeHTML(row.systemImei || "")}</td>
-          <td>${sys}</td>
-          <td>${ent}</td>
-          <td class="row-sm">${invCell}</td>
-        </tr>
-      `;
+  <tr class="${cls}">
+    <td>${escapeHTML(row.type || (isSerial ? "serial" : "nonserial"))}</td>
+    <td class="mono">${escapeHTML(row.sku || "—")}</td>
+    <td>${escapeHTML(row.description || "—")}</td>
+    <td class="mono">${escapeHTML(row.systemImei || "")}</td>
+    <td>${sys}</td>
+    <td>${ent}</td>
+    <td>${formatWhen(row.detectedAt || row.createdAt || row.updatedAt)}</td>
+    <td class="row-sm">${invCell}</td>
+  </tr>
+`;
+
     }).join("")
   : `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`;
 
@@ -1616,7 +1621,24 @@ let supShorts = [];
 try {
   supShorts = await fetchNotScanned();
 } catch {}
+// Render Supervisor Not-Scanned table
+const supNSBody = document.getElementById("supNotScannedBody");
+if (supNSBody) {
+  const rows = Array.isArray(supShorts) ? supShorts : [];
+  supNSBody.innerHTML = rows.length ? rows.map(r => `
+    <tr>
+      <td class="mono">${escapeHTML(r.bin || "—")}</td>
+      <td>${escapeHTML(r.counter || "—")}</td>
+      <td class="mono">${escapeHTML(r.sku || "—")}</td>
+      <td>${escapeHTML(r.description || "—")}</td>
+      <td class="mono">${escapeHTML(r.systemImei || "")}</td>
+      <td>${formatWhen(r.detectedAt || r.createdAt || r.updatedAt)}</td>
+      <td></td>
+    </tr>
+  `).join("") : `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`;
+}
 
+        
  supWrongBinBody.innerHTML = (openAudits.length ? openAudits.map(it => `
   <tr>
     <td class="mono">${escapeHTML(it.imei)}</td>
