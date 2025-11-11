@@ -100,7 +100,9 @@ module.exports = async function handler(req, res) {
       return String(ak).localeCompare(String(bk));
     });
 
-    const resp = { ok: true, rows: out };
+    // return multiple keys to match existing frontends
+const resp = { ok: true, rows: out, items: out, records: out };
+
     if (debug) resp.meta = { binsExamined: bins.length, reasons: why };
     return json(res, 200, resp);
 
