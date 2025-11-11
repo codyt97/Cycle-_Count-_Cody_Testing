@@ -1475,28 +1475,35 @@ async function refreshInvestigator(){
       fetchNotScanned(),
     ]);
 
-    // 2) Bin Status
-    investBody.innerHTML = (!bins.length)
-      ? `<tr><td colspan="9" class="empty">No data.</td></tr>`
-      : bins.map(r => {
-          const state = r.state || r.status || "investigation";
-          const canEscalate = (state !== "supervisor");
-          return `
-            <tr>
-              <td>${escapeHTML(r.bin||"—")}</td>
-              <td>${escapeHTML(r.counter||"—")}</td>
-              <td class="mono">${escapeHTML(r.started||"—")}</td>
-              <td class="mono">${escapeHTML(r.updated||"—")}</td>
-              <td>${Number(r.total||0)}</td>
-              <td>${Number(r.scanned||0)}</td>
-              <td>${Number(r.missing||0)}</td>
-              <td><span class="badge">${escapeHTML(state)}</span></td>
-              <td class="row-sm">
-                ${canEscalate ? `<button class="btn primary sm" data-escalate="${escapeHTML(r.bin)}">Escalate → Supervisor</button>` : ""}
-              </td>
-            </tr>
-          `;
-        }).join("");
+    // 2) Bin Status — hide anything already in Supervisor
+const binsFiltered = (Array.isArray(bins) ? bins : []).filter(r => {
+  const s = String(r.state || r.status || "").trim().toLowerCase();
+  const inSup = (s === "supervisor") || (!!r.inSupervisor);
+  return !inSup; // drop rows that are “in supervisor”
+});
+
+investBody.innerHTML = (!binsFiltered.length)
+  ? `<tr><td colspan="9" class="empty">No data.</td></tr>`
+  : binsFiltered.map(r => {
+      const state = r.state || r.status || "investigation";
+      const canEscalate = (state !== "supervisor");
+      return `
+        <tr>
+          <td>${escapeHTML(r.bin||"—")}</td>
+          <td>${escapeHTML(r.counter||"—")}</td>
+          <td class="mono">${escapeHTML(r.started||"—")}</td>
+          <td class="mono">${escapeHTML(r.updated||"—")}</td>
+          <td>${Number(r.total||0)}</td>
+          <td>${Number(r.scanned||0)}</td>
+          <td>${Math.max(0, Number(r.total||0) - Number(r.scanned||0))}</td>
+          <td><span class="badge">${escapeHTML(state)}</span></td>
+          <td class="row-sm">
+            ${canEscalate ? `<button class="btn ghost sm" data-escalate="${escapeHTML(r.bin||"")}">Escalate</button>` : ``}
+          </td>
+        </tr>
+      `;
+    }).join("");
+
 
    
     // 3) Wrong-bin (hide moved or resolved) → show only open
