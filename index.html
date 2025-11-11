@@ -320,6 +320,7 @@
 <th>System IMEI</th>
 <th>System Qty</th>
 <th>Qty Entered</th>
+<th>Detected</th>
 <th></th>
 
       </tr>
@@ -383,10 +384,12 @@
       <th>SKU</th>
       <th>Description</th>
       <th>System IMEI</th>
+      <th>Detected</th>
       <th></th>
     </tr>
   </thead>
-  <tbody id="supNotScannedBody"><tr><td colspan="6" class="empty">No not-scanned items.</td></tr></tbody>
+  `).join("") : `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`);
+
 </table>
 
 
@@ -444,6 +447,17 @@
       FORCE_MOCK: false,
       LOGO_FILENAME: "./download.png",
     };
+    function formatWhen(s){
+  const t = String(s || "").trim();
+  if (!t) return "—";
+  try{
+    const d = new Date(t);
+    if (isNaN(d)) return t;
+    const pad = n => String(n).padStart(2,"0");
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }catch{ return t; }
+}
+
 
     // --- Roles & Users (hardcoded) --------------------------------
     const ROLES = {
@@ -1023,7 +1037,7 @@ async function renderInvestigatorNotScanned(){
   try{
     const items = await fetchNotScanned();
     if (!items.length){
-      tbody.innerHTML = `<tr><td colspan="7" class="empty">No not-scanned items.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="empty">No not-scanned items.</td></tr>`;
       return;
     }
     tbody.innerHTML = items.map(row => {
@@ -1048,12 +1062,15 @@ async function renderInvestigatorNotScanned(){
           <td class="mono">${row.systemImei || ""}</td>
           <td>${sys}</td>
           <td>${ent}</td>
+          <td class="mono">${formatWhen(row.detectedAt || row.updated || row.started)}</td>
           <td class="row-sm">${invCell}</td>
         </tr>
       `;
+
     }).join("");
   }catch(e){
-    tbody.innerHTML = `<tr><td colspan="7" class="empty">Failed to load not-scanned.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="empty">Failed to load not-scanned.</td></tr>`;
+
   }
 }
 
@@ -1633,6 +1650,7 @@ supNotScannedBody.innerHTML = (missing.length ? missing.map(it => {
       <td class="mono">${escapeHTML(it.sku||"—")}</td>
       <td>${escapeHTML(it.description||"—")}</td>
       <td class="mono">${escapeHTML(it.systemImei||"—")}</td>
+      <td class="mono">${formatWhen(it.detectedAt || it.updated || it.started)}</td>
       <td class="row-sm">
         <button class="btn ghost sm"
           data-sup-del
