@@ -479,20 +479,6 @@
 /** @type {{location:string, sku:string, description:string, systemImei:string, scannedImei?:string}[]} */
 let rows = [];
 const scanned = new Set();
-// Fast local lookup for SKU/Description by IMEI (from the current bin snapshot)
-const imeiIndex = new Map();
-function rebuildImeiIndex(){
-  imeiIndex.clear();
-  for (const r of (rows || [])){
-    const k = String(r.systemImei || "").trim();
-    if (!k) continue;
-    // Prefer real values, but keep graceful fallbacks
-    imeiIndex.set(k, {
-      sku: r.sku || r.orderTimeSku || "—",
-      description: r.description || r.desc || "—"
-    });
-  }
-}
 
 // buffer wrong-bin audits until Submit
 const pendingWrongBin = [];
@@ -1317,7 +1303,6 @@ document.getElementById("refreshInvestigations")?.addEventListener("click", ()=>
       try{
         currentBin = bin; scanned.clear();
         rows = await fetchBinSnapshot(bin);
-        rebuildImeiIndex();
         showAlerts(alerts,[{type:"ok",msg:`Loaded <b>${rows.length}</b> IMEIs for bin <b>${escapeHTML(bin)}</b>.`}]);
         renderTable(); scanInput.focus();
       }catch(err){
@@ -1406,17 +1391,7 @@ scanInput.value="";
       try{
         const list = await fetchAuditList();
 auditCount.textContent = `${list.filter(x=>x.status!=="resolved").length} open`;
-const listEnriched = (Array.isArray(list) ? list : []).map(it => {
-  const key = String(it.imei || "").trim();
-  const hit = key ? imeiIndex.get(key) : null;
-  return {
-    ...it,
-    sku: it.sku || hit?.sku || "—",
-    description: it.description || hit?.description || "—"
-  };
-});
-
-auditBody.innerHTML = listEnriched.map(it => `
+auditBody.innerHTML = list.map(it => `
   <tr>
     <td class="mono">${escapeHTML(it.imei)}</td>
     <td class="mono">${escapeHTML(it.sku || "—")}</td>
@@ -1433,7 +1408,6 @@ auditBody.innerHTML = listEnriched.map(it => `
     </td>
   </tr>
 `).join("");
-
 
         showAlerts(auditAlerts,[]);
       }catch(err){
@@ -1527,36 +1501,7 @@ async function refreshInvestigator(){
    
     // 3) Wrong-bin (hide moved or resolved) → show only open
 const wrongOpen = (Array.isArray(wrong) ? wrong : []).filter(w => (w.status||"open") === "open");
- // Enrich missing SKU/Description from the local IMEI index
-const wrongOpenEnriched = wrongOpen.map(w => {
-  const key = String(w.imei || "").trim();
-  const hit = key ? imeiIndex.get(key) : null;
-  return {
-    ...w,
-    sku: w.sku || hit?.sku || "—",
-    description: w.description || hit?.description || "—"
-  };
-});
-   
-investWrongBinBody.innerHTML = (!wrongOpenEnriched.length)
-  ? `<tr><td colspan="10" class="empty">No wrong-bin items.</td></tr>`
-  : wrongOpenEnriched.map(it => `
-      <tr>
-        <td class="mono">${escapeHTML(it.imei)}</td>
-        <td class="mono">${escapeHTML(it.sku || "—")}</td>
-        <td>${escapeHTML(it.description || "—")}</td>
-        <td>${escapeHTML(it.scannedBin || "—")}</td>
-        <td>${escapeHTML(it.trueLocation || "—")}</td>
-        <td><span class="badge">${escapeHTML(it.status || 'open')}</span></td>
-        <td class="row-sm">
-          <button class="btn ghost sm" data-move="${escapeHTML(it.id)}">Yes</button>
-          <button class="btn ghost sm" data-notmove="${escapeHTML(it.id)}">No</button>
-        </td>
-        <td class="mono">${escapeHTML(it.movedTo || '')}</td>
-        <td>${escapeHTML(it.movedBy || '')}</td>
-        <td class="row-sm"></td>
-      </tr>
-    `).join("");
+investWrongBinBody.innerHTML = (!wrongOpen.length)
 
   ? `<tr><td colspan="10" class="empty">No wrong-bin items.</td></tr>`
   : wrongOpen.map(it => `
@@ -1637,18 +1582,7 @@ try {
   supShorts = await fetchNotScanned();
 } catch {}
 
- // Enrich missing SKU/Description from the local IMEI index
-const auditsEnriched = (Array.isArray(audits) ? audits : []).map(it => {
-  const key = String(it.imei || "").trim();
-  const hit = key ? imeiIndex.get(key) : null;
-  return {
-    ...it,
-    sku: it.sku || hit?.sku || "—",
-    description: it.description || hit?.description || "—"
-  };
-});
-
-supWrongBinBody.innerHTML = (auditsEnriched.length ? auditsEnriched.map(it => `
+        supWrongBinBody.innerHTML = (audits.length ? audits.map(it => `
   <tr>
     <td class="mono">${escapeHTML(it.imei)}</td>
     <td class="mono">${escapeHTML(it.sku || "—")}</td>
@@ -1667,7 +1601,6 @@ supWrongBinBody.innerHTML = (auditsEnriched.length ? auditsEnriched.map(it => `
     </td>
   </tr>
 `).join("") : `<tr><td colspan="11" class="empty">No wrong-bin logs.</td></tr>`);
-
 
 
 // Not-scanned
