@@ -1,5 +1,4 @@
 
-
 <!doctype html>
 <html lang="en">
 <head> 
@@ -1012,12 +1011,9 @@ async function fetchNotScanned() {
   );
   if (!res.ok) throw new Error(await res.text());
   const j = await res.json();
-// accept all shapes: rows (new), items/records (old)
-const items = j.rows || j.items || j.records || [];
-return Array.isArray(items) ? items : [];
-
+  const items = j.items || j.records || [];
+  return Array.isArray(items) ? items : [];
 }
-
 
 // --- Investigator: render Not-Scanned ---
 async function renderInvestigatorNotScanned(){
