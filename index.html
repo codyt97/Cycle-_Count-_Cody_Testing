@@ -1586,13 +1586,19 @@ investWrongBinBody.innerHTML = (!wrongOpen.length)
 
         // Wrong-bin logs
         const audits = await fetchAuditList();
+        const openAudits = (Array.isArray(audits) ? audits : []).filter(a => {
+  const s = String(a.status || "").trim().toLowerCase();
+  // Rows without a Resolve cell are already finalized (e.g., "resolved"); hide them.
+  return s !== "resolved";
+});
+
         // Also fetch not-scanned items to compute overages for supervisor
 let supShorts = [];
 try {
   supShorts = await fetchNotScanned();
 } catch {}
 
-        supWrongBinBody.innerHTML = (audits.length ? audits.map(it => `
+ supWrongBinBody.innerHTML = (openAudits.length ? openAudits.map(it => `
   <tr>
     <td class="mono">${escapeHTML(it.imei)}</td>
     <td class="mono">${escapeHTML(it.sku || "—")}</td>
