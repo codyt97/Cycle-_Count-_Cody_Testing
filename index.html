@@ -1476,11 +1476,14 @@ async function refreshInvestigator(){
     ]);
 
     // 2) Bin Status — hide anything already in Supervisor
+// Hide rows already in Supervisor or Complete
 const binsFiltered = (Array.isArray(bins) ? bins : []).filter(r => {
   const s = String(r.state || r.status || "").trim().toLowerCase();
   const inSup = (s === "supervisor") || (!!r.inSupervisor);
-  return !inSup; // drop rows that are “in supervisor”
+  const isComplete = (s === "complete") || (s === "completed");
+  return !inSup && !isComplete; // drop rows in Supervisor or Complete
 });
+
 
 investBody.innerHTML = (!binsFiltered.length)
   ? `<tr><td colspan="9" class="empty">No data.</td></tr>`
