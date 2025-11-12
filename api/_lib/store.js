@@ -1,8 +1,13 @@
 // api/_lib/store.js
+// Central data access layer.
+// - Uses Redis when REDIS_URL is set
+// - Falls back to in-memory store for local/dev
+
 const { randomUUID } = require("crypto");
+
 let redis = null;
 
-// --- Redis wiring ---
+// ---------- Redis wiring ----------
 try {
   if (process.env.REDIS_URL) {
     const Redis = require("ioredis");
@@ -14,162 +19,255 @@ try {
     redis.on("error", (e) => console.error("[redis] error:", e?.message || e));
   }
 } catch (e) {
-  console.error("[redis] client load failed:", e?.message || e);
+  console.error("[redis] init failed:", e?.message || e);
 }
 
-// --- Keys ---
-const K_INV_DATA = "inventory:data";
-const K_INV_META = "inventory:meta";
-const K_CC_BINS  = "cc:bins";
-const K_CC_AUDIT = "cc:audits";
+// ---------- In-memory fallback ----------
+const mem = Object.create(null);
 
-// --- In-memory fallback (per instance) ---
-const mem = {
-  [K_INV_DATA]: [],
-  [K_INV_META]: null,
-  [K_CC_BINS]:  [],
-  [K_CC_AUDIT]: [],
-};
-
-// --- helpers ---
+// ---------- Low-level JSON helpers ----------
 async function getJSON(key, fallback) {
   if (redis) {
     try {
-      const v = await redis.get(key);
-      return v ? JSON.parse(v) : fallback;
+      if (!redis.status || redis.status === "end") await redis.connect();
+      const raw = await redis.get(key);
+      if (raw == null) return fallback;
+      try { return JSON.parse(raw); } catch { return fallback; }
     } catch (e) {
-      console.error("[redis] get fail", key, e?.message || e);
+      console.error(`[store] getJSON ${key} failed:`, e?.message || e);
+      return fallback;
     }
   }
-  return mem[key] ?? fallback;
+  return Object.prototype.hasOwnProperty.call(mem, key) ? mem[key] : fallback;
 }
+
 async function setJSON(key, value) {
   if (redis) {
     try {
+      if (!redis.status || redis.status === "end") await redis.connect();
       await redis.set(key, JSON.stringify(value));
       return;
     } catch (e) {
-      console.error("[redis] set fail", key, e?.message || e);
+      console.error(`[store] setJSON ${key} failed:`, e?.message || e);
     }
   }
   mem[key] = value;
 }
+
 const nowISO = () => new Date().toISOString();
 
-// --- Inventory snapshot (from Google Sheet) ---
-async function getInventory()         { return getJSON(K_INV_DATA, []); }
-async function setInventory(rows)     { await setJSON(K_INV_DATA, Array.isArray(rows)?rows:[]); return (rows||[]).length; }
-async function getInventoryMeta()     { return getJSON(K_INV_META, null); }
-async function setInventoryMeta(meta) { const m={...(meta||{}),updatedAt:meta?.updatedAt||nowISO()}; await setJSON(K_INV_META,m); return m; }
+// =====================================================================================
+// Inventory snapshot (Google Sheet → snapshot written elsewhere)
+// =====================================================================================
+
+const K_INV_DATA = "inv:snapshot";
+const K_INV_META = "inv:meta";
+
+async function getInventory() {
+  return getJSON(K_INV_DATA, []);
+}
+
+async function setInventory(rows) {
+  const out = Array.isArray(rows) ? rows : [];
+  await setJSON(K_INV_DATA, out);
+  return out.length;
+}
+
+async function getInventoryMeta() {
+  return getJSON(K_INV_META, null);
+}
+
+async function setInventoryMeta(meta) {
+  const m = { ...(meta || {}), updatedAt: nowISO() };
+  await setJSON(K_INV_META, m);
+  return m;
+}
+
 /** Find by exact IMEI / Serial in the snapshot */
 async function findByIMEI(imei) {
-  const t = String(imei||"").trim();
+  const t = String(imei || "").trim();
   if (!t) return null;
   const all = await getInventory();
-  return all.find(r => String(r.systemImei||"").trim() === t) || null;
-}
-
-// --- Cycle count bins (submit) ---
-async function listBins() { return getJSON(K_CC_BINS, []); }
-/** Upsert a bin record by code (case-insensitive). */
-async function upsertBin(payload) {
-  const bin = String(payload?.bin || "").trim();
-  if (!bin) throw new Error("bin is required");
-
-  const bins = await listBins();
-  const idx = bins.findIndex(b => String(b.bin || "").toLowerCase() === bin.toLowerCase());
-
-const merged = {
-  id: (idx !== -1 ? bins[idx].id : (payload.id || randomUUID())),
-  bin,
-  user: payload.user ?? bins[idx]?.user,
-  counter: payload.counter ?? bins[idx]?.counter ?? "—",
-  total: payload.total ?? bins[idx]?.total,
-  scanned: payload.scanned ?? bins[idx]?.scanned,
-  missing: payload.missing ?? bins[idx]?.missing,
-  items: Array.isArray(payload.items) ? payload.items : bins[idx]?.items,
-  missingImeis: Array.isArray(payload.missingImeis) ? payload.missingImeis : bins[idx]?.missingImeis,
-  nonSerialShortages: Array.isArray(payload.nonSerialShortages) ? payload.nonSerialShortages : bins[idx]?.nonSerialShortages,
-  state: payload.state || bins[idx]?.state || "investigation",
-  started: bins[idx]?.started || payload.started || nowISO(), // preserve original
-  updatedAt: nowISO(),
-  submittedAt: payload.submittedAt || nowISO(),
-};
-
-
-
-  if (idx === -1) bins.push(merged);
-  else            bins[idx] = { ...bins[idx], ...merged, bin, updatedAt: nowISO() };
-
-  await setJSON(K_CC_BINS, bins);
-  return idx === -1 ? bins[bins.length-1] : bins[idx];
-}
-async function escalateBin(bin, actor) {
-  const code = String(bin || "").trim();
-  const bins = await listBins();
-  const idx = bins.findIndex(b => String(b.bin || "").toLowerCase() === code.toLowerCase());
-  if (idx === -1) return null;
-  bins[idx] = { ...bins[idx], state: "supervisor", escalatedBy: actor||"—", escalatedAt: nowISO(), updatedAt: nowISO() };
-  await setJSON(K_CC_BINS, bins);
-  return bins[idx];
-}
-
-// --- Wrong-bin audits ---
-async function listAudits() { return getJSON(K_CC_AUDIT, []); }
-/** Append wrong-bin audit */
-async function appendAudit(audit) {
-  const now = nowISO();
-  const a = {
-    id: randomUUID(),
-    imei: String(audit?.imei || ""),
-    scannedBin: String(audit?.scannedBin || ""),
-    trueLocation: String(audit?.trueLocation || ""),
-    scannedBy: audit?.scannedBy || "—",
-    status: (audit?.status || "open").toLowerCase(), // open|moved|closed|invalid
-    createdAt: now,
-    updatedAt: now,
-    movedTo: audit?.movedTo,
-    movedBy: audit?.movedBy,
-    decision: audit?.decision,
-    decidedBy: audit?.decidedBy,
-  };
-  if (!a.imei || !a.scannedBin) throw new Error("imei and scannedBin are required");
-
-  const all = await listAudits();
-  // IDEMPOTENT: if an OPEN record for the same IMEI exists, update it instead of duplicating
-  const idx = all.findIndex(x => String(x.imei).trim() === a.imei && String(x.status||"open") === "open");
-  if (idx !== -1) {
-    all[idx] = { ...all[idx],
-      scannedBin: all[idx].scannedBin || a.scannedBin,
-      trueLocation: all[idx].trueLocation || a.trueLocation,
-      scannedBy: all[idx].scannedBy || a.scannedBy,
-      updatedAt: nowISO()
-    };
-    await setJSON(K_CC_AUDIT, all);
-    return all[idx];
+  // common field names we support
+  const keys = ["systemImei", "System IMEI", "IMEI", "Serial", "SN", "serial"];
+  for (const row of all) {
+    for (const k of keys) {
+      if (row && String(row[k] || "").trim() === t) return row;
+    }
   }
+  return null;
+}
 
-  all.push(a);
+// =====================================================================================
+// Cycle Count Bins (built by the app while scanning)
+// =====================================================================================
+
+const K_CC_BINS = "cc:bins";
+
+/**
+ * Array of bins like:
+ * {
+ *   id, bin, user/counter, started, submittedAt,
+ *   items: [ { sku, description, systemImei, systemQty, qtyEntered, ... } ],
+ *   missingImeis: [ { systemImei } ],
+ *   nonSerialShortages: [ { sku, description, systemQty, qtyEntered } ]
+ * }
+ */
+async function listBins() {
+  return getJSON(K_CC_BINS, []);
+}
+
+async function upsertBin(binObj) {
+  const rows = await listBins();
+  const id = String(binObj.id || `${binObj.bin || ""}:${binObj.user || binObj.counter || ""}` || randomUUID());
+  let idx = rows.findIndex((r) => String(r.id || "") === id);
+  const rec = {
+    id,
+    bin: String(binObj.bin || "").trim(),
+    user: String(binObj.user || binObj.counter || "").trim(),
+    counter: String(binObj.counter || binObj.user || "").trim(),
+    started: binObj.started || binObj.startedAt || nowISO(),
+    submittedAt: binObj.submittedAt || binObj.updatedAt || null,
+    items: Array.isArray(binObj.items) ? binObj.items : [],
+    missingImeis: Array.isArray(binObj.missingImeis) ? binObj.missingImeis : [],
+    nonSerialShortages: Array.isArray(binObj.nonSerialShortages) ? binObj.nonSerialShortages : [],
+    meta: { ...(binObj.meta || {}) },
+  };
+
+  if (idx === -1) rows.push(rec);
+  else rows[idx] = { ...rows[idx], ...rec, id };
+
+  await setJSON(K_CC_BINS, rows);
+  return rec;
+}
+
+/** Optional, if you escalate a bin to supervisor workflow */
+async function escalateBin(id, patch = {}) {
+  const rows = await listBins();
+  const idx = rows.findIndex((r) => String(r.id || "") === String(id || ""));
+  if (idx === -1) return null;
+  rows[idx] = { ...rows[idx], escalatedAt: nowISO(), ...patch };
+  await setJSON(K_CC_BINS, rows);
+  return rows[idx];
+}
+
+// =====================================================================================
+// Audit (wrong-bin events + decisions)
+// =====================================================================================
+
+const K_CC_AUDIT = "cc:audits";
+
+/**
+ * Each audit row can look like:
+ * {
+ *   id, imei, sku, description,
+ *   scannedBin, trueLocation, status: 'open'|'moved'|'resolved',
+ *   movedTo, movedBy, decision, decidedBy, createdAt, updatedAt
+ * }
+ */
+async function listAudits() {
+  return getJSON(K_CC_AUDIT, []);
+}
+
+async function appendAudit(entry) {
+  const all = await listAudits();
+  const rec = {
+    id: randomUUID(),
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+    status: "open",
+    ...entry,
+  };
+  all.unshift(rec);
   await setJSON(K_CC_AUDIT, all);
-  return a;
+  return rec;
 }
 
 async function patchAudit(id, patch) {
   const all = await listAudits();
-  const idx = all.findIndex(x => x.id === id);
+  const idx = all.findIndex((r) => String(r.id || "") === String(id || ""));
   if (idx === -1) return null;
   all[idx] = { ...all[idx], ...patch, updatedAt: nowISO() };
   await setJSON(K_CC_AUDIT, all);
   return all[idx];
 }
 
+// =====================================================================================
+// Not-Scanned (needed by Supervisor delete button)
+// =====================================================================================
+
+const K_CC_NOT_SCANNED = "cc:notscanned";
+
+async function listNotScanned() {
+  return getJSON(K_CC_NOT_SCANNED, []);
+}
+
+async function appendNotScanned(entry) {
+  const rows = await listNotScanned();
+  const rec = {
+    id: randomUUID(),
+    systemImei: String(entry.systemImei || entry.imei || "").trim(),
+    bin: String(entry.bin || "").trim(),
+    sku: String(entry.sku || ""),
+    description: String(entry.description || ""),
+    counter: String(entry.counter || ""),
+    started: entry.started || entry.startedAt || "",
+    updatedAt: nowISO(),
+    type: entry.type || (entry.systemImei ? "serial" : "nonserial"),
+    systemQty: Number.isFinite(+entry.systemQty) ? +entry.systemQty : undefined,
+    qtyEntered: Number.isFinite(+entry.qtyEntered) ? +entry.qtyEntered : undefined,
+    missing: Number.isFinite(+entry.missing) ? +entry.missing : undefined,
+  };
+  rows.push(rec);
+  await setJSON(K_CC_NOT_SCANNED, rows);
+  return rec;
+}
+
+/** Delete one not-scanned record by IMEI (primary) */
+async function deleteNotScanned(imei) {
+  const t = String(imei || "").trim();
+  if (!t) return 0;
+  const rows = await listNotScanned();
+  const next = rows.filter((r) => String(r.systemImei || r.imei || "") !== t);
+  await setJSON(K_CC_NOT_SCANNED, next);
+  return rows.length - next.length; // count removed
+}
+
+/** Overwrite the whole not-scanned list (fallback used by API if direct delete isn't available) */
+async function saveNotScanned(rows) {
+  const out = Array.isArray(rows) ? rows : [];
+  await setJSON(K_CC_NOT_SCANNED, out);
+  return out.length;
+}
+
+// =====================================================================================
+// Exports
+// =====================================================================================
+
 module.exports = {
   // utils
   nowISO,
+
   // inventory
-  getInventory, setInventory, getInventoryMeta, setInventoryMeta, findByIMEI,
+  getInventory,
+  setInventory,
+  getInventoryMeta,
+  setInventoryMeta,
+  findByIMEI,
+
   // cycle counts
-  listBins, upsertBin, escalateBin,
+  listBins,
+  upsertBin,
+  escalateBin,
+
   // audits
-  listAudits, appendAudit, patchAudit,
+  listAudits,
+  appendAudit,
+  patchAudit,
+
+  // not-scanned
+  listNotScanned,
+  appendNotScanned,
+  deleteNotScanned,
+  saveNotScanned,
 };
