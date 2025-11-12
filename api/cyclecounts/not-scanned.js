@@ -1,138 +1,160 @@
 // api/cyclecounts/not-scanned.js
-// Lists, appends, and deletes Not-Scanned records.
+// GET  -> computed Not-Scanned items (serial + non-serial), filtered by ignore list
+// DELETE -> hide a serial IMEI from the list (adds to ignore list, and also prunes store if present)
 
-const { withCORS } = require("../_lib/respond");
-const Store = require("../_lib/store");
+const Store = require("../_lib/store"); // adjust path if your layout differs
 
-function json(res, code, obj) {
-  res.statusCode = code;
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-User");
-  res.end(JSON.stringify(obj));
+function json(res, status, body) {
+  res.statusCode = status;
+  res.setHeader("content-type", "application/json; charset=utf-8");
+  res.end(JSON.stringify(body));
 }
-function norm(s) { return String(s ?? "").trim(); }
-function toNum(v, d = 0) { const n = Number(v); return Number.isFinite(n) ? n : d; }
+
+function parseBody(req) {
+  return new Promise((resolve) => {
+    let buf = "";
+    req.on("data", (c) => (buf += c));
+    req.on("end", () => {
+      try {
+        resolve(buf ? JSON.parse(buf) : {});
+      } catch {
+        resolve({});
+      }
+    });
+  });
+}
+
+function getQuery(req) {
+  try {
+    const u = new URL(req.url, `http://${req.headers.host}`);
+    const out = Object.create(null);
+    u.searchParams.forEach((v, k) => (out[k] = v));
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+// Build computed “not-scanned” list from bins
+async function computeNotScanned() {
+  const bins = await Store.listBins();
+  const rows = [];
+
+  for (const b of bins) {
+    const bin = String(b.bin || "").trim();
+    const counter = String(b.counter || b.user || "").trim();
+    const started = b.started || b.startedAt || "";
+
+    // Serial (missing IMEIs)
+    if (Array.isArray(b.missingImeis)) {
+      for (const m of b.missingImeis) {
+        const systemImei = String(m.systemImei || m.imei || "").trim();
+        if (!systemImei) continue;
+
+        rows.push({
+          id: m.id || systemImei,
+          type: "serial",
+          bin,
+          counter,
+          sku: String(m.sku || ""),
+          description: String(m.description || ""),
+          systemImei,
+          detectedAt: m.detectedAt || m.createdAt || b.updatedAt || Store.nowISO(),
+          started,
+        });
+      }
+    }
+
+    // Non-serial shortages
+    if (Array.isArray(b.nonSerialShortages)) {
+      for (const s of b.nonSerialShortages) {
+        rows.push({
+          id: s.id || `${bin}:${s.sku || ""}`,
+          type: "nonserial",
+          bin,
+          counter,
+          sku: String(s.sku || ""),
+          description: String(s.description || ""),
+          systemQty: Number.isFinite(+s.systemQty) ? +s.systemQty : undefined,
+          qtyEntered: Number.isFinite(+s.qtyEntered) ? +s.qtyEntered : undefined,
+          missing: Number.isFinite(+s.missing) ? +s.missing : undefined,
+          detectedAt: s.detectedAt || s.createdAt || b.updatedAt || Store.nowISO(),
+          started,
+        });
+      }
+    }
+  }
+
+  return rows;
+}
 
 module.exports = async function handler(req, res) {
-  if (req.method === "OPTIONS") { withCORS(res); res.statusCode = 204; return res.end(); }
+  const method = req.method || "GET";
 
-  // ---------- GET ----------
-  if (req.method === "GET") {
+  // -----------------------------------
+  // GET — return computed list, filtered by ignore list
+  // -----------------------------------
+  if (method === "GET") {
     try {
-      const wantUser  = norm(req.query?.user || "").toLowerCase();
-      const onlyUser  = String(req.query?.onlyUser || "").toLowerCase() === "1";
-      const wantBin   = norm(req.query?.bin || "");
-      const debug     = String(req.query?.debug || "").toLowerCase() === "1";
+      const computed = await computeNotScanned();
 
-      const all = await Store.listBins();
-      let bins = Array.isArray(all) ? all : [];
-      if (wantBin) bins = bins.filter(b => norm(b.bin).toLowerCase() === wantBin.toLowerCase());
-      if (onlyUser && wantUser) bins = bins.filter(b => String(b.user || "").toLowerCase() === wantUser);
+      // Ignore list (supervisor deletions)
+      const ignores =
+        typeof Store.listNotScannedIgnores === "function"
+          ? await Store.listNotScannedIgnores()
+          : [];
+      const ig = new Set(ignores.map((x) => String(x)));
 
-      const out = [];
-      const why = [];
-
-      for (const b of bins) {
-        const bin       = norm(b.bin);
-        const counter   = norm(b.counter || b.user || "");
-        const started   = b.started || b.startedAt || "";
-        const updated   = b.submittedAt || b.updatedAt || "";
-
-        const items = Array.isArray(b.items) ? b.items : [];
-        const missingImeis = Array.isArray(b.missingImeis) ? b.missingImeis : [];
-        const preNS = Array.isArray(b.nonSerialShortages) ? b.nonSerialShortages : null;
-
-        // SERIAL
-        for (const m of missingImeis) {
-          const systemImei = norm(m.systemImei || m.imei || m.serial || "");
-          if (!systemImei) continue;
-          let sku = "", description = "";
-          const hit = items.find(x => norm(x.systemImei || "") === systemImei);
-          if (hit) { sku = norm(hit.sku || ""); description = norm(hit.description || ""); }
-          out.push({ bin, type:"serial", systemImei, sku, description,
-                     systemQty:1, qtyEntered:0, missing:1, counter, started, updated });
+      // filter serials against ignore list
+      const filtered = computed.filter((r) => {
+        if (r.type === "serial") {
+          const key = String(r.systemImei || "");
+          return key && !ig.has(key);
         }
+        return true; // keep non-serial for now
+      });
 
-        // NON-SERIAL
-        let shortages = [];
-        if (preNS && preNS.length) {
-          shortages = preNS.map(s => ({
-            sku:norm(s.sku||""), description:norm(s.description||""),
-            systemQty:toNum(s.systemQty,0), qtyEntered:toNum(s.qtyEntered,0)
-          })).filter(s => s.qtyEntered < s.systemQty);
-        } else if (items.length) {
-          shortages = items
-            .filter(x => !norm(x.systemImei || "")) // non-serial only
-            .map(x => ({
-              sku:norm(x.sku||""), description:norm(x.description||""),
-              systemQty:toNum(x.systemQty,0), qtyEntered:toNum(x.qtyEntered,0)
-            }))
-            .filter(s => s.qtyEntered < s.systemQty);
-        }
+      return json(res, 200, { ok: true, rows: filtered, items: filtered, records: filtered });
+    } catch (e) {
+      console.error("[not-scanned][GET] failed:", e?.message || e);
+      return json(res, 500, { ok: false, error: "server_error" });
+    }
+  }
 
-        for (const s of shortages) {
-          const missing = Math.max(0, toNum(s.systemQty,0) - toNum(s.qtyEntered,0));
-          if (missing <= 0) continue;
-          out.push({
-            bin, type:"nonserial", systemImei:"",
-            sku:s.sku, description:s.description,
-            systemQty:toNum(s.systemQty,0), qtyEntered:toNum(s.qtyEntered,0),
-            missing, counter, started, updated
-          });
+  // -----------------------------------
+  // DELETE — hide one serial IMEI
+  // -----------------------------------
+  if (method === "DELETE") {
+    try {
+      const q = getQuery(req);
+      const body = await parseBody(req);
+      const imei = String(q.imei || body.imei || "").trim();
+
+      if (!imei) return json(res, 400, { ok: false, error: "missing_imei" });
+
+      // 1) Try to remove from the not-scanned store (if present)
+      if (typeof Store.deleteNotScanned === "function") {
+        try {
+          await Store.deleteNotScanned(imei);
+        } catch (e) {
+          // non-fatal – we still add to ignore list
+          console.warn("[not-scanned][DELETE] deleteNotScanned warn:", e?.message || e);
         }
       }
 
-      out.sort((a,b)=>{
-        const ab=a.bin.localeCompare(b.bin); if(ab) return ab;
-        if(a.type!==b.type) return a.type==="serial"?-1:1;
-        const ak=a.type==="serial"?a.systemImei:a.sku;
-        const bk=b.type==="serial"?b.systemImei:b.sku;
-        return String(ak).localeCompare(String(bk));
-      });
+      // 2) Always add to ignore list so GET filters it out immediately
+      if (typeof Store.addNotScannedIgnore === "function") {
+        await Store.addNotScannedIgnore(imei);
+      }
 
-      const resp={ ok:true, rows:out, items:out, records:out };
-      if (debug) resp.meta={ binsExamined:bins.length, reasons:why };
-      return json(res,200,resp);
-    } catch(e){ return json(res,500,{ ok:false, error:String(e?.message||e) }); }
-  }
-
-  // ---------- POST ----------
-  if (req.method === "POST") {
-    let body={};
-    try { body = typeof req.body==="object"?req.body:JSON.parse(req.body||"{}"); } catch {}
-    if (!Store.appendNotScanned)
-      return json(res,501,{ ok:false, error:"appendNotScanned_not_implemented" });
-    const saved = await Store.appendNotScanned(body);
-    return json(res,200,{ ok:true, item:saved });
-  }
-
-  // ---------- DELETE ----------
-  if (req.method === "DELETE") {
-    let body={};
-    try { body = typeof req.body==="object"?req.body:JSON.parse(req.body||"{}"); } catch {}
-    const imei = norm(body.imei || body.systemImei || body.id);
-    if (!imei) return json(res,400,{ ok:false, error:"missing_imei" });
-
-    if (typeof Store.deleteNotScanned === "function") {
-      await Store.deleteNotScanned(imei);
-      return json(res,200,{ ok:true, deleted:imei });
+      return json(res, 200, { ok: true, deleted: imei });
+    } catch (e) {
+      console.error("[not-scanned][DELETE] failed:", e?.message || e);
+      return json(res, 500, { ok: false, error: "server_error" });
     }
-
-    // fallback: list+rewrite
-    if (typeof Store.listNotScanned !== "function" || typeof Store.saveNotScanned !== "function")
-      return json(res,501,{ ok:false, error:"delete_not_supported" });
-
-    const rows = await Store.listNotScanned();
-    const next = rows.filter(r => String(r.systemImei||r.imei||"") !== imei);
-    if (next.length === rows.length)
-      return json(res,404,{ ok:false, error:"not_found" });
-    await Store.saveNotScanned(next);
-    return json(res,200,{ ok:true, deleted:imei });
   }
 
-  // ---------- anything else ----------
-  res.setHeader("Allow","GET,POST,DELETE,OPTIONS");
-  return json(res,405,{ ok:false, error:"method_not_allowed" });
+  // Method not allowed
+  res.setHeader("allow", "GET, DELETE");
+  return json(res, 405, { ok: false, error: "method_not_allowed" });
 };
