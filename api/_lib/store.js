@@ -197,6 +197,8 @@ async function patchAudit(id, patch) {
 // =====================================================================================
 
 const K_CC_NOT_SCANNED = "cc:notscanned";
+// Ignore list for Not-Scanned serials the supervisor deleted (so we hide them in computed views)
+const K_CC_NOT_SCANNED_IGNORE = "cc:notscanned:ignore";
 
 async function listNotScanned() {
   return getJSON(K_CC_NOT_SCANNED, []);
@@ -240,6 +242,22 @@ async function saveNotScanned(rows) {
   return out.length;
 }
 
+// --- Not-Scanned ignore list (used by GET to hide deleted serials) ---
+async function listNotScannedIgnores() {
+  return getJSON(K_CC_NOT_SCANNED_IGNORE, []);
+}
+
+async function addNotScannedIgnore(imei) {
+  const t = String(imei || "").trim();
+  if (!t) return 0;
+  const list = await listNotScannedIgnores();
+  if (!list.includes(t)) {
+    list.push(t);
+    await setJSON(K_CC_NOT_SCANNED_IGNORE, list);
+  }
+  return list.length;
+}
+
 // =====================================================================================
 // Exports
 // =====================================================================================
@@ -270,4 +288,8 @@ module.exports = {
   appendNotScanned,
   deleteNotScanned,
   saveNotScanned,
+
+  // not-scanned ignore list
+  listNotScannedIgnores,
+  addNotScannedIgnore,
 };
