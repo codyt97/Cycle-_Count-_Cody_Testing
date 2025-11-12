@@ -26,15 +26,33 @@ module.exports = async function handler(req, res){
       const imei   = norm(req.query?.imei || "");
       const bin    = norm(req.query?.bin || "");       // scannedBin filter
       const audits = await Store.listAudits();
+
+      // Filter
       const out = audits.filter(a => {
         if (status && String(a.status||"").toLowerCase() !== status.toLowerCase()) return false;
         if (imei && String(a.imei||"").trim() !== imei) return false;
         if (bin && String(a.scannedBin||"").trim().toLowerCase() !== bin.toLowerCase()) return false;
         return true;
       });
-      return json(res,200,{ ok:true, audits: out });
+
+      // Enrich with SKU / Description from inventory by IMEI
+      const enriched = await Promise.all(out.map(async a => {
+        try {
+          const inv = await Store.findByIMEI(a.imei);
+          return {
+            ...a,
+            sku: inv?.sku || a.sku || "—",
+            description: inv?.description || a.description || "—"
+          };
+        } catch {
+          return { ...a, sku: a.sku || "—", description: a.description || "—" };
+        }
+      }));
+
+      return json(res,200,{ ok:true, audits: enriched });
     } catch (e) {
       return json(res,500,{ ok:false, error:String(e.message||e) });
+
     }
   }
 
