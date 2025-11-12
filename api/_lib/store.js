@@ -293,3 +293,8 @@ module.exports = {
   listNotScannedIgnores,
   addNotScannedIgnore,
 };
+
+// ESM default bridge (lets "import * as Store" work)
+module.exports = module.exports || {};
+module.exports.default = module.exports;
+
