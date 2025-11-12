@@ -1,171 +1,212 @@
-// api/audit/wrong-bin.js  (shared audits for Investigator)
-// Uses the shared Store audit list so all users see the same records.
-const { withCORS } = require("../_lib/respond");
-const Store = require("../_lib/store"); // <— correct shared store
-const { logWrongBin, logFoundImei } = require("../_lib/logs");
+// api/audit/wrong-bin.js
+// Node (serverless) endpoint — NOT Edge.
+// Adds SKU/Description hydration safely without OOMs.
 
-function json(res, code, obj){
+const Store = require("../_lib/store");
+
+// ---------- tiny helpers ----------
+function norm(v) {
+  return (v == null ? "" : String(v)).trim();
+}
+function nowISO() {
+  return new Date().toISOString();
+}
+function json(res, code, obj) {
   res.statusCode = code;
-  res.setHeader("Content-Type","application/json; charset=utf-8");
-  res.setHeader("Access-Control-Allow-Origin","*");
-  res.setHeader("Access-Control-Allow-Methods","GET,POST,PATCH,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers","Content-Type, Authorization, X-User");
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  // simple CORS (same as other api files in this app)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.end(JSON.stringify(obj));
 }
-function norm(s){ return String(s ?? "").trim(); }
-function now(){ return new Date().toISOString(); }
+function bad(res, code, msg) {
+  return json(res, code, { ok: false, error: String(msg || "error") });
+}
 
-module.exports = async function handler(req, res){
-  if (req.method === "OPTIONS"){ withCORS(res); res.statusCode=204; return res.end(); }
-  withCORS(res);
-
-  // GET: list all audits (optionally filter by status, imei, bin)
-  if (req.method === "GET"){
+// Sequentialize small batches to keep memory usage low.
+async function hydrateWithInventory(audits) {
+  const cache = new Map();
+  async function getInv(imeiVal) {
+    if (!imeiVal) return null;
+    if (cache.has(imeiVal)) return cache.get(imeiVal);
     try {
-      const status = norm(req.query?.status || "");    // e.g. "open", "moved", "closed"
-      const imei   = norm(req.query?.imei || "");
-      const bin    = norm(req.query?.bin || "");       // scannedBin filter
+      const inv = await Store.findByIMEI(imeiVal);
+      cache.set(imeiVal, inv || null);
+      return inv || null;
+    } catch {
+      cache.set(imeiVal, null);
+      return null;
+    }
+  }
+
+  const CHUNK = 10; // keep concurrency bounded
+  const enriched = [];
+  for (let i = 0; i < audits.length; i += CHUNK) {
+    const slice = audits.slice(i, i + CHUNK);
+    // do these chunk items one by one to minimize spikes
+    for (const a of slice) {
+      const inv = await getInv(a.imei);
+      enriched.push({
+        ...a,
+        sku: inv?.sku || a.sku || "—",
+        description: inv?.description || a.description || "—",
+      });
+    }
+  }
+  return enriched;
+}
+
+module.exports = async function handler(req, res) {
+  // Preflight
+  if (req.method === "OPTIONS") {
+    return json(res, 204, { ok: true });
+  }
+
+  try {
+    // ---------- GET /api/audit/wrong-bin ----------
+    // Default behavior: only return actionable audits (open/moved), newest first,
+    // hard-capped by ?limit= (default 300, max 2000). Hydrate in a safe way.
+    if (req.method === "GET") {
+      const qStatus = norm(req.query?.status || "");
+      const imei = norm(req.query?.imei || "");
+      const bin = norm(req.query?.bin || "");
+      const include = norm(req.query?.include || ""); // include=all to bypass default filter
+      const limit = Math.max(1, Math.min(Number(req.query?.limit || 300), 2000));
+
       const audits = await Store.listAudits();
 
-      // Filter
-      const out = audits.filter(a => {
-        if (status && String(a.status||"").toLowerCase() !== status.toLowerCase()) return false;
-        if (imei && String(a.imei||"").trim() !== imei) return false;
-        if (bin && String(a.scannedBin||"").trim().toLowerCase() !== bin.toLowerCase()) return false;
+      // filter base on imei / bin first
+      let filtered = audits.filter((a) => {
+        if (imei && norm(a.imei) !== imei) return false;
+        if (bin && norm(a.scannedBin).toLowerCase() !== bin.toLowerCase())
+          return false;
         return true;
       });
 
-      // Enrich with SKU / Description from inventory by IMEI
-      const enriched = await Promise.all(out.map(async a => {
-        try {
-          const inv = await Store.findByIMEI(a.imei);
-          return {
-            ...a,
-            sku: inv?.sku || a.sku || "—",
-            description: inv?.description || a.description || "—"
-          };
-        } catch {
-          return { ...a, sku: a.sku || "—", description: a.description || "—" };
-        }
-      }));
-
-      return json(res,200,{ ok:true, audits: enriched });
-    } catch (e) {
-      return json(res,500,{ ok:false, error:String(e.message||e) });
-
-    }
-  }
-
-  // POST: create/open an audit
-  if (req.method === "POST"){
-    try {
-      const body = typeof req.body === "string" ? JSON.parse(req.body||"{}") : (req.body || {});
-      const imei        = norm(body.imei);
-      const scannedBin  = norm(body.scannedBin);
-      const trueLocation= norm(body.trueLocation);
-      const scannedBy   = norm(body.scannedBy || "—");
-      if (!imei || !scannedBin || !trueLocation){
-        return json(res,400,{ ok:false, error:"missing_required_fields", need:["imei","scannedBin","trueLocation"]});
+      if (qStatus) {
+        filtered = filtered.filter(
+          (a) => norm(a.status).toLowerCase() === qStatus.toLowerCase()
+        );
+      } else if (include !== "all") {
+        // sensible default: only items that still need action
+        filtered = filtered.filter((a) => {
+          const s = norm(a.status).toLowerCase();
+          return s === "open" || s === "moved";
+        });
       }
-      const audit = await Store.appendAudit({
-        imei, scannedBin, trueLocation, scannedBy, status: "open"
+
+      // newest first by updated/created
+      filtered.sort((a, b) => {
+        const ta = Date.parse(a.updated || a.createdAt || a.created || 0) || 0;
+        const tb = Date.parse(b.updated || b.createdAt || b.created || 0) || 0;
+        return tb - ta;
       });
 
-      // Log creation
-      try {
-        await logWrongBin({
-          imei, scannedBin, trueLocation, scannedBy,
-          status: "open", moved: false
-        });
-      } catch (e) {
-        console.warn("[logs] WrongBin POST failed:", e?.message || e);
-      }
+      // cap
+      filtered = filtered.slice(0, limit);
 
-      return json(res,200,{ ok:true, audit });
-    } catch (e) {
-      return json(res,500,{ ok:false, error:String(e.message||e) });
+      // hydrate safely
+      const enriched = await hydrateWithInventory(filtered);
+
+      return json(res, 200, { ok: true, audits: enriched });
     }
-  }
 
-  // PATCH: update (mark moved/closed, etc.)
-  if (req.method === "PATCH"){
-    try {
-      const body = typeof req.body === "string" ? JSON.parse(req.body||"{}") : (req.body || {});
+    // ---------- POST /api/audit/wrong-bin ----------
+    // Create a wrong-bin audit entry (kept minimal; pass-through to Store if available)
+    if (req.method === "POST") {
+      let body = {};
+      try {
+        body = req.body && typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
+      } catch {}
+      const entry = {
+        imei: norm(body.imei),
+        scannedBin: norm(body.scannedBin),
+        trueLocation: norm(body.trueLocation),
+        status: norm(body.status) || "open",
+        note: norm(body.note),
+        createdAt: nowISO(),
+        updated: nowISO(),
+        movedTo: norm(body.movedTo),
+        movedBy: norm(body.movedBy),
+        decidedBy: norm(body.decidedBy),
+        decision: norm(body.decision),
+      };
+
+      if (typeof Store.appendAudit === "function") {
+        const saved = await Store.appendAudit(entry);
+        return json(res, 200, { ok: true, audit: saved || entry });
+      }
+      return bad(res, 501, "appendAudit not implemented in Store");
+    }
+
+    // ---------- PATCH /api/audit/wrong-bin ----------
+    // Update an audit (e.g., resolve/move/decision). Minimal pass-through.
+    if (req.method === "PATCH") {
+      let body = {};
+      try {
+        body = req.body && typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
+      } catch {}
       const id = norm(body.id);
-      if (!id) return json(res,400,{ ok:false, error:"missing_id" });
+      if (!id) return bad(res, 400, "missing id");
 
-      const patch = {};
-      if (body.status != null) patch.status = norm(body.status).toLowerCase(); // "open" | "moved" | "closed"
-      if (body.movedTo != null) patch.movedTo = norm(body.movedTo);
-      if (body.movedBy != null) patch.movedBy = norm(body.movedBy);
-      if (patch.status === "moved" && !patch.movedTo && body.trueLocation) patch.movedTo = norm(body.trueLocation);
-      patch.updatedAt = now();
+      const changes = {
+        status: body.status != null ? norm(body.status) : undefined,
+        movedTo: body.movedTo != null ? norm(body.movedTo) : undefined,
+        movedBy: body.movedBy != null ? norm(body.movedBy) : undefined,
+        decision: body.decision != null ? norm(body.decision) : undefined,
+        decidedBy: body.decidedBy != null ? norm(body.decidedBy) : undefined,
+        updated: nowISO(),
+      };
 
-      const updated = await Store.patchAudit(id, patch);
-      if (!updated) return json(res,404,{ ok:false, error:"not_found" });
-
-      // Log updates
-      try {
-        await logWrongBin({
-          imei: updated.imei,
-          scannedBin: updated.scannedBin,
-          trueLocation: updated.trueLocation,
-          scannedBy: updated.scannedBy,
-          status: updated.status || "open",
-          moved: updated.status === "moved" || !!updated.movedTo,
-          movedTo: updated.movedTo || "",
-          movedBy: updated.movedBy || ""
-        });
-
-        // If your workflow treats "closed" as "found in place" you may also record FoundImeis
-        if ((updated.status || "").toLowerCase() === "closed") {
-          await logFoundImei({
-            imei: updated.imei,
-            foundInBin: updated.trueLocation || updated.scannedBin || "",
-            scannedBin: updated.scannedBin || "",
-            foundBy: updated.movedBy || updated.scannedBy || "—"
-          });
-        }
-      } catch (e) {
-        console.warn("[logs] WrongBin PATCH logs failed:", e?.message || e);
+      // fall back to list+rewrite if Store doesn't expose an updater
+      if (typeof Store.updateAudit === "function") {
+        const updated = await Store.updateAudit(id, changes);
+        return json(res, 200, { ok: true, audit: updated });
       }
 
-      return json(res,200,{ ok:true, audit: updated });
-    } catch (e) {
-      return json(res,500,{ ok:false, error:String(e.message||e) });
+      // fallback path: naive in-place update
+      const audits = await Store.listAudits();
+      const idx = audits.findIndex((a) => String(a.id || a._id || "") === id);
+      if (idx < 0) return bad(res, 404, "not found");
+      const merged = { ...audits[idx], ...Object.fromEntries(Object.entries(changes).filter(([,v]) => v !== undefined)) };
+      audits[idx] = merged;
+      if (typeof Store.saveAudits === "function") {
+        await Store.saveAudits(audits);
+        return json(res, 200, { ok: true, audit: merged });
+      }
+      return bad(res, 501, "update not supported (saveAudits missing)");
     }
-  }
 
-  // DELETE: soft-close (mark closed)
-  if (req.method === "DELETE"){
-    try {
-      const body = typeof req.body === "string" ? JSON.parse(req.body||"{}") : (req.body || {});
-      const id = norm(req.query?.id || body.id || "");
-      if (!id) return json(res,400,{ ok:false, error:"missing_id" });
-      const updated = await Store.patchAudit(id, { status:"closed", updatedAt: now() });
-      if (!updated) return json(res,404,{ ok:false, error:"not_found" });
-
+    // ---------- DELETE /api/audit/wrong-bin ----------
+    if (req.method === "DELETE") {
+      let body = {};
       try {
-        await logWrongBin({
-          imei: updated.imei,
-          scannedBin: updated.scannedBin,
-          trueLocation: updated.trueLocation,
-          scannedBy: updated.scannedBy,
-          status: "closed",
-          moved: updated.status === "moved" || !!updated.movedTo,
-          movedTo: updated.movedTo || "",
-          movedBy: updated.movedBy || ""
-        });
-      } catch (e) {
-        console.warn("[logs] WrongBin DELETE log failed:", e?.message || e);
+        body = req.body && typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
+      } catch {}
+      const id = norm(body.id);
+      if (!id) return bad(res, 400, "missing id");
+
+      if (typeof Store.deleteAudit === "function") {
+        await Store.deleteAudit(id);
+        return json(res, 200, { ok: true, deleted: id });
       }
 
-      return json(res,200,{ ok:true, audit: updated });
-    } catch (e) {
-      return json(res,500,{ ok:false, error:String(e.message||e) });
+      // fallback path: list+rewrite
+      const audits = await Store.listAudits();
+      const next = audits.filter((a) => String(a.id || a._id || "") !== id);
+      if (next.length === audits.length) return bad(res, 404, "not found");
+      if (typeof Store.saveAudits === "function") {
+        await Store.saveAudits(next);
+        return json(res, 200, { ok: true, deleted: id });
+      }
+      return bad(res, 501, "delete not supported (saveAudits missing)");
     }
-  }
 
-  res.setHeader("Allow","GET,POST,PATCH,DELETE,OPTIONS");
-  return json(res,405,{ ok:false, error:"method_not_allowed" });
+    // Method not allowed
+    res.setHeader("Allow", "GET,POST,PATCH,DELETE,OPTIONS");
+    return bad(res, 405, "method not allowed");
+  } catch (err) {
+    return bad(res, 500, err && err.message ? err.message : err);
+  }
 };
