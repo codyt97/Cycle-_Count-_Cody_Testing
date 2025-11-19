@@ -191,6 +191,12 @@ async function patchAudit(id, patch) {
   await setJSON(K_CC_AUDIT, all);
   return all[idx];
 }
+async function saveAudits(list) {
+  const next = Array.isArray(list) ? list : [];
+  await setJSON(K_CC_AUDIT, next);
+  return next;
+}
+
 
 // =====================================================================================
 // Not-Scanned (needed by Supervisor delete button)
@@ -282,6 +288,7 @@ module.exports = {
   listAudits,
   appendAudit,
   patchAudit,
+  saveAudits,
 
   // not-scanned
   listNotScanned,
