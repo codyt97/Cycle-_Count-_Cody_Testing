@@ -586,8 +586,9 @@ try {
 
   // Scanned = matched serials + min(qtyEntered, systemQty) for non-serials
   const scannedSerials = rows.filter(r =>
-    r.systemImei && String(r.scannedImei||"").trim() === String(r.systemImei||"").trim()
-  ).length;
+  r.systemImei && imeiEq(r.scannedImei, r.systemImei)
+).length;
+
     // Scanned = matched serials + ENTERED qty for non-serials (no cap)
   const scannedNonSerial = rows
     .filter(r => !r.systemImei)
@@ -644,9 +645,17 @@ try {
 
 
     const escapeHTML = (s="") =>
-      s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
-    const pad = n => String(n).padStart(2,"0");
-    const ts = () => { const d=new Date(); return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; };
+  s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+const pad = n => String(n).padStart(2,"0");
+
+// IMEI normalizers (prevents formatting/scientific-notation mismatches)
+const normImei = (v) => String(v ?? "").replace(/\D/g, ""); // digits only
+const imeiEq = (a, b) => {
+  const A = normImei(a);
+  const B = normImei(b);
+  return A && B && A === B;
+};
+
 
     // --- Overage helpers (non-serial, entered > system) ---
 function computeOveragesFromRows(list){
@@ -1105,7 +1114,7 @@ const nonSerialExpected = rows.filter(r => !r.systemImei)
   .reduce((a,b)=> a + (Number(b.systemQty||0)), 0);
 const totalExpected = serialExpected + nonSerialExpected;
 
-const scannedSerials = rows.filter(r => r.systemImei && r.scannedImei === r.systemImei).length;
+const scannedSerials = rows.filter(r => r.systemImei && imeiEq(r.scannedImei, r.systemImei)).length;
 const scannedNonSerial = rows.filter(r => !r.systemImei)
   .reduce((a,b)=> a + Math.max(0, Number(b.qtyEntered||0)), 0);
 
@@ -1345,16 +1354,21 @@ document.getElementById("refreshInvestigations")?.addEventListener("click", ()=>
       e.preventDefault();
       const imei = scanInput.value.trim(); if (!imei) return;
 
-      if (scanned.has(imei)){
-        showAlerts(alerts,[{type:"ok",msg:`IMEI <b>${escapeHTML(imei)}</b> already scanned.`}] );
-        scanInput.value=""; return;
-      }
+      const key = normImei(imei);
+if (!key) return;
 
-      const idx = rows.findIndex(r => r.systemImei===imei);
+if (scanned.has(key)){
+  showAlerts(alerts,[{type:"ok",msg:`IMEI <b>${escapeHTML(imei)}</b> already scanned.`}] );
+  scanInput.value=""; return;
+}
+
+
+      const idx = rows.findIndex(r => imeiEq(r.systemImei, imei));
+
       if (idx>=0){
         rows[idx] = {...rows[idx], scannedImei: imei};
 if (rows[idx].hasSerial) rows[idx].qtyEntered = 1;
-scanned.add(imei);
+scanned.add(key);
 
 
 showAlerts(alerts,[{type:"ok",msg:`OK: IMEI <b>${escapeHTML(imei)}</b> in bin <b>${escapeHTML(rows[idx].location)}</b>.`}]);
