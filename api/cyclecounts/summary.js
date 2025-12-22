@@ -21,17 +21,32 @@ module.exports = async (req, res) => {
   if (req.method === "OPTIONS") return withCORS(res), res.status(204).end();
   if (req.method !== "GET") return method(res, ["GET", "OPTIONS"]);
 
-  const bins = await Store.listBins();
-  const records = bins.map(b => ({
-    bin: b.bin,
-    counter: b.counter || "—",
-    started: toEST(b.started || b.createdAt || "—"),
-    updated: toEST(b.submittedAt || b.updatedAt || b.updated || b.submitted || "—"),
-    total: typeof b.total === "number" ? b.total : (Array.isArray(b.items) ? b.items.length : null),
-    scanned: typeof b.scanned === "number" ? b.scanned : null,
-    missing: typeof b.missing === "number" ? b.missing : null,
-    state: b.state || "investigation",
-  }));
+    const bins = await Store.listBins();
+
+  const num = (v) => {
+    // Redis often returns strings. Convert "2" -> 2 safely.
+    if (v === null || v === undefined || v === "") return null;
+    const n = Number(String(v).replace(/,/g, "").trim());
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const records = bins.map(b => {
+    const total = num(b.total) ?? (Array.isArray(b.items) ? b.items.length : null);
+    const scanned = num(b.scanned);
+    const missing = num(b.missing);
+
+    return {
+      bin: b.bin,
+      counter: b.counter || "—",
+      started: toEST(b.started || b.createdAt || "—"),
+      updated: toEST(b.submittedAt || b.updatedAt || b.updated || b.submitted || "—"),
+      total,
+      scanned,
+      missing,
+      state: b.state || "investigation",
+    };
+  });
+
 
   return ok(res, { records });
 };
