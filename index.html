@@ -1060,7 +1060,7 @@ async function renderInvestigatorNotScanned(){
   try{
     const items = await fetchNotScanned();
     if (!items.length){
-      tbody.innerHTML = `<tr><td colspan="8" class="empty">No not-scanned items.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="empty">No not-scanned items.</td></tr>`;
       return;
     }
     tbody.innerHTML = items.map(row => {
@@ -1081,8 +1081,8 @@ async function renderInvestigatorNotScanned(){
 
 return `
   <tr class="${cls}">
-    <td>${isSerial ? "serial" : "nonserial"}</td>
     <td class="mono">${binLoc || "—"}</td>
+    <td>${isSerial ? "serial" : "nonserial"}</td>
     <td class="mono">${row.sku || "—"}</td>
     <td>${row.description || "—"}</td>
     <td class="mono">${row.systemImei || ""}</td>
@@ -1103,9 +1103,10 @@ return `
 `;
 
 
+
     }).join("");
   }catch(e){
-    tbody.innerHTML = `<tr><td colspan="8" class="empty">Failed to load not-scanned.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="empty">Failed to load not-scanned.</td></tr>`;
 
   }
 }
