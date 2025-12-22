@@ -1077,18 +1077,31 @@ async function renderInvestigatorNotScanned(){
         ? `<input class="field mono" placeholder="scan IMEI" data-invscan="${row.systemImei}" style="width:160px" />`
         : ``;
 
-      return `
-        <tr class="${cls}">
-          <td>${isSerial ? "serial" : "nonserial"}</td>
-          <td class="mono">${row.sku || "—"}</td>
-          <td>${row.description || "—"}</td>
-          <td class="mono">${row.systemImei || ""}</td>
-          <td>${sys}</td>
-          <td>${ent}</td>
-          <td class="mono">${formatWhen(row.detectedAt || row.updated || row.started)}</td>
-          <td class="row-sm">${invCell}</td>
-        </tr>
-      `;
+      const binLoc = (row.bin || row.location || row.loc || "").trim();
+
+return `
+  <tr class="${cls}">
+    <td>${isSerial ? "serial" : "nonserial"}</td>
+    <td class="mono">${binLoc || "—"}</td>
+    <td class="mono">${row.sku || "—"}</td>
+    <td>${row.description || "—"}</td>
+    <td class="mono">${row.systemImei || ""}</td>
+    <td>${sys}</td>
+    <td>${ent}</td>
+    <td class="mono">${formatWhen(row.detectedAt || row.updated || row.started)}</td>
+    <td class="row-sm">
+      ${
+        isSerial
+          ? `<input class="field mono" placeholder="scan IMEI"
+              data-invscan="${row.systemImei}"
+              data-bin="${escapeHTML(binLoc)}"
+              style="width:160px" />`
+          : ``
+      }
+    </td>
+  </tr>
+`;
+
 
     }).join("");
   }catch(e){
@@ -1097,24 +1110,44 @@ async function renderInvestigatorNotScanned(){
   }
 }
 
-// Investigator “scan” of a missing serial IMEI → clear from list
+// Investigator “scan” of a missing serial IMEI → clear from list + credit correct bin
 document.addEventListener("keydown", async (e)=>{
   const el = e.target.closest("[data-invscan]");
   if (!el || e.key !== "Enter") return;
-  const sys = el.getAttribute("data-invscan");
-  const body = { user: userId(), bin: (currentBin || ""), type:"serial", systemImei: sys };
+
+  const sys = (el.getAttribute("data-invscan") || "").trim();
+  const binFromRow = (el.getAttribute("data-bin") || "").trim(); // <-- IMPORTANT
+
+  // fallback only if data-bin is missing
+  const binToUse = binFromRow || (currentBin || "");
+
+  const body = { user: userId(), bin: binToUse, type:"serial", systemImei: sys };
+
   try{
     const res = await fetch(`${CONFIG.NOT_SCANNED_ENDPOINT}`, {
       method:"DELETE",
       headers:{ "Content-Type":"application/json" },
       body: JSON.stringify(body)
     });
+
     if (!res.ok) throw new Error(await res.text());
+
+    // refresh not-scanned table
     await renderInvestigatorNotScanned();
+
+    // if you have a function that refreshes Bin Status, call it too (safe)
+    if (typeof renderBinStatus === "function") await renderBinStatus();
+    if (typeof renderInvestigatorBinStatus === "function") await renderInvestigatorBinStatus();
+    if (typeof refreshInvestigator === "function") await refreshInvestigator();
+
   }catch(err){
-    showAlerts(investAlerts,[{type:"warn",msg:`Could not clear ${sys}: <code>${escapeHTML(String(err.message||err))}</code>`}]);
+    showAlerts(investAlerts,[{
+      type:"warn",
+      msg:`Could not clear ${sys}: <code>${escapeHTML(String(err.message||err))}</code>`
+    }]);
   }
 });
+
 
 
     async function submitBinToInvestigator(){
