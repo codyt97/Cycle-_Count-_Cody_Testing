@@ -752,7 +752,7 @@ function renderOverageTable(cardId, overages){
       resultsCard.style.display="block"; emptyCard.style.display="none";
       submitBinBtn.disabled = (currentUser?.role !== ROLES.COUNTER);
       tbody.innerHTML = rows.map((r, i) => {
-    const matched = !!(r.systemImei && r.scannedImei && String(r.scannedImei).trim() === String(r.systemImei).trim());
+    const matched = !!(r.systemImei && r.scannedImei && imeiEq(r.scannedImei, r.systemImei));
   const sysQty = Number(String(r.systemQty).replace(/,/g,"").trim()) || (r.systemImei ? 1 : 0);
   const qtyVal = r.hasSerial ? (matched ? 1 : 0) : Math.max(0, Number(r.qtyEntered || 0));
 
@@ -914,27 +914,37 @@ if (subset==="missing") {
       }
       const data = await res.json();
       const list = Array.isArray(data.records) ? data.records : [];
-      return list.map(r => {
-  const sysImei = String(r.systemImei || r.imei || r.serial || "");
-  const hasSerial = !!sysImei;
-// Coerce to number safely; if NaN → default (1 for serial, 0 for non-serial)
-const rawQty = r.systemQty ?? (hasSerial ? 1 : 0);
-const systemQty = (() => {
-  const n = Number(String(rawQty).replace(/,/g, "").trim());
-  return Number.isFinite(n) ? n : (hasSerial ? 1 : 0);
-})();
-return {
-  location: r.location || bin,
-  sku: r.sku || r.itemCode || "—",
-  description: r.description || r.itemName || "—",
-  systemImei: sysImei,
-  hasSerial,
-  systemQty,
-  qtyEntered: 0,
-  scannedImei: "",
-};
+return list.map(r => {
+  // Be tolerant to different key names coming back from the API
+  const sysImeiRaw =
+    r.systemImei ?? r.system_imei ?? r.imei ?? r.IMEI ??
+    r["System IMEI"] ?? r["IMEI"] ?? r["Serial"] ?? r.serial ?? "";
 
+  const sysImei = String(sysImeiRaw || "").trim();
+  const hasSerial = !!sysImei;
+
+  // Qty keys vary too (System Qty, Qty, QTY, etc.)
+  const rawQty =
+    r.systemQty ?? r.system_qty ?? r.qty ?? r.QTY ?? r["System Qty"] ?? r["Qty"] ??
+    (hasSerial ? 1 : 0);
+
+  const systemQty = (() => {
+    const n = Number(String(rawQty).replace(/,/g, "").trim());
+    return Number.isFinite(n) ? n : (hasSerial ? 1 : 0);
+  })();
+
+  return {
+    location: r.location || r.bin || bin,
+    sku: r.sku || r.itemCode || r.orderTimeSku || "—",
+    description: r.description || r.itemName || r.desc || "—",
+    systemImei: sysImei,
+    hasSerial,
+    systemQty,
+    qtyEntered: 0,
+    scannedImei: "",
+  };
 });
+
 
     }
 
@@ -1121,8 +1131,9 @@ const scannedNonSerial = rows.filter(r => !r.systemImei)
 const scannedTotal = scannedSerials + scannedNonSerial;
 
 const missingList = rows
-  .filter(r => r.systemImei && r.scannedImei !== r.systemImei)
+  .filter(r => r.systemImei && !imeiEq(r.scannedImei, r.systemImei))
   .map(r => ({ sku: r.sku, description: r.description, systemImei: r.systemImei }));
+
 
 const overages = computeOveragesFromRows(rows).map(r => ({
   sku: r.sku || "",
