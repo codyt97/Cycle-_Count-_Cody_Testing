@@ -121,18 +121,29 @@ async function upsertBin(binObj) {
   const rows = await listBins();
   const id = String(binObj.id || `${binObj.bin || ""}:${binObj.user || binObj.counter || ""}` || randomUUID());
   let idx = rows.findIndex((r) => String(r.id || "") === id);
-  const rec = {
+    const rec = {
     id,
     bin: String(binObj.bin || "").trim(),
     user: String(binObj.user || binObj.counter || "").trim(),
     counter: String(binObj.counter || binObj.user || "").trim(),
+
+    // timestamps
     started: binObj.started || binObj.startedAt || nowISO(),
-    submittedAt: binObj.submittedAt || binObj.updatedAt || null,
+    submittedAt: binObj.submittedAt || binObj.submitted || binObj.updatedAt || null,
+
+    // IMPORTANT: persist these so Investigator table is correct
+    total: typeof binObj.total === "number" ? binObj.total : (binObj.total ? Number(binObj.total) : undefined),
+    scanned: typeof binObj.scanned === "number" ? binObj.scanned : (binObj.scanned ? Number(binObj.scanned) : undefined),
+    missing: typeof binObj.missing === "number" ? binObj.missing : (binObj.missing ? Number(binObj.missing) : undefined),
+    state: binObj.state ? String(binObj.state) : undefined,
+
+    // details
     items: Array.isArray(binObj.items) ? binObj.items : [],
     missingImeis: Array.isArray(binObj.missingImeis) ? binObj.missingImeis : [],
     nonSerialShortages: Array.isArray(binObj.nonSerialShortages) ? binObj.nonSerialShortages : [],
     meta: { ...(binObj.meta || {}) },
   };
+
 
   if (idx === -1) rows.push(rec);
   else rows[idx] = { ...rows[idx], ...rec, id };
