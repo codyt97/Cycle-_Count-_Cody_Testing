@@ -1,6 +1,6 @@
 // /api/ordertime/_client.js
 
-const BASE_URL = process.env.OT_BASE_URL?.trim() || 'https://services.ordertime.com';
+const BASE_URL = (process.env.OT_BASE_URL?.trim() || 'https://services.ordertime.com/api').replace(/\/$/, '');
 
 function readEnv(name, fallbacks = []) {
   const val =
@@ -70,7 +70,7 @@ async function postList({ type, pageNumber = 1, numberOfRecords = 50, filters = 
   }
 
   // Always use lowercase path as in Postman that worked
-  const url = `${BASE_URL}/api/list`;
+  const url = `${BASE_URL}/list`;
 
   const res = await fetch(url, {
     method: 'POST',
@@ -102,3 +102,38 @@ async function postList({ type, pageNumber = 1, numberOfRecords = 50, filters = 
 }
 
 export { postList, getAuthFromEnv };
+
+async function otFetch(path, { method = 'GET', body } = {}) {
+  const auth = getAuthFromEnv();
+  const headers = buildHeaders(auth);
+
+  // path can be '/locationbin?id=123' etc.
+  const url = `${BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
+
+  const res = await fetch(url, {
+    method,
+    headers,
+    body,
+    // @ts-ignore
+    cache: 'no-store',
+  });
+
+  const text = await res.text();
+  let json;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+
+  if (!res.ok) {
+    const preview = json ?? { preview: text?.slice(0, 200) };
+    const err = new Error(json?.Message || json?.message || `OT ${res.status} [${path}]`);
+    err.code = res.status;
+    err.upstream = preview;
+    throw err;
+  }
+
+  return json;
+}
+
