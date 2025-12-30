@@ -197,6 +197,30 @@ module.exports = async function handler(req, res){
       console.warn("[logs] NotScanned append failed:", e?.message || e);
     }
 
+        // --- Real-time OrderTime bin update (Last Cycle Count Date) ---
+    // Use "today" as the last cycle count date at the moment of submit.
+    // (If you prefer: use Started/Updated from the payload instead.)
+    try {
+      const base = process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : '';
+
+      // If running locally without VERCEL_URL, we can call the module directly instead of HTTP.
+      // But easiest in prod is: call the handler via internal fetch.
+      const dateValue = new Date().toISOString().slice(0, 10);
+
+      if (base) {
+        await fetch(`${base}/api/ordertime/bin-set-last-cycle-date`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bin, date: dateValue }),
+        });
+      }
+    } catch (e) {
+      // Don't fail the submit if OrderTime update fails — just log it.
+      console.warn('OrderTime bin date update failed:', e?.message || e);
+    }
+
     return json(res, 200, {
       ok: true,
       bin,
