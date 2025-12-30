@@ -119,6 +119,36 @@ module.exports = async function handler(req, res){
       submittedAt: new Date().toISOString(),
     };
     await Store.upsertBin(payload);
+   // --- Real-time OrderTime bin update (Last Cycle Count Date) ---
+// This runs AFTER the cycle count is successfully persisted.
+// It does NOT block the submit if OrderTime is unavailable.
+try {
+  const base =
+    process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : 'http://localhost:3000';
+
+  // Use the same timestamp already stored for this submission
+  // Convert to YYYY-MM-DD for OrderTime Date custom field
+  const dateValue = payload.submittedAt.slice(0, 10);
+
+  await fetch(`${base}/api/ordertime/bin-set-last-cycle-date`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      bin,
+      date: dateValue,
+    }),
+  });
+} catch (e) {
+  // Never fail the cycle count because of OrderTime
+  console.warn(
+    '[OrderTime] Failed to update Last Cycle Count Date:',
+    e?.message || e
+  );
+}
 
     // Google Sheets: Bins summary
     try {
