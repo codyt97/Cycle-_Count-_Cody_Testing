@@ -135,13 +135,17 @@
   <!-- TOPBAR (brand + KPIs) -->
   <div class="topbar">
     <div class="container" style="display:flex;justify-content:space-between;align-items:center;">
-      <div class="brand">
+            <div class="brand">
         <img alt="ConnectUs" src="./download.png" width="301" height="83" />
         <div>
-          <div class="title">Cycle Count – Bin Scan</div>
+          <div class="title">
+            Cycle Count – Bin Scan
+            <span id="warehouseLabel" style="font-weight:600;font-size:13px;color:var(--ink-3);margin-left:8px;"></span>
+          </div>
           <div class="subtitle">Match scanned IMEIs to system snapshot • hard-fail wrong bins</div>
         </div>
       </div>
+
       <div class="kpis" id="kpis">
         <div class="chip"><span class="dot"></span><span class="lbl">Total</span><span class="val" id="kpi-total">0</span></div>
         <div class="chip"><span class="dot"></span><span class="lbl">Scanned</span><span class="val" id="kpi-scanned">0</span></div>
@@ -439,18 +443,27 @@
   </aside>
 
   <script>
-    // --- Config ----------------------------------------------------
-    const CONFIG = {
-      BIN_ENDPOINT: "/api/inventory/bin?bin=",
-      IMEI_ENDPOINT: "/api/inventory/imei?imei=",
-      AUDIT_ENDPOINT: "/api/audit/wrong-bin",              // GET(list) POST(log) PATCH(update)
-      SUMMARY_ENDPOINT: "/api/cyclecounts/summary",        // GET bins & states
-      NOT_SCANNED_ENDPOINT: "/api/cyclecounts/not-scanned",// GET missing
-      SUBMIT_BIN_ENDPOINT: "/api/cyclecounts/submit",      // POST {bin, counter, totals...}
-      ESCALATE_BIN_ENDPOINT: "/api/cyclecounts/escalate",  // POST {bin, actor}
-      FORCE_MOCK: false,
-      LOGO_FILENAME: "./download.png",
-    };
+    // Determine warehouse from URL: ?site=kop or ?site=3pl (default = kop)
+const ccParams = new URLSearchParams(window.location.search || "");
+const ccSite = (ccParams.get("site") || "kop").toLowerCase();
+
+const WAREHOUSE_NAME =
+  ccSite === "3pl"
+    ? "3PL Warehouse"
+    : "KOP Warehouse"; // default
+
+const CONFIG = {
+  BIN_ENDPOINT: "/api/inventory/bin?bin=",
+  IMEI_ENDPOINT: "/api/inventory/imei?imei=",
+  AUDIT_ENDPOINT: "/api/audit/wrong-bin",
+  SUMMARY_ENDPOINT: "/api/cyclecounts/summary",
+  NOT_SCANNED_ENDPOINT: "/api/cyclecounts/not-scanned",
+  SUBMIT_BIN_ENDPOINT: "/api/cyclecounts/submit",
+  ESCALATE_BIN_ENDPOINT: "/api/cyclecounts/escalate",
+  FORCE_MOCK: false,
+  LOGO_FILENAME: "./download.png",
+};
+
     function formatWhen(s){
   const t = String(s || "").trim();
   if (!t) return "—";
@@ -520,6 +533,13 @@ try {
     const loginUser = document.getElementById("loginUser");
     const loginPass = document.getElementById("loginPass");
     const loginMsg  = document.getElementById("loginMsg");
+    const warehouseLabel = document.getElementById("warehouseLabel");
+      if (warehouseLabel && typeof WAREHOUSE_NAME !== "undefined") {
+        warehouseLabel.textContent = WAREHOUSE_NAME;
+      }
+
+    const miniTabs = document.getElementById("miniTabs");
+    const whoami = document.getElementById("whoami");
 
     const miniTabs = document.getElementById("miniTabs");
     const whoami = document.getElementById("whoami");
